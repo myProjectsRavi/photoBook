@@ -1,0 +1,16 @@
+<resources>
+    <string name="app_name">PhotoBook</string>
+    <string name="search_placeholder">Search... try &quot;today&quot; or &quot;selfie&quot;</string>
+    <string name="allow_photo_access">Allow Photo Access</string>
+    <string name="permission_message">PhotoBook needs photo access to index your local images.</string>
+    <string name="indexing_message">Building your private photo index...</string>
+    <string name="ready_message">PhotoBook is ready!</string>
+    <string name="search_hint">Try: today, last week, screenshots, selfie, Hyderabad</string>
+    <string name="no_results_title">No photos found</string>
+    <string name="no_results_subtitle">Try a different keyword like &quot;today&quot;, &quot;camera&quot;, or &quot;document&quot;.</string>
+    <string name="result_count">Found %1$d photos (Total: %2$d)</string>
+    <string name="viewer_close">Close</string>
+    <string name="viewer_index">%1$d / %2$d</string>
+    <string name="viewer_meta">%1$dx%2$d • %3$d KB • %4$s</string>
+    <string name="no_location">No location</string>
+</resources>
