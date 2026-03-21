@@ -3,6 +3,11 @@ package com.photobook.app.search
 import com.photobook.app.data.index.PhotoIndex
 import javax.inject.Inject
 
+data class SuggestionItem(
+    val text: String,
+    val isHistory: Boolean,
+)
+
 class SuggestionEngine @Inject constructor(
     private val index: PhotoIndex,
 ) {
@@ -15,10 +20,16 @@ class SuggestionEngine @Inject constructor(
         "selfie", "food", "sunset", "document", "pet", "car", "people", "nature",
     )
 
-    fun getSuggestions(prefix: String, history: List<String> = emptyList()): List<String> {
+    fun getSuggestions(prefix: String, history: List<String> = emptyList()): List<SuggestionItem> {
         val normalized = prefix.trim().lowercase()
+        val distinctHistory = history
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(3)
+
         if (normalized.isBlank()) {
-            return history.distinct().take(8)
+            return distinctHistory.map { SuggestionItem(text = it, isHistory = true) }
         }
 
         val indexTerms = buildList {
@@ -27,13 +38,21 @@ class SuggestionEngine @Inject constructor(
             addAll(index.mlKeywords())
         }
 
-        return (history + staticKeywords + indexTerms)
+        val historyMatches = distinctHistory
+            .filter { it.startsWith(normalized, ignoreCase = true) }
+            .map { SuggestionItem(text = it, isHistory = true) }
+
+        val otherMatches = (staticKeywords + indexTerms)
             .asSequence()
             .map { it.trim() }
             .filter { it.isNotBlank() }
             .distinct()
             .filter { it.startsWith(normalized) }
-            .take(8)
+            .filter { candidate -> distinctHistory.none { it.equals(candidate, ignoreCase = true) } }
+            .take(5)
+            .map { SuggestionItem(text = it, isHistory = false) }
             .toList()
+
+        return historyMatches + otherMatches
     }
 }

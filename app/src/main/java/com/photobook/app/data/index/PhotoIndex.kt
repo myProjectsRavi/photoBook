@@ -41,10 +41,40 @@ class PhotoIndex @Inject constructor() {
         mutex.withLock {
             val updated = recordsFlow.value.map { record ->
                 if (record.id == id) {
-                    record.copy(mlTags = mergeTags(record.mlTags, tags))
+                    record.copy(
+                        mlTags = mergeTags(record.mlTags, tags),
+                        isMlProcessed = true,
+                    )
                 } else {
                     record
                 }
+            }
+            recordsFlow.value = updated
+            rebuildAuxiliarySets(updated)
+        }
+    }
+
+    suspend fun updatePhotoIntelligence(
+        id: Long,
+        tags: List<MLTag>? = null,
+        isMlProcessed: Boolean? = null,
+        ocrText: String? = null,
+        isOcrProcessed: Boolean? = null,
+    ) {
+        mutex.withLock {
+            val updated = recordsFlow.value.map { record ->
+                if (record.id != id) return@map record
+
+                val nextTags = tags?.let { incoming ->
+                    mergeTags(record.mlTags, incoming)
+                } ?: record.mlTags
+
+                record.copy(
+                    mlTags = nextTags,
+                    isMlProcessed = isMlProcessed ?: record.isMlProcessed,
+                    ocrText = ocrText ?: record.ocrText,
+                    isOcrProcessed = isOcrProcessed ?: record.isOcrProcessed,
+                )
             }
             recordsFlow.value = updated
             rebuildAuxiliarySets(updated)

@@ -29,4 +29,6 @@ data class LocationToken(val keyword: String) : QueryToken
 
 data class MLTagToken(val keyword: String) : QueryToken
 
+data class TextToken(val keyword: String) : QueryToken
+
 data class UnknownToken(val value: String) : QueryToken

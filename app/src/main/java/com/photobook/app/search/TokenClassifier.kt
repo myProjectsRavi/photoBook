@@ -84,7 +84,7 @@ class TokenClassifier @Inject constructor(
         if (fuzzyMatch(token, index.cityKeywords()) != null) return LocationToken(token)
         if (fuzzyMatch(token, index.mlKeywords()) != null) return MLTagToken(token)
 
-        return UnknownToken(token)
+        return if (token.length >= 2) TextToken(token) else UnknownToken(token)
     }
 
     private fun fuzzyMatch(token: String, candidates: Set<String>): String? {

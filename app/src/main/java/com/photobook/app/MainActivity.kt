@@ -77,7 +77,6 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     MainScreen(
         query = uiState.query,
         results = uiState.results,
-        photoCount = uiState.photoCount,
         searchReady = uiState.searchReady,
         suggestions = uiState.suggestions,
         showSuggestions = uiState.showSuggestions,
@@ -85,6 +84,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         onSearchSubmitted = viewModel::onSearchSubmitted,
         onSearchFocusChanged = viewModel::onSearchFocusChanged,
         onSuggestionSelected = viewModel::onSuggestionSelected,
+        onRemoveHistorySuggestion = viewModel::onRemoveHistorySuggestion,
         onClearQuery = viewModel::onClearQuery,
         onPhotoClick = viewModel::onPhotoClicked,
     )

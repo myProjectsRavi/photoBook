@@ -24,7 +24,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -52,6 +53,15 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a")
+            isUniversalApk = false
         }
     }
 }
@@ -90,6 +100,7 @@ dependencies {
 
     implementation("com.google.mlkit:image-labeling:17.0.8")
     implementation("com.google.mlkit:face-detection:16.1.6")
+    implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 
     testImplementation("junit:junit:4.13.2")
@@ -98,4 +109,31 @@ dependencies {
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+}
+
+tasks.register("verifyApkSize") {
+    group = "verification"
+    description = "Fails when any generated APK exceeds 110 MB."
+
+    doLast {
+        val maxBytes = 110L * 1024L * 1024L
+        val apkRoot = layout.buildDirectory.dir("outputs/apk").get().asFile
+        if (!apkRoot.exists()) return@doLast
+
+        val apks = apkRoot.walkTopDown()
+            .filter { it.isFile && it.extension == "apk" }
+            .toList()
+        if (apks.isEmpty()) return@doLast
+
+        apks.forEach { apk ->
+            val sizeBytes = apk.length()
+            check(sizeBytes <= maxBytes) {
+                "APK size gate failed for ${apk.path}: ${sizeBytes / (1024 * 1024)} MB > 110 MB"
+            }
+        }
+    }
+}
+
+tasks.matching { it.name.startsWith("assemble") }.configureEach {
+    finalizedBy("verifyApkSize")
 }

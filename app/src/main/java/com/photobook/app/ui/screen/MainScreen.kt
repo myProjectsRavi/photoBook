@@ -10,27 +10,27 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import com.photobook.app.R
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.ui.component.EmptyState
 import com.photobook.app.ui.component.PhotoGrid
 import com.photobook.app.ui.component.SearchBar
 import com.photobook.app.ui.component.SuggestionDropdown
+import com.photobook.app.ui.component.WelcomeState
+import com.photobook.app.search.SuggestionItem
 
 @Composable
 fun MainScreen(
     query: String,
     results: List<PhotoRecord>,
-    photoCount: Int,
     searchReady: Boolean,
-    suggestions: List<String>,
+    suggestions: List<SuggestionItem>,
     showSuggestions: Boolean,
     onQueryChange: (String) -> Unit,
     onSearchSubmitted: () -> Unit,
     onSearchFocusChanged: (Boolean) -> Unit,
-    onSuggestionSelected: (String) -> Unit,
+    onSuggestionSelected: (SuggestionItem) -> Unit,
+    onRemoveHistorySuggestion: (String) -> Unit,
     onClearQuery: () -> Unit,
     onPhotoClick: (Int) -> Unit,
 ) {
@@ -52,20 +52,23 @@ fun MainScreen(
             visible = showSuggestions,
             suggestions = suggestions,
             onSuggestionClick = onSuggestionSelected,
+            onRemoveHistoryClick = onRemoveHistorySuggestion,
             modifier = Modifier.fillMaxWidth(),
         )
 
-        Text(
-            text = stringResource(R.string.result_count, results.size, photoCount),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        if (!searchReady) {
-            EmptyState(modifier = Modifier.fillMaxSize())
-        } else if (results.isEmpty()) {
-            EmptyState(modifier = Modifier.fillMaxSize())
+        if (!searchReady || query.isBlank()) {
+            WelcomeState(modifier = Modifier.fillMaxSize())
         } else {
+            Text(
+                text = "Found ${results.size} photos",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        if (searchReady && query.isNotBlank() && results.isEmpty()) {
+            EmptyState(modifier = Modifier.fillMaxSize())
+        } else if (searchReady && query.isNotBlank()) {
             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                 val columns = if (maxWidth >= 700.dp) 5 else if (maxWidth >= 520.dp) 4 else 3
                 PhotoGrid(

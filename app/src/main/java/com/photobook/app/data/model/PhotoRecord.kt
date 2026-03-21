@@ -26,6 +26,9 @@ data class PhotoRecord(
     val isFrontCamera: Boolean,
     val isHdr: Boolean,
     val mlTags: List<MLTag> = emptyList(),
+    val isMlProcessed: Boolean = false,
+    val ocrText: String = "",
+    val isOcrProcessed: Boolean = false,
 ) {
     val aspectRatio: Float
         get() = if (height == 0) 1f else width.toFloat() / height.toFloat()
@@ -34,5 +37,10 @@ data class PhotoRecord(
         return mlTags.any {
             it.confidence >= threshold && it.label.contains(keyword, ignoreCase = true)
         }
+    }
+
+    fun hasOcrToken(keyword: String): Boolean {
+        if (keyword.isBlank()) return false
+        return ocrText.contains(keyword, ignoreCase = true)
     }
 }

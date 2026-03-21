@@ -30,11 +30,24 @@ fun OnboardingScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        Text(
+            text = stringResource(R.string.welcome_title),
+            style = MaterialTheme.typography.headlineSmall,
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            text = stringResource(R.string.welcome_subtitle),
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 10.dp),
+        )
+
         if (isIndexing) {
             Text(
                 text = stringResource(R.string.indexing_message),
-                style = MaterialTheme.typography.headlineSmall,
+                style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
+                modifier = Modifier.padding(top = 20.dp),
             )
             LinearProgressIndicator(
                 progress = { progress.coerceIn(0f, 1f) },
@@ -51,8 +64,9 @@ fun OnboardingScreen(
         } else {
             Text(
                 text = stringResource(R.string.permission_message),
-                style = MaterialTheme.typography.headlineSmall,
+                style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
+                modifier = Modifier.padding(top = 20.dp),
             )
             Button(
                 onClick = onGrantPermission,

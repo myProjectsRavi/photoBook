@@ -40,11 +40,17 @@ class TaggingWorker @AssistedInject constructor(
         photos.forEachIndexed { index, photo ->
             if (isStopped) return Result.retry()
 
-            if (photo.mlTags.isEmpty()) {
-                val tags = mlTagger.tagPhoto(photo.uriString, photo.isFrontCamera)
-                if (tags.isNotEmpty()) {
-                    photoIndex.updateMlTags(photo.id, tags)
-                }
+            val needsMl = !photo.isMlProcessed
+            val needsOcr = !photo.isOcrProcessed
+            if (needsMl || needsOcr) {
+                val analysis = mlTagger.analyzePhoto(photo.uriString, photo.isFrontCamera)
+                photoIndex.updatePhotoIntelligence(
+                    id = photo.id,
+                    tags = if (needsMl) analysis.tags else null,
+                    isMlProcessed = if (needsMl) true else null,
+                    ocrText = if (needsOcr) analysis.ocrText else null,
+                    isOcrProcessed = if (needsOcr) true else null,
+                )
                 processed += 1
             }
 

@@ -14,12 +14,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Label
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,12 +29,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import com.photobook.app.search.SuggestionItem
 
 @Composable
 fun SuggestionDropdown(
     visible: Boolean,
-    suggestions: List<String>,
-    onSuggestionClick: (String) -> Unit,
+    suggestions: List<SuggestionItem>,
+    onSuggestionClick: (SuggestionItem) -> Unit,
+    onRemoveHistoryClick: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     AnimatedVisibility(
@@ -47,7 +51,7 @@ fun SuggestionDropdown(
             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         ) {
             LazyColumn {
-                items(suggestions) { suggestion ->
+                items(suggestions, key = { it.text }) { suggestion ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -57,14 +61,24 @@ fun SuggestionDropdown(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         Icon(
-                            imageVector = categoryIcon(suggestion),
+                            imageVector = categoryIcon(suggestion.text),
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
                         )
                         Text(
-                            text = suggestion,
+                            text = suggestion.text,
                             style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
                         )
+                        if (suggestion.isHistory) {
+                            IconButton(onClick = { onRemoveHistoryClick(suggestion.text) }) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Remove history item",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
                     }
                 }
             }

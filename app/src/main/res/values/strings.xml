@@ -2,8 +2,8 @@
     <string name="app_name">PhotoBook</string>
     <string name="search_placeholder">Search... try &quot;today&quot; or &quot;selfie&quot;</string>
     <string name="allow_photo_access">Allow Photo Access</string>
-    <string name="permission_message">PhotoBook needs photo access to index your local images.</string>
-    <string name="indexing_message">Building your private photo index...</string>
+    <string name="permission_message">Allow photo access so PhotoBook can show only your on-device results. Nothing is uploaded.</string>
+    <string name="indexing_message">Setting things up for you. Your photos stay private on this device.</string>
     <string name="ready_message">PhotoBook is ready!</string>
     <string name="search_hint">Try: today, last week, screenshots, selfie, Hyderabad</string>
     <string name="no_results_title">No photos found</string>
@@ -13,4 +13,7 @@
     <string name="viewer_index">%1$d / %2$d</string>
     <string name="viewer_meta">%1$dx%2$d • %3$d KB • %4$s</string>
     <string name="no_location">No location</string>
+    <string name="welcome_title">Welcome to PhotoBook</string>
+    <string name="welcome_subtitle">Private, secure and safe photo search. Your data never leaves your device.</string>
+    <string name="welcome_search_prompt">Start with a keyword to see matching photos.</string>
 </resources>

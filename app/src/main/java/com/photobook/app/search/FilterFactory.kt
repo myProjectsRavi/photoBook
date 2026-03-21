@@ -40,6 +40,7 @@ class FilterFactory @Inject constructor() {
             is PropertyToken -> propertyFilter(token.keyword)
             is LocationToken -> locationFilter(token.keyword, context)
             is MLTagToken -> mlFilter(token.keyword)
+            is TextToken -> textFilter(token.keyword)
             is UnknownToken -> null
         }
     }
@@ -142,6 +143,18 @@ class FilterFactory @Inject constructor() {
         val threshold = LabelMapping.threshold(canonical)
         return { photo ->
             photo.hasMlTag(canonical, threshold)
+        }
+    }
+
+    private fun textFilter(keyword: String): PhotoFilter {
+        val normalized = keyword.lowercase().trim()
+        if (normalized.isBlank()) return { true }
+
+        return { photo ->
+            photo.hasOcrToken(normalized) ||
+                photo.fileName.contains(normalized, ignoreCase = true) ||
+                photo.folderName.contains(normalized, ignoreCase = true) ||
+                photo.folderPath.contains(normalized, ignoreCase = true)
         }
     }
 

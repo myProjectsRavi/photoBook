@@ -26,7 +26,7 @@ class FilterEngine @Inject constructor(
         context: SearchContext = SearchContext(),
     ): SearchResult {
         val normalized = queryParser.normalize(query)
-        val key = "$normalized|${records.size}|${records.firstOrNull()?.id ?: -1L}"
+        val key = "$normalized|${System.identityHashCode(records)}"
         cache[key]?.let { cached -> return cached }
 
         if (normalized.isBlank()) {

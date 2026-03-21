@@ -8,6 +8,8 @@ object Constants {
     const val BATCH_SIZE = 50
     const val BATCH_DELAY_MS = 500L
     const val SEARCH_DEBOUNCE_MS = 300L
+    const val MEDIA_OBSERVER_DEBOUNCE_MS = 1200L
+    const val OCR_MAX_TEXT_CHARS = 4000
 
     const val LARGE_FILE_SIZE_BYTES = 5L * 1024L * 1024L
     const val SMALL_FILE_SIZE_BYTES = 500L * 1024L

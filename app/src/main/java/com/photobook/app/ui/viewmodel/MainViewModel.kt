@@ -15,11 +15,14 @@ import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.ml.TaggingWorker
 import com.photobook.app.search.FilterEngine
 import com.photobook.app.search.SearchContext
+import com.photobook.app.search.SuggestionItem
 import com.photobook.app.search.SuggestionEngine
 import com.photobook.app.util.Constants
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
@@ -47,7 +50,7 @@ class MainViewModel @Inject constructor(
         val query: String = "",
         val photoCount: Int = 0,
         val results: List<PhotoRecord> = emptyList(),
-        val suggestions: List<String> = emptyList(),
+        val suggestions: List<SuggestionItem> = emptyList(),
         val showSuggestions: Boolean = false,
         val viewerStartIndex: Int? = null,
     )
@@ -59,6 +62,7 @@ class MainViewModel @Inject constructor(
 
     private var hasInitializedIndex = false
     private var mediaObserver: ContentObserver? = null
+    private var mediaRebuildJob: Job? = null
 
     init {
         observeSearch()
@@ -91,13 +95,24 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    fun onSuggestionSelected(suggestion: String) {
-        queryFlow.value = suggestion
-        addToHistory(suggestion)
+    fun onSuggestionSelected(suggestion: SuggestionItem) {
+        queryFlow.value = suggestion.text
+        addToHistory(suggestion.text)
         uiState.update {
             it.copy(
-                query = suggestion,
+                query = suggestion.text,
                 showSuggestions = false,
+            )
+        }
+    }
+
+    fun onRemoveHistorySuggestion(suggestion: String) {
+        removeFromHistory(suggestion)
+        val updatedSuggestions = suggestionEngine.getSuggestions(queryFlow.value, readHistory())
+        uiState.update {
+            it.copy(
+                suggestions = updatedSuggestions,
+                showSuggestions = focusFlow.value && updatedSuggestions.isNotEmpty(),
             )
         }
     }
@@ -134,11 +149,19 @@ class MainViewModel @Inject constructor(
             ) { query, records, focused ->
                 Triple(query, records, focused)
             }.collect { (query, records, focused) ->
-                val searchResult = filterEngine.search(
-                    query = query,
-                    records = records,
-                    context = buildSearchContext(),
-                )
+                val normalizedQuery = query.trim()
+                val searchResult = if (normalizedQuery.isBlank()) {
+                    FilterEngine.SearchResult(
+                        results = emptyList(),
+                        tokens = emptyList(),
+                    )
+                } else {
+                    filterEngine.search(
+                        query = query,
+                        records = records,
+                        context = buildSearchContext(),
+                    )
+                }
                 val suggestions = suggestionEngine.getSuggestions(query, readHistory())
 
                 uiState.update {
@@ -226,7 +249,17 @@ class MainViewModel @Inject constructor(
         val current = readHistory().toMutableList()
         current.removeAll { it.equals(normalized, ignoreCase = true) }
         current.add(0, normalized)
-        val next = current.take(20)
+        val next = current.take(3)
+
+        val array = JSONArray()
+        next.forEach { array.put(it) }
+        sharedPreferences.edit().putString(Constants.SEARCH_HISTORY_KEY, array.toString()).apply()
+    }
+
+    private fun removeFromHistory(query: String) {
+        val next = readHistory()
+            .filterNot { it.equals(query, ignoreCase = true) }
+            .take(3)
 
         val array = JSONArray()
         next.forEach { array.put(it) }
@@ -239,10 +272,13 @@ class MainViewModel @Inject constructor(
         val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean) {
                 super.onChange(selfChange)
-                viewModelScope.launch {
-                    val rebuilt = indexBuilder.buildIndex()
+                mediaRebuildJob?.cancel()
+                mediaRebuildJob = viewModelScope.launch {
+                    delay(Constants.MEDIA_OBSERVER_DEBOUNCE_MS)
+                    val rebuilt = indexBuilder.buildIndex().preservingIntelligence(photoIndex.snapshot())
                     photoIndex.setRecords(rebuilt)
                     indexPersistence.save(rebuilt)
+                    TaggingWorker.enqueue(context)
                 }
             }
         }
@@ -255,10 +291,25 @@ class MainViewModel @Inject constructor(
     }
 
     override fun onCleared() {
+        mediaRebuildJob?.cancel()
         mediaObserver?.let { observer ->
             context.contentResolver.unregisterContentObserver(observer)
         }
         mediaObserver = null
         super.onCleared()
+    }
+
+    private fun List<PhotoRecord>.preservingIntelligence(current: List<PhotoRecord>): List<PhotoRecord> {
+        if (isEmpty() || current.isEmpty()) return this
+        val byId = current.associateBy { it.id }
+        return map { rebuilt ->
+            val existing = byId[rebuilt.id] ?: return@map rebuilt
+            rebuilt.copy(
+                mlTags = existing.mlTags,
+                isMlProcessed = existing.isMlProcessed,
+                ocrText = existing.ocrText,
+                isOcrProcessed = existing.isOcrProcessed,
+            )
+        }
     }
 }

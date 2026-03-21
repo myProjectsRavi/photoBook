@@ -58,6 +58,9 @@ class IndexBuilder @Inject constructor(
                     cameraModel = exif.cameraModel,
                     isFrontCamera = exif.isFrontCamera,
                     isHdr = exif.isHdr,
+                    isMlProcessed = false,
+                    ocrText = "",
+                    isOcrProcessed = false,
                 )
             }
         }

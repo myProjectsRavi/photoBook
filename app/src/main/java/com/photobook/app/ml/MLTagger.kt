@@ -12,7 +12,11 @@ import com.google.mlkit.vision.face.FaceDetectorOptions
 import com.google.mlkit.vision.label.ImageLabeler
 import com.google.mlkit.vision.label.ImageLabeling
 import com.google.mlkit.vision.label.defaults.ImageLabelerOptions
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.TextRecognizer
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.photobook.app.data.model.MLTag
+import com.photobook.app.util.Constants
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
@@ -22,6 +26,11 @@ import javax.inject.Inject
 class MLTagger @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
+
+    data class AnalysisResult(
+        val tags: List<MLTag>,
+        val ocrText: String,
+    )
 
     private val labeler: ImageLabeler by lazy {
         ImageLabeling.getClient(
@@ -39,13 +48,25 @@ class MLTagger @Inject constructor(
         )
     }
 
+    private val textRecognizer: TextRecognizer by lazy {
+        TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+    }
+
     suspend fun tagPhoto(uriString: String, isFrontCamera: Boolean): List<MLTag> {
+        return analyzePhoto(uriString, isFrontCamera).tags
+    }
+
+    suspend fun analyzePhoto(uriString: String, isFrontCamera: Boolean): AnalysisResult {
         return withContext(Dispatchers.IO) {
-            val bitmap = loadThumbnail(uriString) ?: return@withContext emptyList()
+            val bitmap = loadThumbnail(uriString) ?: return@withContext AnalysisResult(
+                tags = emptyList(),
+                ocrText = "",
+            )
             val input = InputImage.fromBitmap(bitmap, 0)
 
             val labels = runCatching { labeler.process(input).await() }.getOrDefault(emptyList())
             val faces = runCatching { faceDetector.process(input).await() }.getOrDefault(emptyList())
+            val text = runCatching { textRecognizer.process(input).await().text }.getOrDefault("")
 
             val tagMap = linkedMapOf<String, MLTag>()
             labels.forEach { label ->
@@ -66,7 +87,16 @@ class MLTagger @Inject constructor(
                 tagMap["people"] = MLTag("people", 0.90f)
             }
 
-            tagMap.values.toList()
+            val normalizedOcrText = text
+                .lowercase()
+                .replace(Regex("\\s+"), " ")
+                .trim()
+                .take(Constants.OCR_MAX_TEXT_CHARS)
+
+            AnalysisResult(
+                tags = tagMap.values.toList(),
+                ocrText = normalizedOcrText,
+            )
         }
     }
 
@@ -74,7 +104,7 @@ class MLTagger @Inject constructor(
         val uri = Uri.parse(uriString)
 
         val fromThumbnail = runCatching {
-            context.contentResolver.loadThumbnail(uri, Size(224, 224), null)
+            context.contentResolver.loadThumbnail(uri, Size(1024, 1024), null)
         }.getOrNull()
         if (fromThumbnail != null) return fromThumbnail
 
