@@ -90,7 +90,7 @@ class TokenClassifier @Inject constructor(
     private fun fuzzyMatch(token: String, candidates: Set<String>): String? {
         if (token.length < 3) return null
         return candidates.firstOrNull { candidate ->
-            candidate.startsWith(token) || candidate.contains(token)
+            candidate.startsWith(token)
         }
     }
 }

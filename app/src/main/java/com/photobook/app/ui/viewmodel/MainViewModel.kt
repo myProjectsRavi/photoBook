@@ -65,7 +65,8 @@ class MainViewModel @Inject constructor(
     private var mediaRebuildJob: Job? = null
 
     init {
-        observeSearch()
+        observeSearchResults()
+        observeSuggestions()
     }
 
     fun refreshPermissionStatus(granted: Boolean) {
@@ -139,16 +140,36 @@ class MainViewModel @Inject constructor(
         uiState.update { it.copy(viewerStartIndex = null) }
     }
 
+    private fun observeSuggestions() {
+        viewModelScope.launch {
+            combine(
+                queryFlow,
+                focusFlow,
+            ) { query, focused ->
+                Pair(query, focused)
+            }.collect { (query, focused) ->
+                val suggestions = suggestionEngine.getSuggestions(query, readHistory())
+
+                uiState.update {
+                    it.copy(
+                        query = query,
+                        suggestions = suggestions,
+                        showSuggestions = focused && suggestions.isNotEmpty(),
+                    )
+                }
+            }
+        }
+    }
+
     @OptIn(FlowPreview::class)
-    private fun observeSearch() {
+    private fun observeSearchResults() {
         viewModelScope.launch {
             combine(
                 queryFlow.debounce(Constants.SEARCH_DEBOUNCE_MS),
                 photoIndex.records(),
-                focusFlow,
-            ) { query, records, focused ->
-                Triple(query, records, focused)
-            }.collect { (query, records, focused) ->
+            ) { query, records ->
+                Pair(query, records)
+            }.collect { (query, records) ->
                 val normalizedQuery = query.trim()
                 val searchResult = if (normalizedQuery.isBlank()) {
                     FilterEngine.SearchResult(
@@ -162,15 +183,11 @@ class MainViewModel @Inject constructor(
                         context = buildSearchContext(),
                     )
                 }
-                val suggestions = suggestionEngine.getSuggestions(query, readHistory())
 
                 uiState.update {
                     it.copy(
-                        query = query,
                         photoCount = records.size,
                         results = searchResult.results,
-                        suggestions = suggestions,
-                        showSuggestions = focused && suggestions.isNotEmpty(),
                         searchReady = !it.isIndexing,
                     )
                 }
