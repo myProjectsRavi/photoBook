@@ -81,6 +81,37 @@ class PhotoIndex @Inject constructor() {
         }
     }
 
+    suspend fun setFavorite(id: Long, isFavorite: Boolean) {
+        mutex.withLock {
+            val updated = recordsFlow.value.map { record ->
+                if (record.id == id) {
+                    record.copy(isFavorite = isFavorite)
+                } else {
+                    record
+                }
+            }
+            recordsFlow.value = updated
+            rebuildAuxiliarySets(updated)
+        }
+    }
+
+    suspend fun toggleFavorite(id: Long): Boolean {
+        var nextFavorite = false
+        mutex.withLock {
+            val updated = recordsFlow.value.map { record ->
+                if (record.id == id) {
+                    nextFavorite = !record.isFavorite
+                    record.copy(isFavorite = nextFavorite)
+                } else {
+                    record
+                }
+            }
+            recordsFlow.value = updated
+            rebuildAuxiliarySets(updated)
+        }
+        return nextFavorite
+    }
+
     suspend fun upsertRecord(record: PhotoRecord) {
         mutex.withLock {
             val mutable = recordsFlow.value.toMutableList()

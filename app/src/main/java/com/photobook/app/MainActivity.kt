@@ -1,5 +1,9 @@
 package com.photobook.app
 
+import android.content.ClipData
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -15,6 +19,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.photobook.app.R
+import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.ui.screen.MainScreen
 import com.photobook.app.ui.screen.OnboardingScreen
 import com.photobook.app.ui.screen.PhotoViewerScreen
@@ -78,6 +84,8 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         query = uiState.query,
         results = uiState.results,
         searchReady = uiState.searchReady,
+        favoritesOnly = uiState.favoritesOnly,
+        selectedPhotoIds = uiState.selectedPhotoIds,
         suggestions = uiState.suggestions,
         showSuggestions = uiState.showSuggestions,
         onQueryChange = viewModel::onQueryChanged,
@@ -86,7 +94,15 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         onSuggestionSelected = viewModel::onSuggestionSelected,
         onRemoveHistorySuggestion = viewModel::onRemoveHistorySuggestion,
         onClearQuery = viewModel::onClearQuery,
+        onToggleFavoritesOnly = viewModel::onToggleFavoritesOnly,
+        onShareSelected = { selected ->
+            sharePhotos(context, selected)
+            viewModel.clearSelection()
+        },
+        onClearSelection = viewModel::clearSelection,
         onPhotoClick = viewModel::onPhotoClicked,
+        onPhotoLongClick = viewModel::onPhotoLongPressed,
+        onToggleFavorite = viewModel::onToggleFavorite,
     )
 
     val viewerIndex = uiState.viewerStartIndex
@@ -96,6 +112,43 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             startIndex = viewerIndex,
             onDismiss = viewModel::closeViewer,
             onPageChanged = viewModel::onViewerPageChanged,
+            onToggleFavorite = viewModel::onToggleFavorite,
         )
     }
+}
+
+private fun sharePhotos(context: Context, photos: List<PhotoRecord>) {
+    if (photos.isEmpty()) return
+
+    val uris = photos.map { Uri.parse(it.uriString) }
+    val mimeType = photos
+        .map { it.mimeType.ifBlank { "image/*" } }
+        .distinct()
+        .singleOrNull()
+        ?: "image/*"
+
+    val shareIntent = if (uris.size == 1) {
+        Intent(Intent.ACTION_SEND).apply {
+            type = mimeType
+            putExtra(Intent.EXTRA_STREAM, uris.first())
+        }
+    } else {
+        Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+            type = mimeType
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+        }
+    }
+
+    val clipData = ClipData.newUri(
+        context.contentResolver,
+        photos.first().fileName,
+        uris.first(),
+    )
+    uris.drop(1).forEach { uri ->
+        clipData.addItem(ClipData.Item(uri))
+    }
+
+    shareIntent.clipData = clipData
+    shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.share_selected)))
 }

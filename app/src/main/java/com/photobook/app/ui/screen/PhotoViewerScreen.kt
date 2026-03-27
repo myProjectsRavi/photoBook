@@ -1,5 +1,7 @@
 package com.photobook.app.ui.screen
 
+import android.content.ClipData
+import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -20,6 +22,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Icon
@@ -39,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -54,13 +60,17 @@ fun PhotoViewerScreen(
     startIndex: Int,
     onDismiss: () -> Unit,
     onPageChanged: (Int) -> Unit,
+    onToggleFavorite: (Long) -> Unit,
 ) {
     if (photos.isEmpty()) return
 
+    val context = LocalContext.current
     val safeStart = startIndex.coerceIn(0, photos.lastIndex)
     val pagerState = rememberPagerState(initialPage = safeStart, pageCount = { photos.size })
+    var currentPageScale by remember { mutableFloatStateOf(1f) }
 
     LaunchedEffect(pagerState.currentPage) {
+        currentPageScale = 1f
         onPageChanged(pagerState.currentPage)
     }
 
@@ -80,22 +90,77 @@ fun PhotoViewerScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    IconButton(onClick = onDismiss) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = stringResource(R.string.viewer_close),
-                            tint = Color.White,
-                        )
+                    Surface(
+                        color = Color(0x22FFFFFF),
+                        shape = RoundedCornerShape(28.dp),
+                    ) {
+                        IconButton(onClick = onDismiss) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = stringResource(R.string.viewer_close),
+                                tint = Color.White,
+                            )
+                        }
                     }
                     Text(
                         text = stringResource(R.string.viewer_index, pagerState.currentPage + 1, photos.size),
                         color = Color.White,
                     )
-                    Box(modifier = Modifier.size(48.dp))
+                    val active = photos[pagerState.currentPage]
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Surface(
+                            color = Color(0x22FFFFFF),
+                            shape = RoundedCornerShape(28.dp),
+                        ) {
+                            IconButton(onClick = { onToggleFavorite(active.id) }) {
+                                Icon(
+                                    imageVector = if (active.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                    contentDescription = stringResource(R.string.viewer_favorite),
+                                    tint = if (active.isFavorite) Color(0xFFFF6B6B) else Color.White,
+                                )
+                            }
+                        }
+                        Surface(
+                            color = Color(0x22FFFFFF),
+                            shape = RoundedCornerShape(28.dp),
+                        ) {
+                            IconButton(
+                                onClick = {
+                                    val uri = Uri.parse(active.uriString)
+                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = active.mimeType.ifBlank { "image/*" }
+                                        putExtra(Intent.EXTRA_STREAM, uri)
+                                        clipData = ClipData.newUri(
+                                            context.contentResolver,
+                                            active.fileName,
+                                            uri,
+                                        )
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(
+                                        Intent.createChooser(
+                                            shareIntent,
+                                            context.getString(R.string.viewer_share),
+                                        )
+                                    )
+                                },
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Share,
+                                    contentDescription = stringResource(R.string.viewer_share),
+                                    tint = Color.White,
+                                )
+                            }
+                        }
+                    }
                 }
 
                 HorizontalPager(
                     state = pagerState,
+                    userScrollEnabled = currentPageScale <= 1.02f,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
@@ -106,8 +171,17 @@ fun PhotoViewerScreen(
                     var translationY by remember(page) { mutableStateOf(0f) }
                     val transformState = rememberTransformableState { zoomChange, panChange, _ ->
                         scale = (scale * zoomChange).coerceIn(1f, 5f)
-                        translationX += panChange.x
-                        translationY += panChange.y
+                        if (scale <= 1.02f) {
+                            translationX = 0f
+                            translationY = 0f
+                            scale = 1f
+                        } else {
+                            translationX += panChange.x
+                            translationY += panChange.y
+                        }
+                        if (page == pagerState.currentPage) {
+                            currentPageScale = scale
+                        }
                     }
 
                     Box(
@@ -142,6 +216,13 @@ fun PhotoViewerScreen(
                         .padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
+                    if (photos.size > 1) {
+                        Text(
+                            text = stringResource(R.string.viewer_swipe_hint),
+                            color = Color.LightGray,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
                     Text(
                         text = active.fileName,
                         color = Color.White,

@@ -9,9 +9,17 @@
     <string name="no_results_title">No photos found</string>
     <string name="no_results_subtitle">Try a different keyword like &quot;today&quot;, &quot;camera&quot;, or &quot;document&quot;.</string>
     <string name="result_count">Found %1$d photos (Total: %2$d)</string>
+    <string name="found_photos">Found %1$d photos</string>
+    <string name="favorites_filter">Favorites</string>
+    <string name="selection_count">%1$d selected</string>
+    <string name="share_selected">Share selected</string>
+    <string name="clear_selection">Clear selection</string>
     <string name="viewer_close">Close</string>
+    <string name="viewer_favorite">Favorite photo</string>
+    <string name="viewer_share">Share photo</string>
     <string name="viewer_index">%1$d / %2$d</string>
     <string name="viewer_meta">%1$dx%2$d • %3$d KB • %4$s</string>
+    <string name="viewer_swipe_hint">Swipe left or right to browse matching photos</string>
     <string name="no_location">No location</string>
     <string name="welcome_title">Welcome to PhotoBook</string>
     <string name="welcome_subtitle">Private, secure and safe photo search. Your data never leaves your device.</string>

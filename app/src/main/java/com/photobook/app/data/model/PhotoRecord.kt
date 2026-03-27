@@ -25,6 +25,7 @@ data class PhotoRecord(
     val cameraModel: String?,
     val isFrontCamera: Boolean,
     val isHdr: Boolean,
+    val isFavorite: Boolean = false,
     val mlTags: List<MLTag> = emptyList(),
     val isMlProcessed: Boolean = false,
     val ocrText: String = "",

@@ -114,6 +114,8 @@ class FilterFactory @Inject constructor() {
                 photo.mimeType.contains("raw") || photo.fileName.endsWith(".dng", ignoreCase = true)
             }
 
+            "favorite", "favorites", "starred" -> { photo -> photo.isFavorite }
+
             else -> { _ -> true }
         }
     }

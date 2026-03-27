@@ -12,7 +12,11 @@ import com.photobook.app.data.model.PhotoRecord
 fun PhotoGrid(
     photos: List<PhotoRecord>,
     columns: Int,
+    selectedPhotoIds: Set<Long>,
+    isSelectionMode: Boolean,
     onPhotoClick: (Int) -> Unit,
+    onPhotoLongClick: (Int) -> Unit,
+    onToggleFavorite: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     LazyVerticalGrid(
@@ -25,7 +29,11 @@ fun PhotoGrid(
         ) { index, photo ->
             PhotoThumbnail(
                 photo = photo,
+                isSelected = photo.id in selectedPhotoIds,
+                showSelectionState = isSelectionMode,
                 onClick = { onPhotoClick(index) },
+                onLongClick = { onPhotoLongClick(index) },
+                onToggleFavorite = { onToggleFavorite(photo.id) },
             )
         }
     }

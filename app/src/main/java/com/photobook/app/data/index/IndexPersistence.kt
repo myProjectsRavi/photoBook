@@ -87,6 +87,7 @@ class IndexPersistence @Inject constructor(
             .put("cameraModel", cameraModel)
             .put("isFrontCamera", isFrontCamera)
             .put("isHdr", isHdr)
+            .put("isFavorite", isFavorite)
             .put("isMlProcessed", isMlProcessed)
             .put("ocrText", ocrText)
             .put("isOcrProcessed", isOcrProcessed)
@@ -132,6 +133,7 @@ class IndexPersistence @Inject constructor(
             cameraModel = optStringOrNull("cameraModel"),
             isFrontCamera = optBoolean("isFrontCamera"),
             isHdr = optBoolean("isHdr"),
+            isFavorite = optBoolean("isFavorite", false),
             mlTags = tags,
             isMlProcessed = optBoolean("isMlProcessed", tags.isNotEmpty()),
             ocrText = optString("ocrText", ""),

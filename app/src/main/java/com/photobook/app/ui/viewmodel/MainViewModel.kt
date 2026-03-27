@@ -50,6 +50,8 @@ class MainViewModel @Inject constructor(
         val query: String = "",
         val photoCount: Int = 0,
         val results: List<PhotoRecord> = emptyList(),
+        val favoritesOnly: Boolean = false,
+        val selectedPhotoIds: Set<Long> = emptySet(),
         val suggestions: List<SuggestionItem> = emptyList(),
         val showSuggestions: Boolean = false,
         val viewerStartIndex: Int? = null,
@@ -63,6 +65,7 @@ class MainViewModel @Inject constructor(
     private var hasInitializedIndex = false
     private var mediaObserver: ContentObserver? = null
     private var mediaRebuildJob: Job? = null
+    private var latestSearchResults: List<PhotoRecord> = emptyList()
 
     init {
         observeSearchResults()
@@ -79,7 +82,13 @@ class MainViewModel @Inject constructor(
 
     fun onQueryChanged(query: String) {
         queryFlow.value = query
-        uiState.update { it.copy(query = query) }
+        uiState.update {
+            it.copy(
+                query = query,
+                selectedPhotoIds = emptySet(),
+                viewerStartIndex = null,
+            )
+        }
     }
 
     fun onSearchSubmitted() {
@@ -102,6 +111,8 @@ class MainViewModel @Inject constructor(
         uiState.update {
             it.copy(
                 query = suggestion.text,
+                selectedPhotoIds = emptySet(),
+                viewerStartIndex = null,
                 showSuggestions = false,
             )
         }
@@ -123,13 +134,63 @@ class MainViewModel @Inject constructor(
         uiState.update {
             it.copy(
                 query = "",
+                selectedPhotoIds = emptySet(),
+                viewerStartIndex = null,
                 showSuggestions = focusFlow.value && it.suggestions.isNotEmpty(),
             )
         }
     }
 
     fun onPhotoClicked(index: Int) {
-        uiState.update { it.copy(viewerStartIndex = index) }
+        uiState.update { state ->
+            val photo = state.results.getOrNull(index) ?: return@update state
+            if (state.selectedPhotoIds.isNotEmpty()) {
+                val nextSelected = state.selectedPhotoIds.toMutableSet().apply {
+                    if (!add(photo.id)) remove(photo.id)
+                }
+                state.copy(selectedPhotoIds = nextSelected)
+            } else {
+                state.copy(viewerStartIndex = index)
+            }
+        }
+    }
+
+    fun onPhotoLongPressed(index: Int) {
+        uiState.update { state ->
+            val photo = state.results.getOrNull(index) ?: return@update state
+            val nextSelected = state.selectedPhotoIds.toMutableSet().apply {
+                if (!add(photo.id)) remove(photo.id)
+            }
+            state.copy(
+                selectedPhotoIds = nextSelected,
+                viewerStartIndex = null,
+            )
+        }
+    }
+
+    fun onToggleFavorite(photoId: Long) {
+        viewModelScope.launch {
+            photoIndex.toggleFavorite(photoId)
+            indexPersistence.save(photoIndex.snapshot())
+        }
+    }
+
+    fun onToggleFavoritesOnly() {
+        uiState.update { state ->
+            val nextFavoritesOnly = !state.favoritesOnly
+            val filtered = applyFavoritesFilter(latestSearchResults, nextFavoritesOnly)
+            val nextSelected = clampSelectionToResults(state.selectedPhotoIds, filtered)
+            state.copy(
+                favoritesOnly = nextFavoritesOnly,
+                results = filtered,
+                selectedPhotoIds = nextSelected,
+                viewerStartIndex = normalizeViewerIndex(state.viewerStartIndex, filtered),
+            )
+        }
+    }
+
+    fun clearSelection() {
+        uiState.update { it.copy(selectedPhotoIds = emptySet()) }
     }
 
     fun onViewerPageChanged(index: Int) {
@@ -183,11 +244,16 @@ class MainViewModel @Inject constructor(
                         context = buildSearchContext(),
                     )
                 }
+                latestSearchResults = searchResult.results
 
                 uiState.update {
+                    val filtered = applyFavoritesFilter(latestSearchResults, it.favoritesOnly)
+                    val nextSelected = clampSelectionToResults(it.selectedPhotoIds, filtered)
                     it.copy(
                         photoCount = records.size,
-                        results = searchResult.results,
+                        results = filtered,
+                        selectedPhotoIds = nextSelected,
+                        viewerStartIndex = normalizeViewerIndex(it.viewerStartIndex, filtered),
                         searchReady = !it.isIndexing,
                     )
                 }
@@ -322,11 +388,28 @@ class MainViewModel @Inject constructor(
         return map { rebuilt ->
             val existing = byId[rebuilt.id] ?: return@map rebuilt
             rebuilt.copy(
+                isFavorite = existing.isFavorite,
                 mlTags = existing.mlTags,
                 isMlProcessed = existing.isMlProcessed,
                 ocrText = existing.ocrText,
                 isOcrProcessed = existing.isOcrProcessed,
             )
         }
+    }
+
+    private fun applyFavoritesFilter(results: List<PhotoRecord>, favoritesOnly: Boolean): List<PhotoRecord> {
+        if (!favoritesOnly) return results
+        return results.filter { it.isFavorite }
+    }
+
+    private fun clampSelectionToResults(selectedPhotoIds: Set<Long>, results: List<PhotoRecord>): Set<Long> {
+        if (selectedPhotoIds.isEmpty() || results.isEmpty()) return emptySet()
+        val visibleIds = results.asSequence().map { it.id }.toSet()
+        return selectedPhotoIds.filterTo(linkedSetOf()) { it in visibleIds }
+    }
+
+    private fun normalizeViewerIndex(currentIndex: Int?, results: List<PhotoRecord>): Int? {
+        if (currentIndex == null || results.isEmpty()) return null
+        return currentIndex.coerceIn(0, results.lastIndex)
     }
 }
