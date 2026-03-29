@@ -92,7 +92,6 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         onSearchSubmitted = viewModel::onSearchSubmitted,
         onSearchFocusChanged = viewModel::onSearchFocusChanged,
         onSuggestionSelected = viewModel::onSuggestionSelected,
-        onRemoveHistorySuggestion = viewModel::onRemoveHistorySuggestion,
         onClearQuery = viewModel::onClearQuery,
         onToggleFavoritesOnly = viewModel::onToggleFavoritesOnly,
         onShareSelected = { selected ->
@@ -102,7 +101,6 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         onClearSelection = viewModel::clearSelection,
         onPhotoClick = viewModel::onPhotoClicked,
         onPhotoLongClick = viewModel::onPhotoLongPressed,
-        onToggleFavorite = viewModel::onToggleFavorite,
     )
 
     val viewerIndex = uiState.viewerStartIndex

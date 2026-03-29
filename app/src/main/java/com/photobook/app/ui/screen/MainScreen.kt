@@ -1,5 +1,6 @@
 package com.photobook.app.ui.screen
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -9,16 +10,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,14 +45,12 @@ fun MainScreen(
     onSearchSubmitted: () -> Unit,
     onSearchFocusChanged: (Boolean) -> Unit,
     onSuggestionSelected: (SuggestionItem) -> Unit,
-    onRemoveHistorySuggestion: (String) -> Unit,
     onClearQuery: () -> Unit,
     onToggleFavoritesOnly: () -> Unit,
     onShareSelected: (List<PhotoRecord>) -> Unit,
     onClearSelection: () -> Unit,
     onPhotoClick: (Int) -> Unit,
     onPhotoLongClick: (Int) -> Unit,
-    onToggleFavorite: (Long) -> Unit,
 ) {
     val isSelectionMode = selectedPhotoIds.isNotEmpty()
     val selectedPhotos = results.filter { it.id in selectedPhotoIds }
@@ -61,8 +58,9 @@ fun MainScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .animateContentSize()
             .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         SearchBar(
             query = query,
@@ -70,13 +68,19 @@ fun MainScreen(
             onSearch = onSearchSubmitted,
             onClear = onClearQuery,
             onFocusChanged = onSearchFocusChanged,
+            autoFocus = searchReady && query.isBlank(),
+        )
+
+        Text(
+            text = stringResource(R.string.private_reassurance),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
         SuggestionDropdown(
             visible = showSuggestions,
             suggestions = suggestions,
             onSuggestionClick = onSuggestionSelected,
-            onRemoveHistoryClick = onRemoveHistorySuggestion,
             modifier = Modifier.fillMaxWidth(),
         )
 
@@ -101,18 +105,19 @@ fun MainScreen(
                         )
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            IconButton(onClick = { onShareSelected(selectedPhotos) }) {
+                            TextButton(onClick = onClearSelection) {
+                                Text(text = stringResource(R.string.clear_selection))
+                            }
+                            Button(onClick = { onShareSelected(selectedPhotos) }) {
                                 Icon(
                                     imageVector = Icons.Default.Share,
-                                    contentDescription = stringResource(R.string.share_selected),
+                                    contentDescription = null,
                                 )
-                            }
-                            IconButton(onClick = onClearSelection) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = stringResource(R.string.clear_selection),
+                                Text(
+                                    text = stringResource(R.string.share_selected),
+                                    modifier = Modifier.padding(start = 6.dp),
                                 )
                             }
                         }
@@ -133,12 +138,6 @@ fun MainScreen(
                         selected = favoritesOnly,
                         onClick = onToggleFavoritesOnly,
                         label = { Text(text = stringResource(R.string.favorites_filter)) },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = if (favoritesOnly) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                contentDescription = null,
-                            )
-                        },
                     )
                 }
             }
@@ -160,7 +159,6 @@ fun MainScreen(
                     isSelectionMode = isSelectionMode,
                     onPhotoClick = onPhotoClick,
                     onPhotoLongClick = onPhotoLongClick,
-                    onToggleFavorite = onToggleFavorite,
                     modifier = Modifier.fillMaxSize(),
                 )
             }

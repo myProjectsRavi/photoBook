@@ -3,7 +3,7 @@
     <string name="search_placeholder">Search... try &quot;today&quot; or &quot;selfie&quot;</string>
     <string name="allow_photo_access">Allow Photo Access</string>
     <string name="permission_message">Allow photo access so PhotoBook can show only your on-device results. Nothing is uploaded.</string>
-    <string name="indexing_message">Setting things up for you. Your photos stay private on this device.</string>
+    <string name="indexing_message">Preparing your private photo library.</string>
     <string name="ready_message">PhotoBook is ready!</string>
     <string name="search_hint">Try: today, last week, screenshots, selfie, Hyderabad</string>
     <string name="no_results_title">No photos found</string>
@@ -21,7 +21,8 @@
     <string name="viewer_meta">%1$dx%2$d • %3$d KB • %4$s</string>
     <string name="viewer_swipe_hint">Swipe left or right to browse matching photos</string>
     <string name="no_location">No location</string>
-    <string name="welcome_title">Welcome to PhotoBook</string>
-    <string name="welcome_subtitle">Private, secure and safe photo search. Your data never leaves your device.</string>
-    <string name="welcome_search_prompt">Start with a keyword to see matching photos.</string>
+    <string name="welcome_title">Search anything</string>
+    <string name="welcome_subtitle">Private on-device photo search. Your photos never leave this device.</string>
+    <string name="welcome_search_prompt">Type a word, place, date, or moment.</string>
+    <string name="private_reassurance">Private, secure, and fully on-device.</string>
 </resources>

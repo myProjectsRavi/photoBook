@@ -44,6 +44,13 @@ fun EmptyState(modifier: Modifier = Modifier) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp),
         )
+        Text(
+            text = stringResource(R.string.private_reassurance),
+            style = MaterialTheme.typography.labelSmall,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 10.dp),
+        )
     }
 }
 
@@ -58,7 +65,7 @@ fun WelcomeState(modifier: Modifier = Modifier) {
     ) {
         Text(
             text = stringResource(R.string.welcome_title),
-            style = MaterialTheme.typography.headlineSmall,
+            style = MaterialTheme.typography.headlineMedium,
             textAlign = TextAlign.Center,
         )
         Text(
@@ -66,14 +73,14 @@ fun WelcomeState(modifier: Modifier = Modifier) {
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 12.dp),
+            modifier = Modifier.padding(top = 10.dp),
         )
         Text(
             text = stringResource(R.string.welcome_search_prompt),
             style = MaterialTheme.typography.bodySmall,
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(top = 16.dp),
+            modifier = Modifier.padding(top = 14.dp),
         )
     }
 }

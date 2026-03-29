@@ -20,6 +20,7 @@ import com.photobook.app.search.SuggestionEngine
 import com.photobook.app.util.Constants
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -28,6 +29,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 @HiltViewModel
@@ -91,6 +93,7 @@ class MainViewModel @Inject constructor(
     }
 
     fun onSearchSubmitted() {
+        runImmediateSearch(queryFlow.value)
         uiState.update { it.copy(showSuggestions = false) }
     }
 
@@ -105,22 +108,13 @@ class MainViewModel @Inject constructor(
 
     fun onSuggestionSelected(suggestion: SuggestionItem) {
         queryFlow.value = suggestion.text
+        runImmediateSearch(suggestion.text)
         uiState.update {
             it.copy(
                 query = suggestion.text,
                 selectedPhotoIds = emptySet(),
                 viewerStartIndex = null,
                 showSuggestions = false,
-            )
-        }
-    }
-
-    fun onRemoveHistorySuggestion(@Suppress("UNUSED_PARAMETER") suggestion: String) {
-        val updatedSuggestions = suggestionEngine.getSuggestions(queryFlow.value)
-        uiState.update {
-            it.copy(
-                suggestions = updatedSuggestions,
-                showSuggestions = focusFlow.value && updatedSuggestions.isNotEmpty(),
             )
         }
     }
@@ -227,19 +221,7 @@ class MainViewModel @Inject constructor(
             ) { query, records ->
                 Pair(query, records)
             }.collect { (query, records) ->
-                val normalizedQuery = query.trim()
-                val searchResult = if (normalizedQuery.isBlank()) {
-                    FilterEngine.SearchResult(
-                        results = emptyList(),
-                        tokens = emptyList(),
-                    )
-                } else {
-                    filterEngine.search(
-                        query = query,
-                        records = records,
-                        context = buildSearchContext(),
-                    )
-                }
+                val searchResult = runSearch(query, records)
                 latestSearchResults = searchResult.results
 
                 uiState.update {
@@ -253,6 +235,25 @@ class MainViewModel @Inject constructor(
                         searchReady = !it.isIndexing,
                     )
                 }
+            }
+        }
+    }
+
+    private fun runImmediateSearch(query: String) {
+        viewModelScope.launch {
+            val records = photoIndex.snapshot()
+            val searchResult = withContext(Dispatchers.Default) {
+                runSearch(query, records)
+            }
+            latestSearchResults = searchResult.results
+            uiState.update {
+                val filtered = applyFavoritesFilter(latestSearchResults, it.favoritesOnly)
+                val nextSelected = clampSelectionToResults(it.selectedPhotoIds, filtered)
+                it.copy(
+                    results = filtered,
+                    selectedPhotoIds = nextSelected,
+                    viewerStartIndex = normalizeViewerIndex(it.viewerStartIndex, filtered),
+                )
             }
         }
     }
@@ -370,5 +371,20 @@ class MainViewModel @Inject constructor(
     private fun normalizeViewerIndex(currentIndex: Int?, results: List<PhotoRecord>): Int? {
         if (currentIndex == null || results.isEmpty()) return null
         return currentIndex.coerceIn(0, results.lastIndex)
+    }
+
+    private fun runSearch(query: String, records: List<PhotoRecord>): FilterEngine.SearchResult {
+        val normalizedQuery = query.trim()
+        if (normalizedQuery.isBlank()) {
+            return FilterEngine.SearchResult(
+                results = emptyList(),
+                tokens = emptyList(),
+            )
+        }
+        return filterEngine.search(
+            query = query,
+            records = records,
+            context = buildSearchContext(),
+        )
     }
 }

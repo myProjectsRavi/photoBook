@@ -47,19 +47,13 @@ fun OnboardingScreen(
                 text = stringResource(R.string.indexing_message),
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 20.dp),
+                modifier = Modifier.padding(top = 18.dp),
             )
             LinearProgressIndicator(
                 progress = { progress.coerceIn(0f, 1f) },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 24.dp),
-            )
-            Text(
-                text = stringResource(R.string.search_hint),
-                style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 16.dp),
+                    .padding(top = 20.dp),
             )
         } else {
             Text(

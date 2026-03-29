@@ -16,7 +16,6 @@ fun PhotoGrid(
     isSelectionMode: Boolean,
     onPhotoClick: (Int) -> Unit,
     onPhotoLongClick: (Int) -> Unit,
-    onToggleFavorite: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     LazyVerticalGrid(
@@ -33,7 +32,6 @@ fun PhotoGrid(
                 showSelectionState = isSelectionMode,
                 onClick = { onPhotoClick(index) },
                 onLongClick = { onPhotoLongClick(index) },
-                onToggleFavorite = { onToggleFavorite(photo.id) },
             )
         }
     }

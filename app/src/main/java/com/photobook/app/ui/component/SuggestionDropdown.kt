@@ -12,22 +12,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Label
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Place
-import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.photobook.app.search.SuggestionItem
 
@@ -36,7 +27,6 @@ fun SuggestionDropdown(
     visible: Boolean,
     suggestions: List<SuggestionItem>,
     onSuggestionClick: (SuggestionItem) -> Unit,
-    onRemoveHistoryClick: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     AnimatedVisibility(
@@ -56,47 +46,18 @@ fun SuggestionDropdown(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { onSuggestionClick(suggestion) }
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        horizontalArrangement = Arrangement.Start,
                     ) {
-                        Icon(
-                            imageVector = categoryIcon(suggestion.text),
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
                         Text(
                             text = suggestion.text,
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.weight(1f),
                         )
-                        if (suggestion.isHistory) {
-                            IconButton(onClick = { onRemoveHistoryClick(suggestion.text) }) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Remove history item",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
                     }
                 }
             }
         }
-    }
-}
-
-private fun categoryIcon(suggestion: String): ImageVector {
-    val lower = suggestion.lowercase()
-    return when {
-        lower.contains("today") || lower.contains("week") || lower.contains("month") ||
-            lower.contains("year") || lower.contains("yesterday") -> Icons.Default.Schedule
-
-        lower.contains("camera") || lower.contains("screenshots") || lower.contains("download") ||
-            lower.contains("whatsapp") -> Icons.Default.Folder
-
-        lower.contains("home") || lower.contains("office") || lower.contains("near") -> Icons.Default.Place
-
-        else -> Icons.AutoMirrored.Filled.Label
     }
 }
