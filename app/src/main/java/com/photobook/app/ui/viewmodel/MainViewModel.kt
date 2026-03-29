@@ -28,7 +28,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import org.json.JSONArray
 import javax.inject.Inject
 
 @HiltViewModel
@@ -92,7 +91,6 @@ class MainViewModel @Inject constructor(
     }
 
     fun onSearchSubmitted() {
-        addToHistory(queryFlow.value)
         uiState.update { it.copy(showSuggestions = false) }
     }
 
@@ -107,7 +105,6 @@ class MainViewModel @Inject constructor(
 
     fun onSuggestionSelected(suggestion: SuggestionItem) {
         queryFlow.value = suggestion.text
-        addToHistory(suggestion.text)
         uiState.update {
             it.copy(
                 query = suggestion.text,
@@ -118,9 +115,8 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    fun onRemoveHistorySuggestion(suggestion: String) {
-        removeFromHistory(suggestion)
-        val updatedSuggestions = suggestionEngine.getSuggestions(queryFlow.value, readHistory())
+    fun onRemoveHistorySuggestion(@Suppress("UNUSED_PARAMETER") suggestion: String) {
+        val updatedSuggestions = suggestionEngine.getSuggestions(queryFlow.value)
         uiState.update {
             it.copy(
                 suggestions = updatedSuggestions,
@@ -209,7 +205,7 @@ class MainViewModel @Inject constructor(
             ) { query, focused ->
                 Pair(query, focused)
             }.collect { (query, focused) ->
-                val suggestions = suggestionEngine.getSuggestions(query, readHistory())
+                val suggestions = suggestionEngine.getSuggestions(query)
 
                 uiState.update {
                     it.copy(
@@ -310,43 +306,6 @@ class MainViewModel @Inject constructor(
             homeCountry = sharedPreferences.getString("home_country", null),
             radiusKm = sharedPreferences.getString("search_radius_km", null)?.toDoubleOrNull() ?: 1.0,
         )
-    }
-
-    private fun readHistory(): List<String> {
-        val raw = sharedPreferences.getString(Constants.SEARCH_HISTORY_KEY, "[]") ?: "[]"
-        return runCatching {
-            val array = JSONArray(raw)
-            buildList {
-                for (i in 0 until array.length()) {
-                    val value = array.optString(i)
-                    if (value.isNotBlank()) add(value)
-                }
-            }
-        }.getOrDefault(emptyList())
-    }
-
-    private fun addToHistory(query: String) {
-        val normalized = query.trim()
-        if (normalized.isBlank()) return
-
-        val current = readHistory().toMutableList()
-        current.removeAll { it.equals(normalized, ignoreCase = true) }
-        current.add(0, normalized)
-        val next = current.take(3)
-
-        val array = JSONArray()
-        next.forEach { array.put(it) }
-        sharedPreferences.edit().putString(Constants.SEARCH_HISTORY_KEY, array.toString()).apply()
-    }
-
-    private fun removeFromHistory(query: String) {
-        val next = readHistory()
-            .filterNot { it.equals(query, ignoreCase = true) }
-            .take(3)
-
-        val array = JSONArray()
-        next.forEach { array.put(it) }
-        sharedPreferences.edit().putString(Constants.SEARCH_HISTORY_KEY, array.toString()).apply()
     }
 
     private fun registerMediaObserver() {
