@@ -1,0 +1,107 @@
+package com.photobook.app.data.db
+
+import androidx.room.Entity
+import androidx.room.PrimaryKey
+import com.photobook.app.data.model.PhotoRecord
+
+@Entity(tableName = "photos")
+data class PhotoEntity(
+    @PrimaryKey
+    val id: Long,
+    val uriString: String,
+    val filePath: String,
+    val fileName: String,
+    val dateAdded: Long,
+    val year: Int,
+    val month: Int,
+    val dayOfMonth: Int,
+    val dayOfWeek: Int,
+    val hourOfDay: Int,
+    val latitude: Double?,
+    val longitude: Double?,
+    val city: String?,
+    val state: String?,
+    val country: String?,
+    val fileSize: Long,
+    val width: Int,
+    val height: Int,
+    val mimeType: String,
+    val folderName: String,
+    val folderPath: String,
+    val cameraModel: String?,
+    val isFrontCamera: Boolean,
+    val isHdr: Boolean,
+    val isFavorite: Boolean,
+    val mlTagsPayload: String,
+    val isMlProcessed: Boolean,
+    val ocrText: String,
+    val isOcrProcessed: Boolean,
+)
+
+fun PhotoEntity.toPhotoRecord(): PhotoRecord {
+    return PhotoRecord(
+        id = id,
+        uriString = uriString,
+        filePath = filePath,
+        fileName = fileName,
+        dateAdded = dateAdded,
+        year = year,
+        month = month,
+        dayOfMonth = dayOfMonth,
+        dayOfWeek = dayOfWeek,
+        hourOfDay = hourOfDay,
+        latitude = latitude,
+        longitude = longitude,
+        city = city,
+        state = state,
+        country = country,
+        fileSize = fileSize,
+        width = width,
+        height = height,
+        mimeType = mimeType,
+        folderName = folderName,
+        folderPath = folderPath,
+        cameraModel = cameraModel,
+        isFrontCamera = isFrontCamera,
+        isHdr = isHdr,
+        isFavorite = isFavorite,
+        mlTags = PhotoTagCodec.decode(mlTagsPayload),
+        isMlProcessed = isMlProcessed,
+        ocrText = ocrText,
+        isOcrProcessed = isOcrProcessed,
+    )
+}
+
+fun PhotoRecord.toPhotoEntity(): PhotoEntity {
+    return PhotoEntity(
+        id = id,
+        uriString = uriString,
+        filePath = filePath,
+        fileName = fileName,
+        dateAdded = dateAdded,
+        year = year,
+        month = month,
+        dayOfMonth = dayOfMonth,
+        dayOfWeek = dayOfWeek,
+        hourOfDay = hourOfDay,
+        latitude = latitude,
+        longitude = longitude,
+        city = city,
+        state = state,
+        country = country,
+        fileSize = fileSize,
+        width = width,
+        height = height,
+        mimeType = mimeType,
+        folderName = folderName,
+        folderPath = folderPath,
+        cameraModel = cameraModel,
+        isFrontCamera = isFrontCamera,
+        isHdr = isHdr,
+        isFavorite = isFavorite,
+        mlTagsPayload = PhotoTagCodec.encode(mlTags),
+        isMlProcessed = isMlProcessed,
+        ocrText = ocrText,
+        isOcrProcessed = isOcrProcessed,
+    )
+}

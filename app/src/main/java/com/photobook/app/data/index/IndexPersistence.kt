@@ -1,6 +1,12 @@
 package com.photobook.app.data.index
 
 import android.content.Context
+import androidx.room.withTransaction
+import com.photobook.app.data.db.PhotoBookDatabase
+import com.photobook.app.data.db.PhotoDao
+import com.photobook.app.data.db.toFtsEntity
+import com.photobook.app.data.db.toPhotoEntity
+import com.photobook.app.data.db.toPhotoRecord
 import com.photobook.app.data.model.MLTag
 import com.photobook.app.data.model.PhotoRecord
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -13,85 +19,160 @@ import javax.inject.Inject
 
 class IndexPersistence @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val database: PhotoBookDatabase,
+    private val photoDao: PhotoDao,
 ) {
 
-    private val indexFile = File(context.filesDir, "photo_index.json")
-
-    suspend fun save(records: List<PhotoRecord>) {
-        withContext(Dispatchers.IO) {
-            if (records.isEmpty()) {
-                if (indexFile.exists()) indexFile.delete()
-                return@withContext
-            }
-
-            val root = JSONObject()
-            val photos = JSONArray()
-            records.forEach { record ->
-                photos.put(record.toJson())
-            }
-            root.put("photos", photos)
-            indexFile.writeText(root.toString())
-        }
-    }
+    private val legacyIndexFile = File(context.filesDir, "photo_index.json")
 
     suspend fun load(): List<PhotoRecord> {
         return withContext(Dispatchers.IO) {
-            if (!indexFile.exists()) {
-                return@withContext emptyList()
+            val existing = photoDao.getAll().map { it.toPhotoRecord() }
+            if (existing.isNotEmpty()) {
+                return@withContext existing
             }
-            runCatching {
-                val root = JSONObject(indexFile.readText())
-                val photos = root.optJSONArray("photos") ?: return@runCatching emptyList()
-                buildList {
-                    for (i in 0 until photos.length()) {
-                        val obj = photos.optJSONObject(i) ?: continue
-                        add(obj.toPhotoRecord())
-                    }
-                }
-            }.getOrDefault(emptyList())
+
+            val imported = loadLegacyJson()
+            if (imported.isNotEmpty()) {
+                replaceAll(imported)
+                runCatching { legacyIndexFile.delete() }
+            }
+            imported
         }
     }
 
-    private fun PhotoRecord.toJson(): JSONObject {
-        val mlTagArray = JSONArray()
-        mlTags.forEach { tag ->
-            mlTagArray.put(
-                JSONObject()
-                    .put("label", tag.label)
-                    .put("confidence", tag.confidence)
-            )
+    suspend fun save(records: List<PhotoRecord>) {
+        withContext(Dispatchers.IO) {
+            replaceAll(records)
         }
+    }
 
-        return JSONObject()
-            .put("id", id)
-            .put("uriString", uriString)
-            .put("filePath", filePath)
-            .put("fileName", fileName)
-            .put("dateAdded", dateAdded)
-            .put("year", year)
-            .put("month", month)
-            .put("dayOfMonth", dayOfMonth)
-            .put("dayOfWeek", dayOfWeek)
-            .put("hourOfDay", hourOfDay)
-            .put("latitude", latitude)
-            .put("longitude", longitude)
-            .put("city", city)
-            .put("state", state)
-            .put("country", country)
-            .put("fileSize", fileSize)
-            .put("width", width)
-            .put("height", height)
-            .put("mimeType", mimeType)
-            .put("folderName", folderName)
-            .put("folderPath", folderPath)
-            .put("cameraModel", cameraModel)
-            .put("isFrontCamera", isFrontCamera)
-            .put("isHdr", isHdr)
-            .put("isFavorite", isFavorite)
-            .put("isMlProcessed", isMlProcessed)
-            .put("ocrText", ocrText)
-            .put("isOcrProcessed", isOcrProcessed)
-            .put("mlTags", mlTagArray)
+    suspend fun upsert(record: PhotoRecord) {
+        upsertAll(listOf(record))
+    }
+
+    suspend fun upsertAll(records: List<PhotoRecord>) {
+        if (records.isEmpty()) return
+        withContext(Dispatchers.IO) {
+            database.withTransaction {
+                val entities = records.map { it.toPhotoEntity() }
+                entities.chunked(DB_BATCH_SIZE).forEach { batch ->
+                    photoDao.upsertPhotos(batch)
+                }
+                entities.map { it.toFtsEntity() }
+                    .chunked(DB_BATCH_SIZE)
+                    .forEach { batch ->
+                        photoDao.upsertFtsRows(batch)
+                    }
+            }
+        }
+    }
+
+    suspend fun removeByIds(ids: Collection<Long>) {
+        if (ids.isEmpty()) return
+        withContext(Dispatchers.IO) {
+            database.withTransaction {
+                deleteByIdsInternal(ids.toList())
+            }
+        }
+    }
+
+    suspend fun setFavorite(id: Long, isFavorite: Boolean) {
+        withContext(Dispatchers.IO) {
+            photoDao.updateFavorite(id, isFavorite)
+        }
+    }
+
+    suspend fun searchByQueryText(rawQuery: String, limit: Int = 1200): List<PhotoRecord> {
+        val matchQuery = toFtsMatchQuery(rawQuery) ?: return emptyList()
+        return withContext(Dispatchers.IO) {
+            val ids = runCatching {
+                photoDao.searchIdsByText(matchQuery, limit)
+            }.getOrDefault(emptyList())
+            if (ids.isEmpty()) {
+                return@withContext emptyList()
+            }
+
+            val entities = photoDao.getByIds(ids)
+            if (entities.isEmpty()) {
+                return@withContext emptyList()
+            }
+
+            val byId = entities.associateBy { it.id }
+            ids.mapNotNull { id -> byId[id]?.toPhotoRecord() }
+        }
+    }
+
+    private suspend fun replaceAll(records: List<PhotoRecord>) {
+        database.withTransaction {
+            if (records.isEmpty()) {
+                val existingIds = photoDao.getAllIds()
+                deleteByIdsInternal(existingIds)
+                return@withTransaction
+            }
+
+            val existingIds = photoDao.getAllIds().toSet()
+            val entities = records.map { it.toPhotoEntity() }
+            entities.chunked(DB_BATCH_SIZE).forEach { batch ->
+                photoDao.upsertPhotos(batch)
+            }
+            entities.map { it.toFtsEntity() }
+                .chunked(DB_BATCH_SIZE)
+                .forEach { batch ->
+                    photoDao.upsertFtsRows(batch)
+                }
+
+            val incomingIds = entities.asSequence().map { it.id }.toSet()
+            val staleIds = existingIds - incomingIds
+            deleteByIdsInternal(staleIds.toList())
+        }
+    }
+
+    private suspend fun deleteByIdsInternal(ids: List<Long>) {
+        ids.chunked(DB_BATCH_SIZE).forEach { batch ->
+            if (batch.isNotEmpty()) {
+                photoDao.deleteByIds(batch)
+                photoDao.deleteFtsByRowIds(batch)
+            }
+        }
+    }
+
+    private fun toFtsMatchQuery(rawQuery: String): String? {
+        val tokens = rawQuery.lowercase()
+            .split(Regex("[^\\p{L}\\p{N}_]+"))
+            .map { token -> token.trim() }
+            .filter { token -> token.length >= 2 }
+            .map(::sanitizeToken)
+            .filter { token -> token.length >= 2 }
+            .distinct()
+            .take(8)
+        if (tokens.isEmpty()) return null
+
+        return tokens.joinToString(" AND ") { token ->
+            "$token*"
+        }
+    }
+
+    private fun sanitizeToken(token: String): String {
+        return token.replace("\"", "")
+            .replace("'", "")
+            .replace("`", "")
+    }
+
+    private fun loadLegacyJson(): List<PhotoRecord> {
+        if (!legacyIndexFile.exists()) {
+            return emptyList()
+        }
+        return runCatching {
+            val root = JSONObject(legacyIndexFile.readText())
+            val photos = root.optJSONArray("photos") ?: return@runCatching emptyList()
+            buildList {
+                for (i in 0 until photos.length()) {
+                    val obj = photos.optJSONObject(i) ?: continue
+                    add(obj.toPhotoRecord())
+                }
+            }
+        }.getOrDefault(emptyList())
     }
 
     private fun JSONObject.toPhotoRecord(): PhotoRecord {
@@ -147,5 +228,9 @@ class IndexPersistence @Inject constructor(
 
     private fun JSONObject.optDoubleOrNull(name: String): Double? {
         return if (isNull(name)) null else optDouble(name)
+    }
+
+    companion object {
+        private const val DB_BATCH_SIZE = 200
     }
 }

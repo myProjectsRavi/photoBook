@@ -11,12 +11,21 @@ import androidx.lifecycle.viewModelScope
 import com.photobook.app.data.index.IndexBuilder
 import com.photobook.app.data.index.IndexPersistence
 import com.photobook.app.data.index.PhotoIndex
+import com.photobook.app.data.model.RawPhotoData
+import com.photobook.app.data.source.MediaStoreScanner
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.ml.TaggingWorker
 import com.photobook.app.search.FilterEngine
+import com.photobook.app.search.FolderToken
+import com.photobook.app.search.LocationToken
+import com.photobook.app.search.MLTagToken
+import com.photobook.app.search.QueryParser
+import com.photobook.app.search.QueryToken
 import com.photobook.app.search.SearchContext
 import com.photobook.app.search.SuggestionItem
 import com.photobook.app.search.SuggestionEngine
+import com.photobook.app.search.TextToken
+import com.photobook.app.search.TokenClassifier
 import com.photobook.app.util.Constants
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -36,9 +45,12 @@ import javax.inject.Inject
 class MainViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val indexBuilder: IndexBuilder,
+    private val mediaStoreScanner: MediaStoreScanner,
     private val photoIndex: PhotoIndex,
     private val indexPersistence: IndexPersistence,
     private val filterEngine: FilterEngine,
+    private val queryParser: QueryParser,
+    private val tokenClassifier: TokenClassifier,
     private val suggestionEngine: SuggestionEngine,
     private val sharedPreferences: SharedPreferences,
 ) : ViewModel() {
@@ -160,8 +172,8 @@ class MainViewModel @Inject constructor(
 
     fun onToggleFavorite(photoId: Long) {
         viewModelScope.launch {
-            photoIndex.toggleFavorite(photoId)
-            indexPersistence.save(photoIndex.snapshot())
+            val isFavorite = photoIndex.toggleFavorite(photoId)
+            indexPersistence.setFavorite(photoId, isFavorite)
         }
     }
 
@@ -242,9 +254,7 @@ class MainViewModel @Inject constructor(
     private fun runImmediateSearch(query: String) {
         viewModelScope.launch {
             val records = photoIndex.snapshot()
-            val searchResult = withContext(Dispatchers.Default) {
-                runSearch(query, records)
-            }
+            val searchResult = runSearch(query, records)
             latestSearchResults = searchResult.results
             uiState.update {
                 val filtered = applyFavoritesFilter(latestSearchResults, it.favoritesOnly)
@@ -273,17 +283,7 @@ class MainViewModel @Inject constructor(
                 photoIndex.setRecords(persisted)
             }
 
-            if (photoIndex.snapshot().isEmpty()) {
-                val built = indexBuilder.buildIndex { processed, total ->
-                    if (total <= 0) return@buildIndex
-                    uiState.update {
-                        it.copy(indexProgress = processed.toFloat() / total.toFloat())
-                    }
-                }
-
-                photoIndex.setRecords(built)
-                indexPersistence.save(built)
-            }
+            syncMediaStoreIncremental(forceFullSync = photoIndex.snapshot().isEmpty())
 
             uiState.update {
                 it.copy(
@@ -318,10 +318,7 @@ class MainViewModel @Inject constructor(
                 mediaRebuildJob?.cancel()
                 mediaRebuildJob = viewModelScope.launch {
                     delay(Constants.MEDIA_OBSERVER_DEBOUNCE_MS)
-                    val rebuilt = indexBuilder.buildIndex().preservingIntelligence(photoIndex.snapshot())
-                    photoIndex.setRecords(rebuilt)
-                    indexPersistence.save(rebuilt)
-                    TaggingWorker.enqueue(context)
+                    syncMediaStoreIncremental(forceFullSync = false)
                 }
             }
         }
@@ -331,6 +328,138 @@ class MainViewModel @Inject constructor(
             observer,
         )
         mediaObserver = observer
+    }
+
+    private suspend fun syncMediaStoreIncremental(forceFullSync: Boolean) {
+        val existing = photoIndex.snapshot()
+        val currentVersion = mediaStoreScanner.currentMediaStoreVersion()
+        val currentGeneration = mediaStoreScanner.currentGenerationOrNull()
+        val lastVersion = sharedPreferences.getString(Constants.MEDIA_STORE_VERSION_KEY, null)
+        val lastGeneration = sharedPreferences.getLong(Constants.MEDIA_STORE_GENERATION_KEY, -1L)
+            .takeIf { value -> value >= 0L }
+
+        val shouldFullSync = forceFullSync || existing.isEmpty() || lastVersion == null || currentVersion != lastVersion
+        if (shouldFullSync) {
+            rebuildEntireIndex(existing)
+            persistMediaStoreSyncState(currentVersion, currentGeneration)
+            return
+        }
+
+        if (lastGeneration != null && currentGeneration != null) {
+            if (currentGeneration > lastGeneration) {
+                processGenerationDelta(existing, lastGeneration)
+            }
+            persistMediaStoreSyncState(currentVersion, currentGeneration)
+            return
+        }
+
+        processLegacyDelta(existing)
+        persistMediaStoreSyncState(currentVersion, currentGeneration)
+    }
+
+    private suspend fun rebuildEntireIndex(existing: List<PhotoRecord>) {
+        val rebuilt = indexBuilder.buildIndex { processed, total ->
+            if (total <= 0) return@buildIndex
+            uiState.update {
+                it.copy(indexProgress = processed.toFloat() / total.toFloat())
+            }
+        }.preservingIntelligence(existing)
+
+        photoIndex.setRecords(rebuilt)
+        indexPersistence.save(rebuilt)
+    }
+
+    private suspend fun processGenerationDelta(
+        existing: List<PhotoRecord>,
+        lastGeneration: Long,
+    ) {
+        val changedRaw = mediaStoreScanner.scanChangedSince(lastGeneration)
+        val allMediaIds = mediaStoreScanner.scanAllIds()
+        applyDelta(existing, changedRaw, allMediaIds)
+    }
+
+    private suspend fun processLegacyDelta(existing: List<PhotoRecord>) {
+        val allRaw = mediaStoreScanner.scanAll()
+        val changedRaw = changedRawPhotosForLegacySync(allRaw, existing)
+        val allMediaIds = allRaw.asSequence().map { raw -> raw.id }.toSet()
+        applyDelta(existing, changedRaw, allMediaIds)
+    }
+
+    private suspend fun applyDelta(
+        existing: List<PhotoRecord>,
+        changedRaw: List<RawPhotoData>,
+        allMediaIds: Set<Long>,
+    ) {
+        val existingById = existing.associateBy { record -> record.id }
+        val removedIds = existingById.keys - allMediaIds
+
+        val changedRebuilt = if (changedRaw.isNotEmpty()) {
+            indexBuilder.buildIndexFromRaw(changedRaw).preservingIntelligence(existing)
+        } else {
+            emptyList()
+        }
+
+        if (changedRebuilt.isEmpty() && removedIds.isEmpty()) {
+            return
+        }
+
+        val merged = existingById.toMutableMap()
+        changedRebuilt.forEach { record ->
+            merged[record.id] = record
+        }
+        removedIds.forEach { id ->
+            merged.remove(id)
+        }
+
+        val updatedRecords = merged.values.sortedByDescending { record -> record.dateAdded }
+        photoIndex.setRecords(updatedRecords)
+
+        if (changedRebuilt.isNotEmpty()) {
+            indexPersistence.upsertAll(changedRebuilt)
+        }
+        if (removedIds.isNotEmpty()) {
+            indexPersistence.removeByIds(removedIds)
+        }
+
+        TaggingWorker.enqueue(context)
+    }
+
+    private fun changedRawPhotosForLegacySync(
+        allRaw: List<RawPhotoData>,
+        existing: List<PhotoRecord>,
+    ): List<RawPhotoData> {
+        if (allRaw.isEmpty()) return emptyList()
+        val existingById = existing.associateBy { record -> record.id }
+        return allRaw.filter { raw ->
+            val previous = existingById[raw.id] ?: return@filter true
+            rawDiffersFromRecord(raw, previous)
+        }
+    }
+
+    private fun rawDiffersFromRecord(raw: RawPhotoData, existing: PhotoRecord): Boolean {
+        return raw.uriString != existing.uriString ||
+            raw.filePath != existing.filePath ||
+            raw.fileName != existing.fileName ||
+            raw.dateAdded != existing.dateAdded ||
+            raw.fileSize != existing.fileSize ||
+            raw.width != existing.width ||
+            raw.height != existing.height ||
+            raw.mimeType != existing.mimeType ||
+            raw.folderName.lowercase() != existing.folderName ||
+            raw.folderPath.lowercase() != existing.folderPath
+    }
+
+    private fun persistMediaStoreSyncState(version: String, generation: Long?) {
+        sharedPreferences.edit()
+            .putString(Constants.MEDIA_STORE_VERSION_KEY, version)
+            .apply {
+                if (generation != null) {
+                    putLong(Constants.MEDIA_STORE_GENERATION_KEY, generation)
+                } else {
+                    remove(Constants.MEDIA_STORE_GENERATION_KEY)
+                }
+            }
+            .apply()
     }
 
     override fun onCleared() {
@@ -373,7 +502,7 @@ class MainViewModel @Inject constructor(
         return currentIndex.coerceIn(0, results.lastIndex)
     }
 
-    private fun runSearch(query: String, records: List<PhotoRecord>): FilterEngine.SearchResult {
+    private suspend fun runSearch(query: String, records: List<PhotoRecord>): FilterEngine.SearchResult {
         val normalizedQuery = query.trim()
         if (normalizedQuery.isBlank()) {
             return FilterEngine.SearchResult(
@@ -381,10 +510,35 @@ class MainViewModel @Inject constructor(
                 tokens = emptyList(),
             )
         }
-        return filterEngine.search(
-            query = query,
-            records = records,
-            context = buildSearchContext(),
-        )
+
+        val typedTokens = queryParser.tokenize(normalizedQuery).map(tokenClassifier::classify)
+        val shouldUseDao = shouldUseDaoCandidateSearch(typedTokens)
+        val daoCandidates = if (shouldUseDao) {
+            indexPersistence.searchByQueryText(normalizedQuery)
+        } else {
+            emptyList()
+        }
+        val recordsToSearch = if (daoCandidates.isNotEmpty()) daoCandidates else records
+
+        return withContext(Dispatchers.Default) {
+            filterEngine.search(
+                query = query,
+                records = recordsToSearch,
+                context = buildSearchContext(),
+            )
+        }
+    }
+
+    private fun shouldUseDaoCandidateSearch(tokens: List<QueryToken>): Boolean {
+        if (tokens.isEmpty()) return false
+        return tokens.any { token ->
+            when (token) {
+                is TextToken -> true
+                is MLTagToken -> true
+                is FolderToken -> true
+                is LocationToken -> token.keyword !in setOf("near_me", "here", "home", "office", "abroad")
+                else -> false
+            }
+        }
     }
 }

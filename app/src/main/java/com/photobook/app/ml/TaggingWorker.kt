@@ -12,6 +12,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.photobook.app.data.index.IndexPersistence
 import com.photobook.app.data.index.PhotoIndex
+import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.util.Constants
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -37,6 +38,7 @@ class TaggingWorker @AssistedInject constructor(
         }
 
         var processed = 0
+        val pendingUpdates = mutableListOf<PhotoRecord>()
         photos.forEachIndexed { index, photo ->
             if (isStopped) return Result.retry()
 
@@ -44,18 +46,24 @@ class TaggingWorker @AssistedInject constructor(
             val needsOcr = !photo.isOcrProcessed
             if (needsMl || needsOcr) {
                 val analysis = mlTagger.analyzePhoto(photo.uriString, photo.isFrontCamera)
-                photoIndex.updatePhotoIntelligence(
+                val updated = photoIndex.updatePhotoIntelligence(
                     id = photo.id,
                     tags = if (needsMl) analysis.tags else null,
                     isMlProcessed = if (needsMl) true else null,
                     ocrText = if (needsOcr) analysis.ocrText else null,
                     isOcrProcessed = if (needsOcr) true else null,
                 )
+                if (updated != null) {
+                    pendingUpdates += updated
+                }
                 processed += 1
             }
 
             if (processed > 0 && processed % Constants.BATCH_SIZE == 0) {
-                indexPersistence.save(photoIndex.snapshot())
+                if (pendingUpdates.isNotEmpty()) {
+                    indexPersistence.upsertAll(pendingUpdates.toList())
+                    pendingUpdates.clear()
+                }
                 if (isBatteryTooLow()) return Result.retry()
                 delay(Constants.BATCH_DELAY_MS)
             }
@@ -65,7 +73,10 @@ class TaggingWorker @AssistedInject constructor(
             }
         }
 
-        indexPersistence.save(photoIndex.snapshot())
+        if (pendingUpdates.isNotEmpty()) {
+            indexPersistence.upsertAll(pendingUpdates.toList())
+            pendingUpdates.clear()
+        }
         return Result.success()
     }
 

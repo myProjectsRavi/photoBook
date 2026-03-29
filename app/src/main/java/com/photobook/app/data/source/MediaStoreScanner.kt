@@ -2,6 +2,7 @@ package com.photobook.app.data.source
 
 import android.content.ContentUris
 import android.content.Context
+import android.os.Build
 import android.provider.MediaStore
 import com.photobook.app.data.model.RawPhotoData
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -13,25 +14,81 @@ class MediaStoreScanner @Inject constructor(
 
     @Suppress("DEPRECATION")
     fun scanAll(): List<RawPhotoData> {
-        val projection = arrayOf(
-            MediaStore.Images.Media._ID,
-            MediaStore.Images.Media.DISPLAY_NAME,
-            MediaStore.Images.Media.DATE_ADDED,
-            MediaStore.Images.Media.SIZE,
-            MediaStore.Images.Media.WIDTH,
-            MediaStore.Images.Media.HEIGHT,
-            MediaStore.Images.Media.MIME_TYPE,
-            MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
-            MediaStore.Images.Media.RELATIVE_PATH,
-            MediaStore.Images.Media.DATA,
+        return queryPhotos(
+            selection = null,
+            selectionArgs = null,
         )
+    }
+
+    @Suppress("DEPRECATION")
+    fun scanChangedSince(lastGeneration: Long): List<RawPhotoData> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return emptyList()
+        }
+        return queryPhotos(
+            selection = "${MediaStore.MediaColumns.GENERATION_MODIFIED} > ?",
+            selectionArgs = arrayOf(lastGeneration.toString()),
+        )
+    }
+
+    fun scanAllIds(): Set<Long> {
+        val ids = linkedSetOf<Long>()
+        context.contentResolver.query(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            arrayOf(MediaStore.Images.Media._ID),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+            while (cursor.moveToNext()) {
+                ids += cursor.getLong(idIndex)
+            }
+        }
+        return ids
+    }
+
+    fun currentMediaStoreVersion(): String {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return "legacy_media_store"
+        }
+        return MediaStore.getVersion(context)
+    }
+
+    fun currentGenerationOrNull(): Long? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        return runCatching {
+            MediaStore.getGeneration(context, MediaStore.VOLUME_EXTERNAL)
+        }.getOrNull()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun queryPhotos(
+        selection: String?,
+        selectionArgs: Array<String>?,
+    ): List<RawPhotoData> {
+        val projection = buildList {
+            add(MediaStore.Images.Media._ID)
+            add(MediaStore.Images.Media.DISPLAY_NAME)
+            add(MediaStore.Images.Media.DATE_ADDED)
+            add(MediaStore.Images.Media.SIZE)
+            add(MediaStore.Images.Media.WIDTH)
+            add(MediaStore.Images.Media.HEIGHT)
+            add(MediaStore.Images.Media.MIME_TYPE)
+            add(MediaStore.Images.Media.BUCKET_DISPLAY_NAME)
+            add(MediaStore.Images.Media.RELATIVE_PATH)
+            add(MediaStore.Images.Media.DATA)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                add(MediaStore.MediaColumns.GENERATION_MODIFIED)
+            }
+        }.toTypedArray()
 
         val photos = mutableListOf<RawPhotoData>()
         context.contentResolver.query(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             projection,
-            null,
-            null,
+            selection,
+            selectionArgs,
             "${MediaStore.Images.Media.DATE_ADDED} DESC",
         )?.use { cursor ->
             val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
@@ -44,6 +101,11 @@ class MediaStoreScanner @Inject constructor(
             val bucketNameIndex = cursor.getColumnIndex(MediaStore.Images.Media.BUCKET_DISPLAY_NAME)
             val relativePathIndex = cursor.getColumnIndex(MediaStore.Images.Media.RELATIVE_PATH)
             val dataPathIndex = cursor.getColumnIndex(MediaStore.Images.Media.DATA)
+            val generationIndex = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                cursor.getColumnIndex(MediaStore.MediaColumns.GENERATION_MODIFIED)
+            } else {
+                -1
+            }
 
             while (cursor.moveToNext()) {
                 val id = cursor.getLong(idIndex)
@@ -88,6 +150,7 @@ class MediaStoreScanner @Inject constructor(
                     mimeType = cursor.getString(mimeIndex).orEmpty().lowercase(),
                     folderName = folderName,
                     folderPath = folderPath,
+                    generationModified = if (generationIndex >= 0) cursor.getLong(generationIndex) else null,
                 )
             }
         }

@@ -60,7 +60,8 @@ class PhotoIndex @Inject constructor() {
         isMlProcessed: Boolean? = null,
         ocrText: String? = null,
         isOcrProcessed: Boolean? = null,
-    ) {
+    ): PhotoRecord? {
+        var updatedRecord: PhotoRecord? = null
         mutex.withLock {
             val updated = recordsFlow.value.map { record ->
                 if (record.id != id) return@map record
@@ -69,16 +70,19 @@ class PhotoIndex @Inject constructor() {
                     mergeTags(record.mlTags, incoming)
                 } ?: record.mlTags
 
-                record.copy(
+                val nextRecord = record.copy(
                     mlTags = nextTags,
                     isMlProcessed = isMlProcessed ?: record.isMlProcessed,
                     ocrText = ocrText ?: record.ocrText,
                     isOcrProcessed = isOcrProcessed ?: record.isOcrProcessed,
                 )
+                updatedRecord = nextRecord
+                nextRecord
             }
             recordsFlow.value = updated
             rebuildAuxiliarySets(updated)
         }
+        return updatedRecord
     }
 
     suspend fun setFavorite(id: Long, isFavorite: Boolean) {
