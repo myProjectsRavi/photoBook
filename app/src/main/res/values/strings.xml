@@ -17,6 +17,15 @@
     <string name="viewer_close">Close</string>
     <string name="viewer_favorite">Favorite photo</string>
     <string name="viewer_share">Share photo</string>
+    <string name="viewer_copy_text">Copy text from photo</string>
+    <string name="viewer_copy_text_title">Text in photo</string>
+    <string name="viewer_copy_text_action">Copy text</string>
+    <string name="viewer_copy_text_loading">Extracting text on-device...</string>
+    <string name="viewer_copy_text_empty">No readable text found in this photo.</string>
+    <string name="viewer_copy_text_error">Couldn\'t extract text from this photo.</string>
+    <string name="viewer_copy_text_retry">Retry</string>
+    <string name="viewer_copy_text_refreshing">Improving text accuracy...</string>
+    <string name="viewer_copy_text_success">Text copied</string>
     <string name="viewer_index">%1$d / %2$d</string>
     <string name="viewer_meta">%1$dx%2$d • %3$d KB • %4$s</string>
     <string name="viewer_swipe_hint">Swipe left or right to browse matching photos</string>
