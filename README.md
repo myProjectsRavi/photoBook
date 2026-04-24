@@ -52,6 +52,17 @@ PhotoBook is built with a production-grade, modern Android stack:
 2. Open in **Android Studio (Latest Version)**.
 3. Build and run on Android 8.0 (API 26) or higher.
 
+## 🔐 Release Signing
+
+1. Copy `keystore.properties.example` to `keystore.properties`.
+2. Fill real values and use an **absolute** path for `storeFile`.
+3. Build signed release artifacts:
+   ```bash
+   ./gradlew bundleRelease
+   ```
+
+If you use Gradle injected signing properties (`android.injected.signing.*`), the keystore path must be absolute.
+
 ## 📄 License
 
 This project is licensed under the MIT License.

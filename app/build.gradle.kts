@@ -1,3 +1,6 @@
+import java.io.File
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -5,16 +8,33 @@ plugins {
     id("com.google.dagger.hilt.android")
 }
 
+val injectedSigningStoreFile = gradle.startParameter.projectProperties["android.injected.signing.store.file"]
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+if (injectedSigningStoreFile != null && !File(injectedSigningStoreFile).isAbsolute) {
+    throw GradleException(
+        "Relative signing path '$injectedSigningStoreFile' is not supported by AGP externalOverride. " +
+            "Use an absolute keystore path (for example, '/Users/you/keys/photobook_keystore.jks').",
+    )
+}
+
+val releaseKeystoreProperties = Properties().apply {
+    val keystorePropsFile = rootProject.file("keystore.properties")
+    if (keystorePropsFile.exists()) {
+        keystorePropsFile.inputStream().use(::load)
+    }
+}
+
 android {
     namespace = "com.photobook.app"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.photobook.app"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        targetSdk = 35
+        versionCode = 3
+        versionName = "1.0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -22,10 +42,45 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            val keystorePath = releaseKeystoreProperties.getProperty("storeFile")
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+
+            if (keystorePath != null) {
+                val candidate = File(keystorePath).let { file ->
+                    if (file.isAbsolute) file else rootProject.file(keystorePath)
+                }
+                if (!candidate.exists()) {
+                    throw GradleException("Release keystore not found at: ${candidate.absolutePath}")
+                }
+
+                storeFile = candidate
+                storePassword = releaseKeystoreProperties.getProperty("storePassword") ?: ""
+                keyAlias = releaseKeystoreProperties.getProperty("keyAlias") ?: ""
+                keyPassword = releaseKeystoreProperties.getProperty("keyPassword") ?: ""
+            } else {
+                // Local fallback for developer builds when no release keystore is configured.
+                val debugKeystore = file(System.getProperty("user.home") + "/.android/debug.keystore")
+                if (debugKeystore.exists()) {
+                    storeFile = debugKeystore
+                }
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            signingConfig = signingConfigs.getByName("release")
+            ndk {
+                debugSymbolLevel = "SYMBOL_TABLE"
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
