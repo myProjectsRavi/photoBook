@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -69,6 +70,7 @@ import com.photobook.app.feature.copytext.ExtractedTextResult
 import com.photobook.app.feature.copytext.OnDevicePhotoTextExtractor
 import com.photobook.app.feature.copytext.PhotoTextCopyCoordinator
 import com.photobook.app.feature.copytext.PreviewSeed
+import com.photobook.app.feature.qrshare.QrShareEncoder
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
@@ -93,15 +95,25 @@ fun PhotoViewerScreen(
             extractor = OnDevicePhotoTextExtractor(context.applicationContext),
         )
     }
+    val qrShareEncoder = remember(context.applicationContext) {
+        QrShareEncoder(context.applicationContext)
+    }
     var showCopyTextSheet by remember { mutableStateOf(false) }
     var copySheetState by remember { mutableStateOf<CopySheetState>(CopySheetState.Idle) }
     var copySheetPhotoId by remember { mutableStateOf<Long?>(null) }
+    var showQrShareSheet by remember { mutableStateOf(false) }
+    var qrSharePhotoId by remember { mutableStateOf<Long?>(null) }
 
     fun dismissCopySheet() {
         copyTextCoordinator.cancelActiveRequest()
         showCopyTextSheet = false
         copySheetState = CopySheetState.Idle
         copySheetPhotoId = null
+    }
+
+    fun dismissQrShareSheet() {
+        showQrShareSheet = false
+        qrSharePhotoId = null
     }
 
     fun startCopyTextFlow() {
@@ -162,6 +174,9 @@ fun PhotoViewerScreen(
         if (copySheetPhotoId != null && copySheetPhotoId != activeId) {
             dismissCopySheet()
         }
+        if (qrSharePhotoId != null && qrSharePhotoId != activeId) {
+            dismissQrShareSheet()
+        }
     }
 
     DisposableEffect(Unit) {
@@ -173,6 +188,7 @@ fun PhotoViewerScreen(
     Dialog(
         onDismissRequest = {
             dismissCopySheet()
+            dismissQrShareSheet()
             onDismiss()
         },
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -235,6 +251,24 @@ fun PhotoViewerScreen(
                                 Icon(
                                     imageVector = Icons.Default.ContentCopy,
                                     contentDescription = stringResource(R.string.viewer_copy_text),
+                                    tint = Color.White,
+                                )
+                            }
+                        }
+                        Surface(
+                            color = Color(0x22FFFFFF),
+                            shape = RoundedCornerShape(28.dp),
+                        ) {
+                            IconButton(
+                                onClick = {
+                                    val activePhoto = photos[pagerState.currentPage]
+                                    qrSharePhotoId = activePhoto.id
+                                    showQrShareSheet = true
+                                },
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.QrCode2,
+                                    contentDescription = stringResource(R.string.viewer_generate_qr),
                                     tint = Color.White,
                                 )
                             }
@@ -366,6 +400,13 @@ fun PhotoViewerScreen(
                 onDismiss = ::dismissCopySheet,
                 onRetry = ::startCopyTextFlow,
                 onCopy = { text -> copyToClipboard(text) },
+            )
+        }
+        if (showQrShareSheet) {
+            QrShareSheet(
+                photo = photos[pagerState.currentPage],
+                encoder = qrShareEncoder,
+                onDismiss = ::dismissQrShareSheet,
             )
         }
     }

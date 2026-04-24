@@ -1,10 +1,13 @@
 package com.photobook.app
 
+import android.Manifest
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -15,15 +18,21 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.photobook.app.R
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.feature.qrshare.QrReceivedImageStore
 import com.photobook.app.ui.screen.MainScreen
 import com.photobook.app.ui.screen.OnboardingScreen
 import com.photobook.app.ui.screen.PhotoViewerScreen
+import com.photobook.app.ui.screen.QrReceiveScannerScreen
 import com.photobook.app.ui.theme.PhotoBookTheme
 import com.photobook.app.ui.viewmodel.MainViewModel
 import com.photobook.app.util.PermissionUtils
@@ -51,11 +60,28 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val permissions = PermissionUtils.requiredPermissions()
+    val qrReceivedImageStore = remember(context.applicationContext) {
+        QrReceivedImageStore(context.applicationContext)
+    }
+    var showQrScanner by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
         viewModel.refreshPermissionStatus(PermissionUtils.hasPhotoPermissions(context))
+    }
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            showQrScanner = true
+        } else {
+            Toast.makeText(
+                context,
+                context.getString(R.string.scan_qr_camera_denied),
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -101,6 +127,17 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         onClearSelection = viewModel::clearSelection,
         onPhotoClick = viewModel::onPhotoClicked,
         onPhotoLongClick = viewModel::onPhotoLongPressed,
+        onOpenQrScanner = {
+            val granted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.CAMERA,
+            ) == PackageManager.PERMISSION_GRANTED
+            if (granted) {
+                showQrScanner = true
+            } else {
+                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+            }
+        },
     )
 
     val viewerIndex = uiState.viewerStartIndex
@@ -111,6 +148,13 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             onDismiss = viewModel::closeViewer,
             onPageChanged = viewModel::onViewerPageChanged,
             onToggleFavorite = viewModel::onToggleFavorite,
+        )
+    }
+
+    if (showQrScanner) {
+        QrReceiveScannerScreen(
+            imageStore = qrReceivedImageStore,
+            onDismiss = { showQrScanner = false },
         )
     }
 }
