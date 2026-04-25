@@ -14,11 +14,14 @@ import com.photobook.app.data.index.PhotoIndex
 import com.photobook.app.data.model.RawPhotoData
 import com.photobook.app.data.source.MediaStoreScanner
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.feature.duplicates.DuplicatePhotoFinder
+import com.photobook.app.feature.duplicates.DuplicatePhotoGroup
 import com.photobook.app.ml.TaggingWorker
 import com.photobook.app.search.FilterEngine
 import com.photobook.app.search.FolderToken
 import com.photobook.app.search.LocationToken
 import com.photobook.app.search.MLTagToken
+import com.photobook.app.search.PhotoSource
 import com.photobook.app.search.QueryParser
 import com.photobook.app.search.QueryToken
 import com.photobook.app.search.SearchContext
@@ -52,6 +55,7 @@ class MainViewModel @Inject constructor(
     private val queryParser: QueryParser,
     private val tokenClassifier: TokenClassifier,
     private val suggestionEngine: SuggestionEngine,
+    private val duplicatePhotoFinder: DuplicatePhotoFinder,
     private val sharedPreferences: SharedPreferences,
 ) : ViewModel() {
 
@@ -68,6 +72,10 @@ class MainViewModel @Inject constructor(
         val suggestions: List<SuggestionItem> = emptyList(),
         val showSuggestions: Boolean = false,
         val viewerStartIndex: Int? = null,
+        val viewerPhotos: List<PhotoRecord> = emptyList(),
+        val duplicateGroups: List<DuplicatePhotoGroup> = emptyList(),
+        val isFindingDuplicates: Boolean = false,
+        val showDuplicateFinder: Boolean = false,
     )
 
     val uiState = MutableStateFlow(UiState())
@@ -118,6 +126,20 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    fun onSourceSelected(source: PhotoSource) {
+        val query = "source:${source.token}"
+        queryFlow.value = query
+        runImmediateSearch(query)
+        uiState.update {
+            it.copy(
+                query = query,
+                selectedPhotoIds = emptySet(),
+                viewerStartIndex = null,
+                showSuggestions = false,
+            )
+        }
+    }
+
     fun onSuggestionSelected(suggestion: SuggestionItem) {
         queryFlow.value = suggestion.text
         runImmediateSearch(suggestion.text)
@@ -152,7 +174,10 @@ class MainViewModel @Inject constructor(
                 }
                 state.copy(selectedPhotoIds = nextSelected)
             } else {
-                state.copy(viewerStartIndex = index)
+                state.copy(
+                    viewerStartIndex = index,
+                    viewerPhotos = state.results,
+                )
             }
         }
     }
@@ -174,6 +199,20 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             val isFavorite = photoIndex.toggleFavorite(photoId)
             indexPersistence.setFavorite(photoId, isFavorite)
+            uiState.update { state ->
+                state.copy(
+                    viewerPhotos = state.viewerPhotos.map { photo ->
+                        if (photo.id == photoId) photo.copy(isFavorite = isFavorite) else photo
+                    },
+                    duplicateGroups = state.duplicateGroups.map { group ->
+                        group.copy(
+                            photos = group.photos.map { photo ->
+                                if (photo.id == photoId) photo.copy(isFavorite = isFavorite) else photo
+                            }
+                        )
+                    },
+                )
+            }
         }
     }
 
@@ -200,7 +239,53 @@ class MainViewModel @Inject constructor(
     }
 
     fun closeViewer() {
-        uiState.update { it.copy(viewerStartIndex = null) }
+        uiState.update {
+            it.copy(
+                viewerStartIndex = null,
+                viewerPhotos = emptyList(),
+            )
+        }
+    }
+
+    fun openDuplicateFinder() {
+        uiState.update { it.copy(showDuplicateFinder = true) }
+        if (uiState.value.duplicateGroups.isEmpty() && !uiState.value.isFindingDuplicates) {
+            refreshDuplicateGroups()
+        }
+    }
+
+    fun refreshDuplicateGroups() {
+        viewModelScope.launch {
+            uiState.update {
+                it.copy(
+                    isFindingDuplicates = true,
+                    showDuplicateFinder = true,
+                )
+            }
+            val groups = duplicatePhotoFinder.findDuplicates(photoIndex.snapshot())
+            uiState.update {
+                it.copy(
+                    duplicateGroups = groups,
+                    isFindingDuplicates = false,
+                )
+            }
+        }
+    }
+
+    fun dismissDuplicateFinder() {
+        uiState.update { it.copy(showDuplicateFinder = false) }
+    }
+
+    fun openDuplicatePhoto(groupId: String, index: Int) {
+        uiState.update { state ->
+            val group = state.duplicateGroups.firstOrNull { it.id == groupId } ?: return@update state
+            if (index !in group.photos.indices) return@update state
+            state.copy(
+                viewerStartIndex = index,
+                viewerPhotos = group.photos,
+                showDuplicateFinder = false,
+            )
+        }
     }
 
     private fun observeSuggestions() {

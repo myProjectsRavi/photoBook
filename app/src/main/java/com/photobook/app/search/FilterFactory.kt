@@ -40,6 +40,7 @@ class FilterFactory @Inject constructor() {
             is PropertyToken -> propertyFilter(token.keyword)
             is LocationToken -> locationFilter(token.keyword, context)
             is MLTagToken -> mlFilter(token.keyword)
+            is SourceToken -> sourceFilter(token.source)
             is TextToken -> textFilter(token.keyword)
             is UnknownToken -> null
         }
@@ -145,6 +146,12 @@ class FilterFactory @Inject constructor() {
         val threshold = LabelMapping.threshold(canonical)
         return { photo ->
             photo.hasMlTag(canonical, threshold)
+        }
+    }
+
+    private fun sourceFilter(source: PhotoSource): PhotoFilter {
+        return { photo ->
+            photo.matchesSource(source)
         }
     }
 

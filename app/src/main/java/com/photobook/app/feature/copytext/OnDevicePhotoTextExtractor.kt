@@ -3,6 +3,7 @@ package com.photobook.app.feature.copytext
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.util.Size
@@ -34,6 +35,41 @@ class OnDevicePhotoTextExtractor @Inject constructor(
                 ?: return@withContext ExtractedTextResult.Error()
 
             val image = InputImage.fromBitmap(bitmap, 0)
+            val rawText = runCatching {
+                recognizer.process(image).await().text
+            }.getOrElse { error ->
+                return@withContext ExtractedTextResult.Error(error)
+            }
+
+            val formatted = formatter.format(rawText)
+            if (formatted.isBlank()) {
+                ExtractedTextResult.Empty
+            } else {
+                ExtractedTextResult.Success(formatted)
+            }
+        }
+    }
+
+    override suspend fun extractRegion(
+        photoUri: String,
+        region: NormalizedTextRegion,
+    ): ExtractedTextResult {
+        return withContext(Dispatchers.IO) {
+            val normalizedRegion = region.normalized()
+            if (!normalizedRegion.isUsable()) {
+                return@withContext ExtractedTextResult.Empty
+            }
+
+            val uri = runCatching { Uri.parse(photoUri) }.getOrNull()
+                ?: return@withContext ExtractedTextResult.Error()
+
+            val bitmap = decodeSampledBitmap(uri, MAX_REGION_BITMAP_DIMENSION_PX)
+                ?: return@withContext ExtractedTextResult.Error()
+
+            val crop = cropBitmap(bitmap, normalizedRegion)
+                ?: return@withContext ExtractedTextResult.Empty
+
+            val image = InputImage.fromBitmap(crop, 0)
             val rawText = runCatching {
                 recognizer.process(image).await().text
             }.getOrElse { error ->
@@ -101,7 +137,20 @@ class OnDevicePhotoTextExtractor @Inject constructor(
         return sample.coerceAtLeast(1)
     }
 
+    private fun cropBitmap(bitmap: Bitmap, region: NormalizedTextRegion): Bitmap? {
+        val left = (region.left * bitmap.width).toInt().coerceIn(0, bitmap.width - 1)
+        val top = (region.top * bitmap.height).toInt().coerceIn(0, bitmap.height - 1)
+        val right = (region.right * bitmap.width).toInt().coerceIn(left + 1, bitmap.width)
+        val bottom = (region.bottom * bitmap.height).toInt().coerceIn(top + 1, bitmap.height)
+        val rect = Rect(left, top, right, bottom)
+        if (rect.width() <= 1 || rect.height() <= 1) return null
+        return runCatching {
+            Bitmap.createBitmap(bitmap, rect.left, rect.top, rect.width(), rect.height())
+        }.getOrNull()
+    }
+
     companion object {
         private const val MAX_BITMAP_DIMENSION_PX = 1600
+        private const val MAX_REGION_BITMAP_DIMENSION_PX = 2048
     }
 }

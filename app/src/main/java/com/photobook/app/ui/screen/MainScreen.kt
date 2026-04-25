@@ -1,6 +1,9 @@
 package com.photobook.app.ui.screen
 
+import android.net.Uri
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -8,26 +11,44 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 import com.photobook.app.R
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.feature.duplicates.DuplicateMatchKind
+import com.photobook.app.feature.duplicates.DuplicatePhotoGroup
+import com.photobook.app.search.PhotoSource
 import com.photobook.app.ui.component.EmptyState
 import com.photobook.app.ui.component.PhotoGrid
 import com.photobook.app.ui.component.SearchBar
@@ -35,6 +56,7 @@ import com.photobook.app.ui.component.SuggestionDropdown
 import com.photobook.app.ui.component.WelcomeState
 import com.photobook.app.search.SuggestionItem
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
     query: String,
@@ -44,6 +66,9 @@ fun MainScreen(
     selectedPhotoIds: Set<Long>,
     suggestions: List<SuggestionItem>,
     showSuggestions: Boolean,
+    duplicateGroups: List<DuplicatePhotoGroup>,
+    isFindingDuplicates: Boolean,
+    showDuplicateFinder: Boolean,
     onQueryChange: (String) -> Unit,
     onSearchSubmitted: () -> Unit,
     onSearchFocusChanged: (Boolean) -> Unit,
@@ -51,10 +76,16 @@ fun MainScreen(
     onClearQuery: () -> Unit,
     onToggleFavoritesOnly: () -> Unit,
     onShareSelected: (List<PhotoRecord>) -> Unit,
+    onCreatePdfSelected: (List<PhotoRecord>) -> Unit,
     onClearSelection: () -> Unit,
     onPhotoClick: (Int) -> Unit,
     onPhotoLongClick: (Int) -> Unit,
     onOpenQrScanner: () -> Unit,
+    onSourceSelected: (PhotoSource) -> Unit,
+    onOpenDuplicateFinder: () -> Unit,
+    onRefreshDuplicates: () -> Unit,
+    onDismissDuplicateFinder: () -> Unit,
+    onDuplicatePhotoClick: (String, Int) -> Unit,
 ) {
     val isSelectionMode = selectedPhotoIds.isNotEmpty()
     val selectedPhotos = results.filter { it.id in selectedPhotoIds }
@@ -78,11 +109,24 @@ fun MainScreen(
                 autoFocus = searchReady && query.isBlank(),
             )
 
-            Text(
-                text = stringResource(R.string.private_reassurance),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = stringResource(R.string.private_reassurance),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(
+                    onClick = onOpenDuplicateFinder,
+                    enabled = searchReady && !isSelectionMode,
+                ) {
+                    Text(text = stringResource(R.string.duplicates_action))
+                }
+            }
 
             SuggestionDropdown(
                 visible = showSuggestions,
@@ -90,6 +134,27 @@ fun MainScreen(
                 onSuggestionClick = onSuggestionSelected,
                 modifier = Modifier.fillMaxWidth(),
             )
+
+            if (searchReady && !isSelectionMode) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    PhotoSource.all.forEach { source ->
+                        AssistChip(
+                            onClick = { onSourceSelected(source) },
+                            label = { Text(text = source.label) },
+                            shape = RoundedCornerShape(14.dp),
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                            ),
+                        )
+                    }
+                }
+            }
 
             if (searchReady && query.isNotBlank()) {
                 if (isSelectionMode) {
@@ -116,6 +181,16 @@ fun MainScreen(
                             ) {
                                 TextButton(onClick = onClearSelection) {
                                     Text(text = stringResource(R.string.clear_selection))
+                                }
+                                Button(onClick = { onCreatePdfSelected(selectedPhotos) }) {
+                                    Icon(
+                                        imageVector = Icons.Default.PictureAsPdf,
+                                        contentDescription = null,
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.create_pdf_selected),
+                                        modifier = Modifier.padding(start = 6.dp),
+                                    )
                                 }
                                 Button(onClick = { onShareSelected(selectedPhotos) }) {
                                     Icon(
@@ -182,6 +257,167 @@ fun MainScreen(
                 imageVector = Icons.Default.CameraAlt,
                 contentDescription = stringResource(R.string.scan_qr_action),
             )
+        }
+
+        if (showDuplicateFinder) {
+            DuplicateFinderSheet(
+                groups = duplicateGroups,
+                isLoading = isFindingDuplicates,
+                onDismiss = onDismissDuplicateFinder,
+                onRefresh = onRefreshDuplicates,
+                onPhotoClick = onDuplicatePhotoClick,
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DuplicateFinderSheet(
+    groups: List<DuplicatePhotoGroup>,
+    isLoading: Boolean,
+    onDismiss: () -> Unit,
+    onRefresh: () -> Unit,
+    onPhotoClick: (String, Int) -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = stringResource(R.string.duplicates_title),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        text = stringResource(R.string.duplicates_subtitle),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                TextButton(
+                    onClick = onRefresh,
+                    enabled = !isLoading,
+                ) {
+                    Text(text = stringResource(R.string.duplicates_refresh))
+                }
+            }
+
+            when {
+                isLoading -> {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 24.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(22.dp),
+                            strokeWidth = 2.dp,
+                        )
+                        Text(
+                            text = stringResource(R.string.duplicates_scanning),
+                            modifier = Modifier.padding(start = 10.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+
+                groups.isEmpty() -> {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.duplicates_empty),
+                            modifier = Modifier.padding(16.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+
+                else -> {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(420.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        items(groups, key = { group -> group.id }) { group ->
+                            DuplicateGroupCard(
+                                group = group,
+                                onPhotoClick = { index -> onPhotoClick(group.id, index) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DuplicateGroupCard(
+    group: DuplicatePhotoGroup,
+    onPhotoClick: (Int) -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        tonalElevation = 1.dp,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = when (group.kind) {
+                    DuplicateMatchKind.Exact -> stringResource(
+                        R.string.duplicates_exact_group,
+                        group.photos.size,
+                    )
+
+                    DuplicateMatchKind.Similar -> stringResource(
+                        R.string.duplicates_similar_group,
+                        group.photos.size,
+                    )
+                },
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                group.photos.take(5).forEachIndexed { index, photo ->
+                    AsyncImage(
+                        model = Uri.parse(photo.uriString),
+                        contentDescription = photo.fileName,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(58.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { onPhotoClick(index) },
+                    )
+                }
+            }
         }
     }
 }

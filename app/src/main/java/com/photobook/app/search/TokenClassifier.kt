@@ -50,6 +50,10 @@ class TokenClassifier @Inject constructor(
         "gif", "png", "jpg", "jpeg", "raw", "favorite", "favorites", "starred",
     )
 
+    private val sourceKeywords = setOf(
+        "whatsapp", "telegram", "camera", "download", "downloads", "screenshot", "screenshots",
+    )
+
     private val locationKeywords = setOf("home", "office", "near_me", "abroad", "here")
 
     private val relativeRegex = Regex("last_(\\d+)_(day|days|week|weeks|month|months|year|years)")
@@ -73,6 +77,16 @@ class TokenClassifier @Inject constructor(
                 else -> RelativeUnit.YEAR
             }
             return RelativeDateToken(amount, unit)
+        }
+
+        PhotoSource.fromToken(token)?.let { source ->
+            return SourceToken(source)
+        }
+
+        if (token in sourceKeywords) {
+            PhotoSource.fromToken(token)?.let { source ->
+                return SourceToken(source)
+            }
         }
 
         if (token in folderKeywords) return FolderToken(token)

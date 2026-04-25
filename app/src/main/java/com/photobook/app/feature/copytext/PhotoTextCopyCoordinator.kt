@@ -65,6 +65,24 @@ class PhotoTextCopyCoordinator(
         }
     }
 
+    fun extractRegionForPhoto(
+        scope: CoroutineScope,
+        photoId: Long,
+        photoUri: String,
+        region: NormalizedTextRegion,
+        onResult: (ExtractedTextResult) -> Unit,
+    ) {
+        cancelActiveRequest()
+        activePhotoId = photoId
+        activeJob = scope.launch {
+            val result = extractor.extractRegion(photoUri, region)
+            if (!isActive || activePhotoId != photoId) {
+                return@launch
+            }
+            onResult(result)
+        }
+    }
+
     fun cancelActiveRequest() {
         activeJob?.cancel()
         activeJob = null

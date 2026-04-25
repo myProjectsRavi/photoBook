@@ -20,6 +20,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -28,6 +29,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.photobook.app.R
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.feature.pdf.PdfExportResult
+import com.photobook.app.feature.pdf.PdfExportService
 import com.photobook.app.feature.qrshare.QrReceivedImageStore
 import com.photobook.app.ui.screen.MainScreen
 import com.photobook.app.ui.screen.OnboardingScreen
@@ -37,6 +40,7 @@ import com.photobook.app.ui.theme.PhotoBookTheme
 import com.photobook.app.ui.viewmodel.MainViewModel
 import com.photobook.app.util.PermissionUtils
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -60,8 +64,12 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val permissions = PermissionUtils.requiredPermissions()
+    val coroutineScope = rememberCoroutineScope()
     val qrReceivedImageStore = remember(context.applicationContext) {
         QrReceivedImageStore(context.applicationContext)
+    }
+    val pdfExportService = remember(context.applicationContext) {
+        PdfExportService(context.applicationContext)
     }
     var showQrScanner by remember { mutableStateOf(false) }
 
@@ -114,6 +122,9 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         selectedPhotoIds = uiState.selectedPhotoIds,
         suggestions = uiState.suggestions,
         showSuggestions = uiState.showSuggestions,
+        duplicateGroups = uiState.duplicateGroups,
+        isFindingDuplicates = uiState.isFindingDuplicates,
+        showDuplicateFinder = uiState.showDuplicateFinder,
         onQueryChange = viewModel::onQueryChanged,
         onSearchSubmitted = viewModel::onSearchSubmitted,
         onSearchFocusChanged = viewModel::onSearchFocusChanged,
@@ -123,6 +134,29 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         onShareSelected = { selected ->
             sharePhotos(context, selected)
             viewModel.clearSelection()
+        },
+        onCreatePdfSelected = { selected ->
+            coroutineScope.launch {
+                when (val result = pdfExportService.exportPhotos(selected)) {
+                    is PdfExportResult.Success -> {
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.create_pdf_success, result.pageCount),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                        sharePdf(context, result.uri, result.fileName)
+                        viewModel.clearSelection()
+                    }
+
+                    is PdfExportResult.Error -> {
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.create_pdf_error),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            }
         },
         onClearSelection = viewModel::clearSelection,
         onPhotoClick = viewModel::onPhotoClicked,
@@ -138,12 +172,18 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                 cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
             }
         },
+        onSourceSelected = viewModel::onSourceSelected,
+        onOpenDuplicateFinder = viewModel::openDuplicateFinder,
+        onRefreshDuplicates = viewModel::refreshDuplicateGroups,
+        onDismissDuplicateFinder = viewModel::dismissDuplicateFinder,
+        onDuplicatePhotoClick = viewModel::openDuplicatePhoto,
     )
 
     val viewerIndex = uiState.viewerStartIndex
     if (viewerIndex != null) {
+        val viewerPhotos = uiState.viewerPhotos.ifEmpty { uiState.results }
         PhotoViewerScreen(
-            photos = uiState.results,
+            photos = viewerPhotos,
             startIndex = viewerIndex,
             onDismiss = viewModel::closeViewer,
             onPageChanged = viewModel::onViewerPageChanged,
@@ -193,4 +233,19 @@ private fun sharePhotos(context: Context, photos: List<PhotoRecord>) {
     shareIntent.clipData = clipData
     shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.share_selected)))
+}
+
+private fun sharePdf(context: Context, uri: Uri, fileName: String) {
+    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "application/pdf"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        clipData = ClipData.newUri(context.contentResolver, fileName, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(
+        Intent.createChooser(
+            shareIntent,
+            context.getString(R.string.create_pdf_share),
+        ),
+    )
 }

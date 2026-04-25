@@ -4,11 +4,14 @@ import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,6 +28,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.QrCode2
@@ -52,11 +56,16 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -67,11 +76,14 @@ import coil.compose.AsyncImage
 import com.photobook.app.R
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.feature.copytext.ExtractedTextResult
+import com.photobook.app.feature.copytext.NormalizedTextRegion
 import com.photobook.app.feature.copytext.OnDevicePhotoTextExtractor
 import com.photobook.app.feature.copytext.PhotoTextCopyCoordinator
 import com.photobook.app.feature.copytext.PreviewSeed
 import com.photobook.app.feature.qrshare.QrShareEncoder
 import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.min
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -101,62 +113,12 @@ fun PhotoViewerScreen(
     var showCopyTextSheet by remember { mutableStateOf(false) }
     var copySheetState by remember { mutableStateOf<CopySheetState>(CopySheetState.Idle) }
     var copySheetPhotoId by remember { mutableStateOf<Long?>(null) }
+    var copySheetMode by remember { mutableStateOf(CopyTextMode.AllText) }
+    var copySheetRegion by remember { mutableStateOf<NormalizedTextRegion?>(null) }
+    var autoCopyPending by remember { mutableStateOf(false) }
+    var showTextRegionSelector by remember { mutableStateOf(false) }
     var showQrShareSheet by remember { mutableStateOf(false) }
     var qrSharePhotoId by remember { mutableStateOf<Long?>(null) }
-
-    fun dismissCopySheet() {
-        copyTextCoordinator.cancelActiveRequest()
-        showCopyTextSheet = false
-        copySheetState = CopySheetState.Idle
-        copySheetPhotoId = null
-    }
-
-    fun dismissQrShareSheet() {
-        showQrShareSheet = false
-        qrSharePhotoId = null
-    }
-
-    fun startCopyTextFlow() {
-        val active = photos[pagerState.currentPage]
-        copySheetPhotoId = active.id
-        showCopyTextSheet = true
-
-        coroutineScope.launch {
-            when (val seed = copyTextCoordinator.previewSeed(active.id, active.ocrText)) {
-                is PreviewSeed.Cached -> {
-                    copySheetState = CopySheetState.Ready(
-                        text = seed.text,
-                        isRefreshing = false,
-                    )
-                }
-
-                is PreviewSeed.Fallback -> {
-                    copySheetState = CopySheetState.Ready(
-                        text = seed.text,
-                        isRefreshing = true,
-                    )
-                    copyTextCoordinator.extractForPhoto(
-                        scope = coroutineScope,
-                        photoId = active.id,
-                        photoUri = active.uriString,
-                    ) { result ->
-                        copySheetState = reduceCopySheetState(result, fallbackText = seed.text)
-                    }
-                }
-
-                PreviewSeed.None -> {
-                    copySheetState = CopySheetState.Loading
-                    copyTextCoordinator.extractForPhoto(
-                        scope = coroutineScope,
-                        photoId = active.id,
-                        photoUri = active.uriString,
-                    ) { result ->
-                        copySheetState = reduceCopySheetState(result, fallbackText = null)
-                    }
-                }
-            }
-        }
-    }
 
     fun copyToClipboard(text: String) {
         clipboardManager.setText(AnnotatedString(text))
@@ -168,12 +130,96 @@ fun PhotoViewerScreen(
         ).show()
     }
 
+    fun dismissCopySheet() {
+        copyTextCoordinator.cancelActiveRequest()
+        showCopyTextSheet = false
+        copySheetState = CopySheetState.Idle
+        copySheetPhotoId = null
+        copySheetMode = CopyTextMode.AllText
+        copySheetRegion = null
+        autoCopyPending = false
+    }
+
+    fun dismissQrShareSheet() {
+        showQrShareSheet = false
+        qrSharePhotoId = null
+    }
+
+    fun applyCopyResult(result: ExtractedTextResult, fallbackText: String?) {
+        val nextState = reduceCopySheetState(result, fallbackText = fallbackText)
+        copySheetState = nextState
+        if (autoCopyPending && nextState is CopySheetState.Ready) {
+            copyToClipboard(nextState.text)
+            autoCopyPending = false
+        }
+    }
+
+    fun startCopyAllTextFlow() {
+        val active = photos[pagerState.currentPage]
+        copySheetPhotoId = active.id
+        copySheetMode = CopyTextMode.AllText
+        copySheetRegion = null
+
+        coroutineScope.launch {
+            when (val seed = copyTextCoordinator.previewSeed(active.id, active.ocrText)) {
+                is PreviewSeed.Cached -> {
+                    copyToClipboard(seed.text)
+                }
+
+                is PreviewSeed.Fallback -> {
+                    copyToClipboard(seed.text)
+                }
+
+                PreviewSeed.None -> {
+                    showCopyTextSheet = true
+                    copySheetState = CopySheetState.Loading
+                    autoCopyPending = true
+                    copyTextCoordinator.extractForPhoto(
+                        scope = coroutineScope,
+                        photoId = active.id,
+                        photoUri = active.uriString,
+                    ) { result ->
+                        applyCopyResult(result, fallbackText = null)
+                    }
+                }
+            }
+        }
+    }
+
+    fun startSelectedTextFlow(region: NormalizedTextRegion) {
+        val active = photos[pagerState.currentPage]
+        copySheetPhotoId = active.id
+        copySheetMode = CopyTextMode.SelectedArea
+        copySheetRegion = region.normalized()
+        autoCopyPending = true
+        showCopyTextSheet = true
+        copySheetState = CopySheetState.Loading
+        copyTextCoordinator.extractRegionForPhoto(
+            scope = coroutineScope,
+            photoId = active.id,
+            photoUri = active.uriString,
+            region = region,
+        ) { result ->
+            applyCopyResult(result, fallbackText = null)
+        }
+    }
+
+    fun retryCopyTextFlow() {
+        val region = copySheetRegion
+        if (copySheetMode == CopyTextMode.SelectedArea && region != null) {
+            startSelectedTextFlow(region)
+        } else {
+            startCopyAllTextFlow()
+        }
+    }
+
     LaunchedEffect(pagerState.currentPage) {
         onPageChanged(pagerState.currentPage)
         val activeId = photos[pagerState.currentPage].id
         if (copySheetPhotoId != null && copySheetPhotoId != activeId) {
             dismissCopySheet()
         }
+        showTextRegionSelector = false
         if (qrSharePhotoId != null && qrSharePhotoId != activeId) {
             dismissQrShareSheet()
         }
@@ -210,6 +256,7 @@ fun PhotoViewerScreen(
                         shape = RoundedCornerShape(28.dp),
                     ) {
                         IconButton(
+                            modifier = Modifier.size(42.dp),
                             onClick = {
                                 dismissCopySheet()
                                 onDismiss()
@@ -229,29 +276,21 @@ fun PhotoViewerScreen(
                     val active = photos[pagerState.currentPage]
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         Surface(
                             color = Color(0x22FFFFFF),
                             shape = RoundedCornerShape(28.dp),
                         ) {
-                            IconButton(onClick = { onToggleFavorite(active.id) }) {
+                            IconButton(
+                                modifier = Modifier.size(42.dp),
+                                onClick = { onToggleFavorite(active.id) },
+                            ) {
                                 Icon(
                                     imageVector = if (active.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                                     contentDescription = stringResource(R.string.viewer_favorite),
                                     tint = if (active.isFavorite) Color(0xFFFF6B6B) else Color.White,
-                                )
-                            }
-                        }
-                        Surface(
-                            color = Color(0x22FFFFFF),
-                            shape = RoundedCornerShape(28.dp),
-                        ) {
-                            IconButton(onClick = ::startCopyTextFlow) {
-                                Icon(
-                                    imageVector = Icons.Default.ContentCopy,
-                                    contentDescription = stringResource(R.string.viewer_copy_text),
-                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp),
                                 )
                             }
                         }
@@ -260,6 +299,42 @@ fun PhotoViewerScreen(
                             shape = RoundedCornerShape(28.dp),
                         ) {
                             IconButton(
+                                modifier = Modifier.size(42.dp),
+                                onClick = ::startCopyAllTextFlow,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ContentCopy,
+                                    contentDescription = stringResource(R.string.viewer_copy_all_text),
+                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            }
+                        }
+                        Surface(
+                            color = Color(0x22FFFFFF),
+                            shape = RoundedCornerShape(28.dp),
+                        ) {
+                            IconButton(
+                                modifier = Modifier.size(42.dp),
+                                onClick = {
+                                    copyTextCoordinator.cancelActiveRequest()
+                                    showTextRegionSelector = true
+                                },
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CropFree,
+                                    contentDescription = stringResource(R.string.viewer_select_text_area),
+                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            }
+                        }
+                        Surface(
+                            color = Color(0x22FFFFFF),
+                            shape = RoundedCornerShape(28.dp),
+                        ) {
+                            IconButton(
+                                modifier = Modifier.size(42.dp),
                                 onClick = {
                                     val activePhoto = photos[pagerState.currentPage]
                                     qrSharePhotoId = activePhoto.id
@@ -270,6 +345,7 @@ fun PhotoViewerScreen(
                                     imageVector = Icons.Default.QrCode2,
                                     contentDescription = stringResource(R.string.viewer_generate_qr),
                                     tint = Color.White,
+                                    modifier = Modifier.size(22.dp),
                                 )
                             }
                         }
@@ -278,6 +354,7 @@ fun PhotoViewerScreen(
                             shape = RoundedCornerShape(28.dp),
                         ) {
                             IconButton(
+                                modifier = Modifier.size(42.dp),
                                 onClick = {
                                     val uri = Uri.parse(active.uriString)
                                     val shareIntent = Intent(Intent.ACTION_SEND).apply {
@@ -302,6 +379,7 @@ fun PhotoViewerScreen(
                                     imageVector = Icons.Default.Share,
                                     contentDescription = stringResource(R.string.viewer_share),
                                     tint = Color.White,
+                                    modifier = Modifier.size(22.dp),
                                 )
                             }
                         }
@@ -396,10 +474,21 @@ fun PhotoViewerScreen(
 
         if (showCopyTextSheet) {
             CopyTextBottomSheet(
+                mode = copySheetMode,
                 state = copySheetState,
                 onDismiss = ::dismissCopySheet,
-                onRetry = ::startCopyTextFlow,
+                onRetry = ::retryCopyTextFlow,
                 onCopy = { text -> copyToClipboard(text) },
+            )
+        }
+        if (showTextRegionSelector) {
+            TextRegionSelectionDialog(
+                photo = photos[pagerState.currentPage],
+                onDismiss = { showTextRegionSelector = false },
+                onRegionSelected = { region ->
+                    showTextRegionSelector = false
+                    startSelectedTextFlow(region)
+                },
             )
         }
         if (showQrShareSheet) {
@@ -412,9 +501,182 @@ fun PhotoViewerScreen(
     }
 }
 
+@Composable
+private fun TextRegionSelectionDialog(
+    photo: PhotoRecord,
+    onDismiss: () -> Unit,
+    onRegionSelected: (NormalizedTextRegion) -> Unit,
+) {
+    var selection by remember(photo.id) {
+        mutableStateOf(TextSelectionBox(left = 0.14f, top = 0.24f, right = 0.86f, bottom = 0.58f))
+    }
+    var dragMode by remember { mutableStateOf(TextSelectionDragMode.None) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = Color.Black,
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = stringResource(R.string.viewer_close),
+                            tint = Color.White,
+                        )
+                    }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = stringResource(R.string.viewer_select_text_area_title),
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Text(
+                            text = stringResource(R.string.viewer_select_text_area_hint),
+                            color = Color.LightGray,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    Box(modifier = Modifier.size(48.dp))
+                }
+
+                BoxWithConstraints(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val density = LocalDensity.current
+                    val containerWidth = with(density) { maxWidth.toPx() }.coerceAtLeast(1f)
+                    val containerHeight = with(density) { maxHeight.toPx() }.coerceAtLeast(1f)
+                    val imageWidth = photo.width.takeIf { it > 0 }?.toFloat() ?: 1f
+                    val imageHeight = photo.height.takeIf { it > 0 }?.toFloat() ?: 1f
+                    val scale = min(containerWidth / imageWidth, containerHeight / imageHeight)
+                    val displayWidth = (imageWidth * scale).coerceAtLeast(1f)
+                    val displayHeight = (imageHeight * scale).coerceAtLeast(1f)
+                    val imageOffset = Offset(
+                        x = (containerWidth - displayWidth) / 2f,
+                        y = (containerHeight - displayHeight) / 2f,
+                    )
+                    val handleRadius = with(density) { 8.dp.toPx() }
+                    val hitSlop = with(density) { 34.dp.toPx() }
+
+                    AsyncImage(
+                        model = Uri.parse(photo.uriString),
+                        contentDescription = photo.fileName,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(selection, displayWidth, displayHeight, imageOffset) {
+                                detectDragGestures(
+                                    onDragStart = { touch ->
+                                        dragMode = selection.hitTest(
+                                            touch = touch,
+                                            imageOffset = imageOffset,
+                                            imageSize = Size(displayWidth, displayHeight),
+                                            hitSlop = hitSlop,
+                                        )
+                                    },
+                                    onDragEnd = { dragMode = TextSelectionDragMode.None },
+                                    onDragCancel = { dragMode = TextSelectionDragMode.None },
+                                    onDrag = { change, dragAmount ->
+                                        change.consume()
+                                        if (dragMode != TextSelectionDragMode.None) {
+                                            selection = selection.dragged(
+                                                mode = dragMode,
+                                                deltaX = dragAmount.x / displayWidth,
+                                                deltaY = dragAmount.y / displayHeight,
+                                            )
+                                        }
+                                    },
+                                )
+                            },
+                    ) {
+                        val rectLeft = imageOffset.x + selection.left * displayWidth
+                        val rectTop = imageOffset.y + selection.top * displayHeight
+                        val rectRight = imageOffset.x + selection.right * displayWidth
+                        val rectBottom = imageOffset.y + selection.bottom * displayHeight
+                        val dim = Color.Black.copy(alpha = 0.52f)
+
+                        drawRect(dim, topLeft = Offset.Zero, size = Size(size.width, rectTop))
+                        drawRect(
+                            dim,
+                            topLeft = Offset(0f, rectBottom),
+                            size = Size(size.width, size.height - rectBottom),
+                        )
+                        drawRect(
+                            dim,
+                            topLeft = Offset(0f, rectTop),
+                            size = Size(rectLeft, rectBottom - rectTop),
+                        )
+                        drawRect(
+                            dim,
+                            topLeft = Offset(rectRight, rectTop),
+                            size = Size(size.width - rectRight, rectBottom - rectTop),
+                        )
+                        drawRect(
+                            color = Color.White,
+                            topLeft = Offset(rectLeft, rectTop),
+                            size = Size(rectRight - rectLeft, rectBottom - rectTop),
+                            style = Stroke(width = 3.dp.toPx()),
+                        )
+                        listOf(
+                            Offset(rectLeft, rectTop),
+                            Offset(rectRight, rectTop),
+                            Offset(rectLeft, rectBottom),
+                            Offset(rectRight, rectBottom),
+                        ).forEach { center ->
+                            drawCircle(Color.White, radius = handleRadius, center = center)
+                            drawCircle(Color.Black.copy(alpha = 0.3f), radius = handleRadius / 2f, center = center)
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    TextButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(text = stringResource(R.string.viewer_close), color = Color.White)
+                    }
+                    Button(
+                        onClick = {
+                            onRegionSelected(selection.toRegion())
+                        },
+                        modifier = Modifier.weight(2f),
+                    ) {
+                        Text(text = stringResource(R.string.viewer_copy_selected_area))
+                    }
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CopyTextBottomSheet(
+    mode: CopyTextMode,
     state: CopySheetState,
     onDismiss: () -> Unit,
     onRetry: () -> Unit,
@@ -433,7 +695,12 @@ private fun CopyTextBottomSheet(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = stringResource(R.string.viewer_copy_text_title),
+                text = stringResource(
+                    when (mode) {
+                        CopyTextMode.AllText -> R.string.viewer_copy_text_title
+                        CopyTextMode.SelectedArea -> R.string.viewer_select_text_area_title
+                    }
+                ),
                 style = MaterialTheme.typography.titleMedium,
             )
 
@@ -526,6 +793,103 @@ private sealed interface CopySheetState {
         val text: String,
         val isRefreshing: Boolean,
     ) : CopySheetState
+}
+
+private enum class CopyTextMode {
+    AllText,
+    SelectedArea,
+}
+
+private enum class TextSelectionDragMode {
+    None,
+    Move,
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+private data class TextSelectionBox(
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+) {
+    fun toRegion(): NormalizedTextRegion {
+        return NormalizedTextRegion(left, top, right, bottom).normalized()
+    }
+
+    fun hitTest(
+        touch: Offset,
+        imageOffset: Offset,
+        imageSize: Size,
+        hitSlop: Float,
+    ): TextSelectionDragMode {
+        val rectLeft = imageOffset.x + left * imageSize.width
+        val rectTop = imageOffset.y + top * imageSize.height
+        val rectRight = imageOffset.x + right * imageSize.width
+        val rectBottom = imageOffset.y + bottom * imageSize.height
+
+        fun near(x: Float, y: Float): Boolean {
+            return abs(touch.x - x) <= hitSlop && abs(touch.y - y) <= hitSlop
+        }
+
+        return when {
+            near(rectLeft, rectTop) -> TextSelectionDragMode.TopLeft
+            near(rectRight, rectTop) -> TextSelectionDragMode.TopRight
+            near(rectLeft, rectBottom) -> TextSelectionDragMode.BottomLeft
+            near(rectRight, rectBottom) -> TextSelectionDragMode.BottomRight
+            touch.x in rectLeft..rectRight && touch.y in rectTop..rectBottom -> TextSelectionDragMode.Move
+            else -> TextSelectionDragMode.None
+        }
+    }
+
+    fun dragged(
+        mode: TextSelectionDragMode,
+        deltaX: Float,
+        deltaY: Float,
+    ): TextSelectionBox {
+        return when (mode) {
+            TextSelectionDragMode.None -> this
+            TextSelectionDragMode.Move -> move(deltaX, deltaY)
+            TextSelectionDragMode.TopLeft -> copy(
+                left = (left + deltaX).coerceIn(0f, right - MIN_SIZE),
+                top = (top + deltaY).coerceIn(0f, bottom - MIN_SIZE),
+            )
+
+            TextSelectionDragMode.TopRight -> copy(
+                right = (right + deltaX).coerceIn(left + MIN_SIZE, 1f),
+                top = (top + deltaY).coerceIn(0f, bottom - MIN_SIZE),
+            )
+
+            TextSelectionDragMode.BottomLeft -> copy(
+                left = (left + deltaX).coerceIn(0f, right - MIN_SIZE),
+                bottom = (bottom + deltaY).coerceIn(top + MIN_SIZE, 1f),
+            )
+
+            TextSelectionDragMode.BottomRight -> copy(
+                right = (right + deltaX).coerceIn(left + MIN_SIZE, 1f),
+                bottom = (bottom + deltaY).coerceIn(top + MIN_SIZE, 1f),
+            )
+        }
+    }
+
+    private fun move(deltaX: Float, deltaY: Float): TextSelectionBox {
+        val width = right - left
+        val height = bottom - top
+        val nextLeft = (left + deltaX).coerceIn(0f, 1f - width)
+        val nextTop = (top + deltaY).coerceIn(0f, 1f - height)
+        return copy(
+            left = nextLeft,
+            top = nextTop,
+            right = nextLeft + width,
+            bottom = nextTop + height,
+        )
+    }
+
+    companion object {
+        private const val MIN_SIZE = 0.08f
+    }
 }
 
 private fun reduceCopySheetState(
