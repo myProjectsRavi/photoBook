@@ -35,6 +35,7 @@ import com.photobook.app.search.SuggestionItem
 import com.photobook.app.search.TextToken
 import com.photobook.app.search.TokenClassifier
 import com.photobook.app.util.Constants
+import com.photobook.app.worker.TrashPurgeWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -297,6 +298,31 @@ class MainViewModel @Inject constructor(
         uiState.update { it.copy(selectedPhotoIds = emptySet()) }
     }
 
+    fun onPhotosMovedToTrash(photoIds: Set<Long>) {
+        if (photoIds.isEmpty()) return
+        viewModelScope.launch {
+            photoIndex.removeRecords(photoIds)
+            indexPersistence.removeByIds(photoIds)
+            latestSearchResultIds = latestSearchResultIds.filterNot { id -> id in photoIds }
+            latestVisibleResultIds = latestVisibleResultIds.filterNot { id -> id in photoIds }
+
+            uiState.update { state ->
+                state.copy(
+                    selectedPhotoIds = state.selectedPhotoIds - photoIds,
+                    viewerStartIndex = null,
+                    viewerPhotos = emptyList(),
+                    duplicateGroups = state.duplicateGroups
+                        .map { group ->
+                            group.copy(photos = group.photos.filterNot { photo -> photo.id in photoIds })
+                        }
+                        .filter { group -> group.photos.size > 1 },
+                )
+            }
+
+            refreshVisibleResultsFromLatestSearch()
+        }
+    }
+
     fun onViewerPageChanged(index: Int) {
         val focusedPhotoId = uiState.value.viewerPhotos.getOrNull(index)?.id
         if (focusedPhotoId != null) {
@@ -487,6 +513,7 @@ class MainViewModel @Inject constructor(
             }
 
             TaggingWorker.enqueueLibraryMaintenance(context)
+            TrashPurgeWorker.enqueueDaily(context)
             registerMediaObserver()
         }
     }

@@ -1,6 +1,7 @@
 package com.photobook.app
 
 import android.Manifest
+import android.app.Activity
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
@@ -11,6 +12,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
@@ -36,6 +38,8 @@ import com.photobook.app.feature.metadata.SafeShareResult
 import com.photobook.app.feature.pdf.PdfExportResult
 import com.photobook.app.feature.pdf.PdfExportService
 import com.photobook.app.feature.qrshare.QrReceivedImageStore
+import com.photobook.app.feature.trash.TrashRequestResult
+import com.photobook.app.feature.trash.TrashService
 import com.photobook.app.ui.screen.MainScreen
 import com.photobook.app.ui.screen.OnboardingScreen
 import com.photobook.app.ui.screen.PhotoViewerScreen
@@ -79,7 +83,11 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     val pdfExportService = remember(context.applicationContext) {
         PdfExportService(context.applicationContext)
     }
+    val trashService = remember(context.applicationContext) {
+        TrashService(context.applicationContext)
+    }
     var showQrScanner by remember { mutableStateOf(false) }
+    var pendingTrashPhotoIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -97,6 +105,55 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                 context.getString(R.string.scan_qr_camera_denied),
                 Toast.LENGTH_SHORT,
             ).show()
+        }
+    }
+    val trashRequestLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result ->
+        val trashedIds = pendingTrashPhotoIds
+        pendingTrashPhotoIds = emptySet()
+        if (trashedIds.isEmpty()) return@rememberLauncherForActivityResult
+
+        if (result.resultCode == Activity.RESULT_OK) {
+            viewModel.onPhotosMovedToTrash(trashedIds)
+            Toast.makeText(
+                context,
+                context.getString(R.string.trash_moved_success),
+                Toast.LENGTH_SHORT,
+            ).show()
+        } else {
+            Toast.makeText(
+                context,
+                context.getString(R.string.trash_request_cancelled),
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
+
+    fun requestMoveToTrash(photos: List<PhotoRecord>) {
+        if (photos.isEmpty()) return
+        when (val request = trashService.createTrashRequest(photos)) {
+            is TrashRequestResult.Ready -> {
+                pendingTrashPhotoIds = photos.map { photo -> photo.id }.toSet()
+                val intentRequest = IntentSenderRequest.Builder(request.intentSender).build()
+                trashRequestLauncher.launch(intentRequest)
+            }
+
+            TrashRequestResult.UnsupportedAndroid -> {
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.trash_not_supported),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+
+            is TrashRequestResult.Error -> {
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.trash_request_error),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
         }
     }
 
@@ -161,6 +218,14 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                 }
             }
         },
+        onMoveSelectedToTrash = { selectedIds ->
+            coroutineScope.launch {
+                val selectedPhotos = viewModel.resolvePhotosByIds(selectedIds)
+                if (selectedPhotos.isNotEmpty()) {
+                    requestMoveToTrash(selectedPhotos)
+                }
+            }
+        },
         onCreatePdfSelected = { selectedIds ->
             coroutineScope.launch {
                 val selectedPhotos = viewModel.resolvePhotosByIds(selectedIds)
@@ -217,6 +282,9 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             onDismiss = viewModel::closeViewer,
             onPageChanged = viewModel::onViewerPageChanged,
             onToggleFavorite = viewModel::onToggleFavorite,
+            onMoveToTrash = { photo ->
+                requestMoveToTrash(listOf(photo))
+            },
         )
     }
 

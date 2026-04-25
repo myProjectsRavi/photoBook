@@ -28,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CropFree
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Info
@@ -99,6 +100,7 @@ fun PhotoViewerScreen(
     onDismiss: () -> Unit,
     onPageChanged: (Int) -> Unit,
     onToggleFavorite: (Long) -> Unit,
+    onMoveToTrash: (PhotoRecord) -> Unit,
 ) {
     if (photos.isEmpty()) return
 
@@ -423,6 +425,22 @@ fun PhotoViewerScreen(
                                 Icon(
                                     imageVector = Icons.Default.QrCode2,
                                     contentDescription = stringResource(R.string.viewer_generate_qr),
+                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            }
+                        }
+                        Surface(
+                            color = Color(0x22FFFFFF),
+                            shape = RoundedCornerShape(28.dp),
+                        ) {
+                            IconButton(
+                                modifier = Modifier.size(42.dp),
+                                onClick = { onMoveToTrash(active) },
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = stringResource(R.string.viewer_move_to_trash),
                                     tint = Color.White,
                                     modifier = Modifier.size(22.dp),
                                 )

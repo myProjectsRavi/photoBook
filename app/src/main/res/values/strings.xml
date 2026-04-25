@@ -13,6 +13,7 @@
     <string name="favorites_filter">Favorites</string>
     <string name="selection_count">%1$d selected</string>
     <string name="share_selected">Share selected</string>
+    <string name="trash_selected">Move to Trash</string>
     <string name="create_pdf_selected">Create PDF</string>
     <string name="create_pdf_success">PDF created (%1$d pages)</string>
     <string name="create_pdf_error">Couldn\'t create PDF. Try again.</string>
@@ -36,6 +37,7 @@
     <string name="viewer_close">Close</string>
     <string name="viewer_favorite">Favorite photo</string>
     <string name="viewer_share">Share photo</string>
+    <string name="viewer_move_to_trash">Move photo to Trash</string>
     <string name="viewer_metadata">Photo metadata</string>
     <string name="viewer_metadata_title">EXIF details</string>
     <string name="viewer_metadata_loading">Reading metadata from this photo...</string>
@@ -90,6 +92,10 @@
     <string name="scan_qr_saved_error">Couldn\'t save photo. Try again.</string>
     <string name="scan_qr_scan_another">Scan another</string>
     <string name="scan_qr_camera_denied">Camera permission is required to scan QR.</string>
+    <string name="trash_moved_success">Moved to Trash</string>
+    <string name="trash_request_cancelled">Move to Trash cancelled</string>
+    <string name="trash_not_supported">Trash requires Android 11 or newer.</string>
+    <string name="trash_request_error">Couldn\'t move photos to Trash. Try again.</string>
     <string name="viewer_index">%1$d / %2$d</string>
     <string name="viewer_meta">%1$dx%2$d • %3$d KB • %4$s</string>
     <string name="viewer_swipe_hint">Swipe left or right to browse matching photos</string>

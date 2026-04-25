@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -80,6 +81,7 @@ fun MainScreen(
     onClearQuery: () -> Unit,
     onToggleFavoritesOnly: () -> Unit,
     onShareSelected: (Set<Long>) -> Unit,
+    onMoveSelectedToTrash: (Set<Long>) -> Unit,
     onCreatePdfSelected: (Set<Long>) -> Unit,
     onClearSelection: () -> Unit,
     onPhotoClick: (PhotoRecord) -> Unit,
@@ -203,6 +205,16 @@ fun MainScreen(
                                     )
                                     Text(
                                         text = stringResource(R.string.share_selected),
+                                        modifier = Modifier.padding(start = 6.dp),
+                                    )
+                                }
+                                Button(onClick = { onMoveSelectedToTrash(selectedPhotoIds) }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = null,
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.trash_selected),
                                         modifier = Modifier.padding(start = 6.dp),
                                     )
                                 }

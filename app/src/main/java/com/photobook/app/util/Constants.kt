@@ -18,4 +18,5 @@ object Constants {
     const val SMALL_FILE_SIZE_BYTES = 500L * 1024L
 
     const val ML_WORKER_NAME = "photobook_ml_worker"
+    const val TRASH_PURGE_WORK_NAME = "photobook_trash_purge_worker"
 }

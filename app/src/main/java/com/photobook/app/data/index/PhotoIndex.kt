@@ -138,6 +138,15 @@ class PhotoIndex @Inject constructor() {
         }
     }
 
+    suspend fun removeRecords(ids: Set<Long>) {
+        if (ids.isEmpty()) return
+        mutex.withLock {
+            val filtered = recordsFlow.value.filterNot { record -> record.id in ids }
+            recordsFlow.value = filtered
+            rebuildAuxiliarySets(filtered)
+        }
+    }
+
     private fun rebuildAuxiliarySets(records: List<PhotoRecord>) {
         folderKeywords = records.flatMap { record ->
             listOf(record.folderName, record.folderPath)
