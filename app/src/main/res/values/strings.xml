@@ -30,6 +30,7 @@
     <string name="duplicates_similar_group">%1$d similar photos</string>
     <string name="duplicates_burst_group">%1$d burst shots</string>
     <string name="duplicates_blurry_group">%1$d blurry photos</string>
+    <string name="duplicates_hero_shot">Hero shot selected</string>
     <string name="duplicates_exact_hint">Keep one best photo and remove the rest to save space.</string>
     <string name="duplicates_similar_hint">Near-duplicate shots that look almost the same.</string>
     <string name="duplicates_burst_hint">Rapid-fire sequence shots captured within seconds.</string>

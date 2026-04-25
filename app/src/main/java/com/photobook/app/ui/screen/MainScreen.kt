@@ -2,6 +2,7 @@ package com.photobook.app.ui.screen
 
 import android.net.Uri
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -442,11 +444,30 @@ private fun DuplicateGroupCard(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (group.kind == DuplicateMatchKind.Burst && group.heroPhotoId != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Star,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Text(
+                        text = stringResource(R.string.duplicates_hero_shot),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 group.photos.take(5).forEachIndexed { index, photo ->
+                    val isHero = photo.id == group.heroPhotoId
                     AsyncImage(
                         model = Uri.parse(photo.uriString),
                         contentDescription = photo.fileName,
@@ -454,6 +475,11 @@ private fun DuplicateGroupCard(
                         modifier = Modifier
                             .size(58.dp)
                             .clip(RoundedCornerShape(12.dp))
+                            .border(
+                                width = if (isHero) 2.dp else 0.dp,
+                                color = if (isHero) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                shape = RoundedCornerShape(12.dp),
+                            )
                             .clickable { onPhotoClick(index) },
                     )
                 }

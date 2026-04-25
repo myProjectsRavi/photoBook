@@ -16,6 +16,7 @@ data class DuplicatePhotoGroup(
     val id: String,
     val kind: DuplicateMatchKind,
     val photos: List<PhotoRecord>,
+    val heroPhotoId: Long? = null,
 ) {
     val totalBytes: Long = photos.sumOf { it.fileSize }
 }
