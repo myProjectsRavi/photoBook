@@ -1,3 +1,6 @@
+import java.io.File
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -5,16 +8,25 @@ plugins {
     id("com.google.dagger.hilt.android")
 }
 
+val releaseKeystoreProperties = Properties().apply {
+    val keystorePropsFile = rootProject.file("keystore.properties")
+    if (keystorePropsFile.exists()) {
+        keystorePropsFile.inputStream().use(::load)
+    } else {
+        throw GradleException("Missing keystore.properties for release signing.")
+    }
+}
+
 android {
     namespace = "com.photobook.app"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.photobook.app"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        targetSdk = 35
+        versionCode = 5
+        versionName = "1.0.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -22,10 +34,38 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            val keystorePath = releaseKeystoreProperties.getProperty("storeFile")
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+                ?: throw GradleException("storeFile missing in keystore.properties")
+
+            val candidate = File(keystorePath).let { file ->
+                if (file.isAbsolute) file else rootProject.file(keystorePath)
+            }
+            if (!candidate.exists()) {
+                throw GradleException("Release keystore not found at: ${candidate.absolutePath}")
+            }
+
+            storeFile = candidate
+            storePassword = releaseKeystoreProperties.getProperty("storePassword")
+                ?: throw GradleException("storePassword missing in keystore.properties")
+            keyAlias = releaseKeystoreProperties.getProperty("keyAlias")
+                ?: throw GradleException("keyAlias missing in keystore.properties")
+            keyPassword = releaseKeystoreProperties.getProperty("keyPassword")
+                ?: throw GradleException("keyPassword missing in keystore.properties")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            signingConfig = signingConfigs.getByName("release")
+            ndk {
+                debugSymbolLevel = "SYMBOL_TABLE"
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
