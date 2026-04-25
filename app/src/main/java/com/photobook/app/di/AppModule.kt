@@ -2,6 +2,7 @@ package com.photobook.app.di
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.room.Room
 import androidx.sqlite.db.SupportSQLiteDatabase
@@ -30,7 +31,10 @@ object AppModule {
             context,
             PhotoBookDatabase::class.java,
             "photobook.db",
-        ).addMigrations(MIGRATION_2_3, MIGRATION_3_4)
+        )
+            .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
+            .addCallback(WAL_OPEN_CALLBACK)
+            .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
             .fallbackToDestructiveMigration()
             .build()
     }
@@ -98,6 +102,13 @@ object AppModule {
                 "CREATE INDEX IF NOT EXISTS index_video_frames_videoDateModifiedMs " +
                     "ON video_frames(videoDateModifiedMs)",
             )
+        }
+    }
+
+    private val WAL_OPEN_CALLBACK = object : RoomDatabase.Callback() {
+        override fun onOpen(db: SupportSQLiteDatabase) {
+            super.onOpen(db)
+            db.execSQL("PRAGMA synchronous = NORMAL")
         }
     }
 }
