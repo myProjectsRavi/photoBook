@@ -30,7 +30,7 @@ object AppModule {
             context,
             PhotoBookDatabase::class.java,
             "photobook.db",
-        ).addMigrations(MIGRATION_2_3)
+        ).addMigrations(MIGRATION_2_3, MIGRATION_3_4)
             .fallbackToDestructiveMigration()
             .build()
     }
@@ -70,6 +70,33 @@ object AppModule {
             db.execSQL("CREATE INDEX IF NOT EXISTS index_photos_folderName ON photos(folderName)")
             db.execSQL(
                 "CREATE INDEX IF NOT EXISTS index_photos_city_state_country ON photos(city, state, country)",
+            )
+        }
+    }
+
+    private val MIGRATION_3_4 = object : Migration(3, 4) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS video_frames (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    videoUriString TEXT NOT NULL,
+                    displayName TEXT NOT NULL,
+                    timestampMs INTEGER NOT NULL,
+                    durationMs INTEGER NOT NULL,
+                    videoDateModifiedMs INTEGER NOT NULL,
+                    mimeType TEXT NOT NULL,
+                    searchableText TEXT NOT NULL
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS index_video_frames_videoUriString_timestampMs " +
+                    "ON video_frames(videoUriString, timestampMs)",
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_video_frames_videoDateModifiedMs " +
+                    "ON video_frames(videoDateModifiedMs)",
             )
         }
     }

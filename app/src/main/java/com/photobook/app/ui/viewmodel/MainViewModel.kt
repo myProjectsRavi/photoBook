@@ -21,6 +21,8 @@ import com.photobook.app.feature.duplicates.DuplicatePhotoFinder
 import com.photobook.app.feature.duplicates.DuplicatePhotoGroup
 import com.photobook.app.feature.memories.MemoryCurator
 import com.photobook.app.feature.memories.MemoryStory
+import com.photobook.app.feature.videoindex.VideoIndexRepository
+import com.photobook.app.feature.videoindex.VideoSearchMoment
 import com.photobook.app.ml.TaggingWorker
 import com.photobook.app.search.FilterEngine
 import com.photobook.app.search.FolderToken
@@ -36,6 +38,7 @@ import com.photobook.app.search.TextToken
 import com.photobook.app.search.TokenClassifier
 import com.photobook.app.util.Constants
 import com.photobook.app.worker.TrashPurgeWorker
+import com.photobook.app.worker.VideoIndexWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -68,6 +71,7 @@ class MainViewModel @Inject constructor(
     private val suggestionEngine: SuggestionEngine,
     private val duplicatePhotoFinder: DuplicatePhotoFinder,
     private val memoryCurator: MemoryCurator,
+    private val videoIndexRepository: VideoIndexRepository,
     private val sharedPreferences: SharedPreferences,
 ) : ViewModel() {
 
@@ -84,6 +88,8 @@ class MainViewModel @Inject constructor(
         val suggestions: List<SuggestionItem> = emptyList(),
         val showSuggestions: Boolean = false,
         val memoryStories: List<MemoryStory> = emptyList(),
+        val videoIndexingEnabled: Boolean = false,
+        val videoMoments: List<VideoSearchMoment> = emptyList(),
         val viewerStartIndex: Int? = null,
         val viewerPhotos: List<PhotoRecord> = emptyList(),
         val duplicateGroups: List<DuplicatePhotoGroup> = emptyList(),
@@ -108,6 +114,14 @@ class MainViewModel @Inject constructor(
     private var lastMemoryRecordsIdentity: Int = 0
 
     init {
+        uiState.update {
+            it.copy(
+                videoIndexingEnabled = sharedPreferences.getBoolean(
+                    Constants.VIDEO_INDEXING_ENABLED_KEY,
+                    false,
+                ),
+            )
+        }
         observeSearchResults()
         observeSuggestions()
     }
@@ -194,8 +208,36 @@ class MainViewModel @Inject constructor(
                 query = "",
                 selectedPhotoIds = emptySet(),
                 viewerStartIndex = null,
+                videoMoments = emptyList(),
                 showSuggestions = focusFlow.value && it.suggestions.isNotEmpty(),
             )
+        }
+    }
+
+    fun onToggleVideoIndexing() {
+        val nextEnabled = !uiState.value.videoIndexingEnabled
+        sharedPreferences.edit()
+            .putBoolean(Constants.VIDEO_INDEXING_ENABLED_KEY, nextEnabled)
+            .apply()
+
+        uiState.update { state ->
+            state.copy(
+                videoIndexingEnabled = nextEnabled,
+                videoMoments = if (nextEnabled) state.videoMoments else emptyList(),
+            )
+        }
+
+        if (nextEnabled) {
+            VideoIndexWorker.enqueueDaily(context)
+            viewModelScope.launch {
+                val query = uiState.value.query.trim()
+                if (query.isNotBlank()) {
+                    val moments = videoIndexRepository.searchMoments(query)
+                    uiState.update { state -> state.copy(videoMoments = moments) }
+                }
+            }
+        } else {
+            VideoIndexWorker.cancel(context)
         }
     }
 
@@ -453,6 +495,14 @@ class MainViewModel @Inject constructor(
                 }
 
                 publishPagedResults(filteredIds)
+
+                val shouldSearchVideos = uiState.value.videoIndexingEnabled && query.trim().isNotBlank()
+                val moments = if (shouldSearchVideos) {
+                    videoIndexRepository.searchMoments(query)
+                } else {
+                    emptyList()
+                }
+                uiState.update { state -> state.copy(videoMoments = moments) }
             }
         }
     }
@@ -514,6 +564,9 @@ class MainViewModel @Inject constructor(
 
             TaggingWorker.enqueueLibraryMaintenance(context)
             TrashPurgeWorker.enqueueDaily(context)
+            if (uiState.value.videoIndexingEnabled) {
+                VideoIndexWorker.enqueueDaily(context)
+            }
             registerMediaObserver()
         }
     }

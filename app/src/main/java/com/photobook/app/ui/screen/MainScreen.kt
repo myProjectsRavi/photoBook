@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -52,6 +53,7 @@ import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.feature.duplicates.DuplicateMatchKind
 import com.photobook.app.feature.duplicates.DuplicatePhotoGroup
 import com.photobook.app.feature.memories.MemoryStory
+import com.photobook.app.feature.videoindex.VideoSearchMoment
 import com.photobook.app.search.PhotoSource
 import com.photobook.app.ui.component.EmptyState
 import com.photobook.app.ui.component.PhotoGrid
@@ -73,6 +75,8 @@ fun MainScreen(
     suggestions: List<SuggestionItem>,
     showSuggestions: Boolean,
     memoryStories: List<MemoryStory>,
+    videoIndexingEnabled: Boolean,
+    videoMoments: List<VideoSearchMoment>,
     duplicateGroups: List<DuplicatePhotoGroup>,
     isFindingDuplicates: Boolean,
     showDuplicateFinder: Boolean,
@@ -82,6 +86,7 @@ fun MainScreen(
     onSuggestionSelected: (SuggestionItem) -> Unit,
     onClearQuery: () -> Unit,
     onToggleFavoritesOnly: () -> Unit,
+    onToggleVideoIndexing: () -> Unit,
     onShareSelected: (Set<Long>) -> Unit,
     onMoveSelectedToTrash: (Set<Long>) -> Unit,
     onCreatePdfSelected: (Set<Long>) -> Unit,
@@ -95,6 +100,7 @@ fun MainScreen(
     onDismissDuplicateFinder: () -> Unit,
     onDuplicatePhotoClick: (String, Int) -> Unit,
     onMemoryStorySelected: (MemoryStory) -> Unit,
+    onVideoMomentClick: (VideoSearchMoment) -> Unit,
 ) {
     val isSelectionMode = selectedPhotoIds.isNotEmpty()
 
@@ -133,6 +139,33 @@ fun MainScreen(
                     enabled = searchReady && !isSelectionMode,
                 ) {
                     Text(text = stringResource(R.string.duplicates_action))
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = stringResource(
+                        R.string.video_index_status,
+                        if (videoIndexingEnabled) {
+                            stringResource(R.string.video_index_on)
+                        } else {
+                            stringResource(R.string.video_index_off)
+                        },
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(onClick = onToggleVideoIndexing) {
+                    Text(
+                        text = if (videoIndexingEnabled) {
+                            stringResource(R.string.video_index_disable)
+                        } else {
+                            stringResource(R.string.video_index_enable)
+                        },
+                    )
                 }
             }
 
@@ -254,6 +287,12 @@ fun MainScreen(
             if (searchReady && query.isNotBlank() && resultCount == 0) {
                 EmptyState(modifier = Modifier.fillMaxSize())
             } else if (searchReady && query.isNotBlank()) {
+                if (videoIndexingEnabled && videoMoments.isNotEmpty()) {
+                    VideoMomentsCard(
+                        moments = videoMoments.take(4),
+                        onVideoMomentClick = onVideoMomentClick,
+                    )
+                }
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                     val columns = if (maxWidth >= 700.dp) 5 else if (maxWidth >= 520.dp) 4 else 3
                     PhotoGrid(
@@ -291,6 +330,85 @@ fun MainScreen(
             )
         }
     }
+}
+
+@Composable
+private fun VideoMomentsCard(
+    moments: List<VideoSearchMoment>,
+    onVideoMomentClick: (VideoSearchMoment) -> Unit,
+) {
+    if (moments.isEmpty()) return
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Videocam,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp),
+                )
+                Text(
+                    text = stringResource(R.string.video_moments_title),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+
+            moments.forEach { moment ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { onVideoMomentClick(moment) }
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        Text(
+                            text = moment.displayName,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                        )
+                        Text(
+                            text = moment.previewText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                        )
+                    }
+                    Text(
+                        text = formatVideoTimestamp(moment.timestampMs),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun formatVideoTimestamp(timestampMs: Long): String {
+    val totalSeconds = (timestampMs / 1000L).coerceAtLeast(0L)
+    val minutes = totalSeconds / 60L
+    val seconds = totalSeconds % 60L
+    return "%d:%02d".format(minutes, seconds)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

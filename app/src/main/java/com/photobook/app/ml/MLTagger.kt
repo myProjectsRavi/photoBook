@@ -62,42 +62,56 @@ class MLTagger @Inject constructor(
                 tags = emptyList(),
                 ocrText = "",
             )
-            val input = InputImage.fromBitmap(bitmap, 0)
-
-            val labels = runCatching { labeler.process(input).await() }.getOrDefault(emptyList())
-            val faces = runCatching { faceDetector.process(input).await() }.getOrDefault(emptyList())
-            val text = runCatching { textRecognizer.process(input).await().text }.getOrDefault("")
-
-            val tagMap = linkedMapOf<String, MLTag>()
-            labels.forEach { label ->
-                val canonical = LabelMapping.map(label.text) ?: return@forEach
-                val threshold = LabelMapping.threshold(canonical)
-                if (label.confidence < threshold) return@forEach
-
-                val existing = tagMap[canonical]
-                if (existing == null || existing.confidence < label.confidence) {
-                    tagMap[canonical] = MLTag(canonical, label.confidence)
-                }
+            try {
+                analyzeBitmapInternal(bitmap, isFrontCamera)
+            } finally {
+                bitmap.recycle()
             }
-
-            if (faces.size == 1 && isFrontCamera) {
-                tagMap["selfie"] = MLTag("selfie", 0.90f)
-            }
-            if (faces.size >= 2) {
-                tagMap["people"] = MLTag("people", 0.90f)
-            }
-
-            val normalizedOcrText = text
-                .lowercase()
-                .replace(Regex("\\s+"), " ")
-                .trim()
-                .take(Constants.OCR_MAX_TEXT_CHARS)
-
-            AnalysisResult(
-                tags = tagMap.values.toList(),
-                ocrText = normalizedOcrText,
-            )
         }
+    }
+
+    suspend fun analyzeBitmap(bitmap: Bitmap, isFrontCamera: Boolean): AnalysisResult {
+        return withContext(Dispatchers.Default) {
+            analyzeBitmapInternal(bitmap, isFrontCamera)
+        }
+    }
+
+    private suspend fun analyzeBitmapInternal(bitmap: Bitmap, isFrontCamera: Boolean): AnalysisResult {
+        val input = InputImage.fromBitmap(bitmap, 0)
+
+        val labels = runCatching { labeler.process(input).await() }.getOrDefault(emptyList())
+        val faces = runCatching { faceDetector.process(input).await() }.getOrDefault(emptyList())
+        val text = runCatching { textRecognizer.process(input).await().text }.getOrDefault("")
+
+        val tagMap = linkedMapOf<String, MLTag>()
+        labels.forEach { label ->
+            val canonical = LabelMapping.map(label.text) ?: return@forEach
+            val threshold = LabelMapping.threshold(canonical)
+            if (label.confidence < threshold) return@forEach
+
+            val existing = tagMap[canonical]
+            if (existing == null || existing.confidence < label.confidence) {
+                tagMap[canonical] = MLTag(canonical, label.confidence)
+            }
+        }
+
+        if (faces.size == 1 && isFrontCamera) {
+            tagMap["selfie"] = MLTag("selfie", 0.90f)
+        }
+        if (faces.size >= 2) {
+            tagMap["people"] = MLTag("people", 0.90f)
+        }
+
+        val normalizedOcrText = text
+            .lowercase()
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .take(Constants.OCR_MAX_TEXT_CHARS)
+
+        return AnalysisResult(
+            tags = tagMap.values.toList(),
+            ocrText = normalizedOcrText,
+        )
     }
 
     private fun loadThumbnail(uriString: String): Bitmap? {

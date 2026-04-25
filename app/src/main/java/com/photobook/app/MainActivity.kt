@@ -40,6 +40,7 @@ import com.photobook.app.feature.pdf.PdfExportService
 import com.photobook.app.feature.qrshare.QrReceivedImageStore
 import com.photobook.app.feature.trash.TrashRequestResult
 import com.photobook.app.feature.trash.TrashService
+import com.photobook.app.feature.videoindex.VideoSearchMoment
 import com.photobook.app.ui.screen.MainScreen
 import com.photobook.app.ui.screen.OnboardingScreen
 import com.photobook.app.ui.screen.PhotoViewerScreen
@@ -189,6 +190,8 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         suggestions = uiState.suggestions,
         showSuggestions = uiState.showSuggestions,
         memoryStories = uiState.memoryStories,
+        videoIndexingEnabled = uiState.videoIndexingEnabled,
+        videoMoments = uiState.videoMoments,
         duplicateGroups = uiState.duplicateGroups,
         isFindingDuplicates = uiState.isFindingDuplicates,
         showDuplicateFinder = uiState.showDuplicateFinder,
@@ -198,6 +201,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         onSuggestionSelected = viewModel::onSuggestionSelected,
         onClearQuery = viewModel::onClearQuery,
         onToggleFavoritesOnly = viewModel::onToggleFavoritesOnly,
+        onToggleVideoIndexing = viewModel::onToggleVideoIndexing,
         onShareSelected = { selectedIds ->
             coroutineScope.launch {
                 val selectedPhotos = viewModel.resolvePhotosByIds(selectedIds)
@@ -271,6 +275,9 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         onDismissDuplicateFinder = viewModel::dismissDuplicateFinder,
         onDuplicatePhotoClick = viewModel::openDuplicatePhoto,
         onMemoryStorySelected = viewModel::onMemoryStorySelected,
+        onVideoMomentClick = { moment ->
+            openVideoMoment(context, moment)
+        },
     )
 
     val viewerIndex = uiState.viewerStartIndex
@@ -345,4 +352,26 @@ private fun sharePdf(context: Context, uri: Uri, fileName: String) {
             context.getString(R.string.create_pdf_share),
         ),
     )
+}
+
+private fun openVideoMoment(context: Context, moment: VideoSearchMoment) {
+    val uri = runCatching { Uri.parse(moment.videoUriString) }.getOrNull() ?: return
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, moment.mimeType.ifBlank { "video/*" })
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        putExtra("android.intent.extra.START_PLAYBACK", true)
+        putExtra("android.intent.extra.START_TIME", moment.timestampMs.toInt())
+        putExtra("startTime", moment.timestampMs.toInt())
+        putExtra("seek_to", moment.timestampMs.toInt())
+    }
+
+    runCatching {
+        context.startActivity(Intent.createChooser(intent, context.getString(R.string.video_moments_title)))
+    }.onFailure {
+        Toast.makeText(
+            context,
+            context.getString(R.string.video_moment_open_error),
+            Toast.LENGTH_SHORT,
+        ).show()
+    }
 }

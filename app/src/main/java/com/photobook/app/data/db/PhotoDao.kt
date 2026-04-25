@@ -42,4 +42,26 @@ interface PhotoDao {
 
     @Query("SELECT rowid FROM photo_fts WHERE photo_fts MATCH :matchQuery LIMIT :limit")
     suspend fun searchIdsByText(matchQuery: String, limit: Int): List<Long>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertVideoFrames(frames: List<VideoFrameEntity>)
+
+    @Query("DELETE FROM video_frames WHERE videoUriString = :videoUri")
+    suspend fun deleteVideoFramesForVideo(videoUri: String)
+
+    @Query("DELETE FROM video_frames WHERE videoUriString NOT IN (:videoUris)")
+    suspend fun deleteVideoFramesNotIn(videoUris: List<String>)
+
+    @Query("SELECT DISTINCT videoUriString FROM video_frames")
+    suspend fun getIndexedVideoUris(): List<String>
+
+    @Query(
+        """
+        SELECT * FROM video_frames
+        WHERE searchableText LIKE '%' || :query || '%'
+        ORDER BY videoDateModifiedMs DESC, timestampMs ASC
+        LIMIT :limit
+        """,
+    )
+    suspend fun searchVideoFrames(query: String, limit: Int): List<VideoFrameEntity>
 }
