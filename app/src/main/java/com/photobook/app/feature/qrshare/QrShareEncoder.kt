@@ -15,6 +15,7 @@ import java.util.Base64
 import java.util.UUID
 import javax.inject.Inject
 import kotlin.math.max
+import kotlin.math.sqrt
 
 sealed interface QrShareGenerationResult {
     data class Success(val packet: QrSharePacket) : QrShareGenerationResult
@@ -144,31 +145,70 @@ class QrShareEncoder @Inject constructor(
 
     private fun compressForTransfer(source: Bitmap): ByteArray {
         var bestBytes = ByteArray(0)
-        var currentMaxDimension = max(source.width, source.height)
+        var working: Bitmap = source
 
-        while (currentMaxDimension >= MIN_MAX_DIMENSION_PX) {
-            val scaled = scaleBitmapToMaxDimension(source, currentMaxDimension)
-            try {
-                var quality = INITIAL_JPEG_QUALITY
-                while (quality >= MIN_JPEG_QUALITY) {
-                    val encoded = encodeJpeg(scaled, quality)
-                    if (bestBytes.isEmpty() || encoded.size < bestBytes.size) {
-                        bestBytes = encoded
-                    }
-                    if (encoded.size <= MAX_TRANSFER_BYTES) {
-                        return encoded
-                    }
-                    quality -= JPEG_QUALITY_STEP
+        try {
+            repeat(MAX_SCALE_ATTEMPTS) {
+                val withinBudget = findBestQualityWithinBudget(working)
+                if (withinBudget != null) {
+                    return withinBudget
                 }
-            } finally {
-                if (scaled !== source) {
-                    scaled.recycleSafely()
+
+                val minQualityBytes = encodeJpeg(working, MIN_JPEG_QUALITY)
+                if (bestBytes.isEmpty() || minQualityBytes.size < bestBytes.size) {
+                    bestBytes = minQualityBytes
                 }
+
+                val currentMaxDimension = max(working.width, working.height)
+                if (currentMaxDimension <= MIN_MAX_DIMENSION_PX) {
+                    return bestBytes
+                }
+
+                val ratio = (MAX_TRANSFER_BYTES.toDouble() / minQualityBytes.size.toDouble())
+                    .coerceIn(MIN_DIMENSION_RATIO, MAX_DIMENSION_RATIO)
+                val nextMaxDimension = (currentMaxDimension * sqrt(ratio))
+                    .toInt()
+                    .coerceAtLeast(MIN_MAX_DIMENSION_PX)
+
+                if (nextMaxDimension >= currentMaxDimension) {
+                    return bestBytes
+                }
+
+                val scaled = scaleBitmapToMaxDimension(working, nextMaxDimension)
+                if (scaled === working) {
+                    return bestBytes
+                }
+                if (working !== source) {
+                    working.recycleSafely()
+                }
+                working = scaled
             }
-            currentMaxDimension = (currentMaxDimension * DOWNSCALE_FACTOR).toInt()
+        } finally {
+            if (working !== source) {
+                working.recycleSafely()
+            }
         }
 
         return bestBytes
+    }
+
+    private fun findBestQualityWithinBudget(bitmap: Bitmap): ByteArray? {
+        var low = MIN_JPEG_QUALITY
+        var high = INITIAL_JPEG_QUALITY
+        var best: ByteArray? = null
+
+        while (low <= high) {
+            val quality = (low + high) / 2
+            val encoded = encodeJpeg(bitmap, quality)
+            if (encoded.size <= MAX_TRANSFER_BYTES) {
+                best = encoded
+                low = quality + 1
+            } else {
+                high = quality - 1
+            }
+        }
+
+        return best
     }
 
     private fun encodeJpeg(bitmap: Bitmap, quality: Int): ByteArray {
@@ -203,7 +243,8 @@ class QrShareEncoder @Inject constructor(
         private const val MIN_MAX_DIMENSION_PX = 640
         private const val INITIAL_JPEG_QUALITY = 92
         private const val MIN_JPEG_QUALITY = 50
-        private const val JPEG_QUALITY_STEP = 7
-        private const val DOWNSCALE_FACTOR = 0.82f
+        private const val MAX_SCALE_ATTEMPTS = 4
+        private const val MIN_DIMENSION_RATIO = 0.40
+        private const val MAX_DIMENSION_RATIO = 0.92
     }
 }

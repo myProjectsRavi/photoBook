@@ -14,6 +14,7 @@ import com.photobook.app.data.model.PhotoRecord
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.FileOutputStream
+import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -380,7 +381,8 @@ class ExifMetadataService @Inject constructor(
             .ifBlank { "PhotoBook" }
             .replace(Regex("[^A-Za-z0-9._-]"), "_")
             .take(48)
-        return "${base}_safe_${System.currentTimeMillis()}.$extension"
+        val uniqueId = UUID.randomUUID().toString().take(8)
+        return "${base}_safe_${System.currentTimeMillis()}_${uniqueId}.$extension"
     }
 
     private fun cleanupStaleSafeShareFiles(dir: File) {

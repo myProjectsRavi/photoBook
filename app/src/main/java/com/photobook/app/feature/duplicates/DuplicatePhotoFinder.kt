@@ -214,17 +214,14 @@ class DuplicatePhotoFinder @Inject constructor(
         return try {
             val width = bitmap.width
             val height = bitmap.height
-            val pixels = IntArray(width * height)
-            bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+            val rowPixels = IntArray(width)
+            var rowAbove = IntArray(width)
+            var rowCenter = IntArray(width)
+            var rowBelow = IntArray(width)
 
-            val luminance = IntArray(pixels.size)
-            for (i in pixels.indices) {
-                val px = pixels[i]
-                val red = android.graphics.Color.red(px)
-                val green = android.graphics.Color.green(px)
-                val blue = android.graphics.Color.blue(px)
-                luminance[i] = (red * 299 + green * 587 + blue * 114) / 1000
-            }
+            fillLuminanceRow(bitmap, rowPixels, rowAbove, 0)
+            fillLuminanceRow(bitmap, rowPixels, rowCenter, 1)
+            fillLuminanceRow(bitmap, rowPixels, rowBelow, 2)
 
             var sum = 0.0
             var sumSquares = 0.0
@@ -232,16 +229,23 @@ class DuplicatePhotoFinder @Inject constructor(
 
             for (y in 1 until height - 1) {
                 for (x in 1 until width - 1) {
-                    val idx = y * width + x
-                    val center = luminance[idx]
-                    val up = luminance[idx - width]
-                    val down = luminance[idx + width]
-                    val left = luminance[idx - 1]
-                    val right = luminance[idx + 1]
+                    val center = rowCenter[x]
+                    val up = rowAbove[x]
+                    val down = rowBelow[x]
+                    val left = rowCenter[x - 1]
+                    val right = rowCenter[x + 1]
                     val laplacian = (4 * center - up - down - left - right).toDouble()
                     sum += laplacian
                     sumSquares += laplacian * laplacian
                     count += 1
+                }
+
+                if (y < height - 2) {
+                    val reusable = rowAbove
+                    rowAbove = rowCenter
+                    rowCenter = rowBelow
+                    rowBelow = reusable
+                    fillLuminanceRow(bitmap, rowPixels, rowBelow, y + 2)
                 }
             }
 
@@ -250,6 +254,22 @@ class DuplicatePhotoFinder @Inject constructor(
             (sumSquares / count.toDouble()) - (mean * mean)
         } finally {
             bitmap.recycleSafely()
+        }
+    }
+
+    private fun fillLuminanceRow(
+        bitmap: Bitmap,
+        rowPixels: IntArray,
+        targetLuminance: IntArray,
+        y: Int,
+    ) {
+        bitmap.getPixels(rowPixels, 0, bitmap.width, 0, y, bitmap.width, 1)
+        for (x in rowPixels.indices) {
+            val pixel = rowPixels[x]
+            val red = android.graphics.Color.red(pixel)
+            val green = android.graphics.Color.green(pixel)
+            val blue = android.graphics.Color.blue(pixel)
+            targetLuminance[x] = (red * 299 + green * 587 + blue * 114) / 1000
         }
     }
 

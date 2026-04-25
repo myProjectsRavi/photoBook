@@ -1,6 +1,5 @@
 package com.photobook.app.ui.component
 
-import android.net.Uri
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
@@ -24,10 +23,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import coil.request.CachePolicy
+import coil.request.ImageRequest
+import coil.size.Precision
 import com.photobook.app.data.model.PhotoRecord
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -46,6 +49,17 @@ fun PhotoThumbnail(
         targetValue = if (isSelected) 0.28f else 0f,
         label = "selected_overlay_alpha",
     )
+    val context = LocalContext.current
+    val imageRequest = remember(photo.uriString) {
+        ImageRequest.Builder(context)
+            .data(photo.uriString)
+            .memoryCachePolicy(CachePolicy.ENABLED)
+            .diskCachePolicy(CachePolicy.ENABLED)
+            .allowHardware(true)
+            .size(THUMBNAIL_REQUEST_SIZE_PX)
+            .precision(Precision.EXACT)
+            .build()
+    }
 
     Card(
         modifier = modifier
@@ -63,7 +77,7 @@ fun PhotoThumbnail(
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             AsyncImage(
-                model = Uri.parse(photo.uriString),
+                model = imageRequest,
                 contentDescription = photo.mlTags.joinToString { it.label }.ifBlank { photo.fileName },
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
@@ -91,3 +105,5 @@ fun PhotoThumbnail(
         }
     }
 }
+
+private const val THUMBNAIL_REQUEST_SIZE_PX = 512

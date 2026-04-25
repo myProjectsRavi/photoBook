@@ -1,5 +1,8 @@
 package com.photobook.app.feature.memories
 
+import androidx.compose.runtime.Immutable
+
+@Immutable
 data class MemoryStory(
     val id: String,
     val title: String,
