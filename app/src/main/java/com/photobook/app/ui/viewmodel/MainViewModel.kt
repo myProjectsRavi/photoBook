@@ -41,10 +41,12 @@ import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.first
@@ -387,9 +389,13 @@ class MainViewModel @Inject constructor(
     @OptIn(FlowPreview::class)
     private fun observeSearchResults() {
         viewModelScope.launch {
+            val throttledRecords = photoIndex.records()
+                .buffer(capacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+                .debounce(RECORDS_UPDATE_DEBOUNCE_MS)
+
             combine(
                 queryFlow.debounce(Constants.SEARCH_DEBOUNCE_MS),
-                photoIndex.records(),
+                throttledRecords,
             ) { query, records ->
                 Pair(query, records)
             }.collect { (query, records) ->
@@ -804,5 +810,6 @@ class MainViewModel @Inject constructor(
     companion object {
         private const val SEARCH_PAGE_SIZE = 60
         private const val SEARCH_PREFETCH_DISTANCE = 20
+        private const val RECORDS_UPDATE_DEBOUNCE_MS = 250L
     }
 }
