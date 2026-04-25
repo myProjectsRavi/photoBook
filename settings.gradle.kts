@@ -19,3 +19,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "PhotoBook"
 include(":app")
+include(":baselineprofile")

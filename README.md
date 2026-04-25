@@ -57,6 +57,7 @@ PhotoBook is engineered to be a production-grade, modern Android application sho
 - **Persistence:** Room Database with **FTS4 integration**
 - **Background Tasks:** WorkManager for energy-efficient background ML tagging
 - **Intelligence:** Google ML Kit (Vision API) for on-device analysis
+- **Runtime Performance:** Baseline Profiles + Macrobenchmark generator module
 
 ### 📂 Feature Modules
 The architecture is cleanly separated into specialized feature packages under `com.photobook.app.feature`:
@@ -86,6 +87,19 @@ The architecture is cleanly separated into specialized feature packages under `c
    Open the root directory in Android Studio.
 3. **Build & Run:**
    Sync the Gradle project and hit the 🟢 **Run** button.
+
+### Generate Baseline Profiles
+For low-jank cold starts and first-scroll smoothness, generate baseline profiles:
+
+```bash
+./gradlew :baselineprofile:connectedNonMinifiedReleaseAndroidTest
+```
+
+If you use a managed virtual device:
+
+```bash
+./gradlew :baselineprofile:pixel6Api35BenchmarkAndroidTest
+```
 
 ---
 
