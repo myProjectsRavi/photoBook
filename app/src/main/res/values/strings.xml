@@ -19,14 +19,20 @@
     <string name="create_pdf_share">Share PDF</string>
     <string name="safe_share_prepare_error">Couldn\'t prepare private safe share. Try again.</string>
     <string name="clear_selection">Clear selection</string>
-    <string name="duplicates_action">Duplicates</string>
-    <string name="duplicates_title">Duplicate finder</string>
-    <string name="duplicates_subtitle">Fully offline. Nothing leaves your device.</string>
+    <string name="duplicates_action">Storage</string>
+    <string name="duplicates_title">Storage optimizer</string>
+    <string name="duplicates_subtitle">Duplicate, burst, and blur detection fully on-device.</string>
     <string name="duplicates_refresh">Scan</string>
-    <string name="duplicates_scanning">Finding similar photos on-device...</string>
-    <string name="duplicates_empty">No duplicate or very similar photos found.</string>
+    <string name="duplicates_scanning">Analyzing duplicate, burst, and blur candidates...</string>
+    <string name="duplicates_empty">No duplicate, burst, or blurry photos found.</string>
     <string name="duplicates_exact_group">%1$d exact duplicates</string>
     <string name="duplicates_similar_group">%1$d similar photos</string>
+    <string name="duplicates_burst_group">%1$d burst shots</string>
+    <string name="duplicates_blurry_group">%1$d blurry photos</string>
+    <string name="duplicates_exact_hint">Keep one best photo and remove the rest to save space.</string>
+    <string name="duplicates_similar_hint">Near-duplicate shots that look almost the same.</string>
+    <string name="duplicates_burst_hint">Rapid-fire sequence shots captured within seconds.</string>
+    <string name="duplicates_blurry_hint">Low-sharpness photos that may be safe to remove.</string>
     <string name="viewer_close">Close</string>
     <string name="viewer_favorite">Favorite photo</string>
     <string name="viewer_share">Share photo</string>
@@ -91,5 +97,7 @@
     <string name="welcome_title">Search anything</string>
     <string name="welcome_subtitle">Private on-device photo search. Your photos never leave this device.</string>
     <string name="welcome_search_prompt">Type a word, place, date, or moment.</string>
+    <string name="memories_title">Memories</string>
+    <string name="memories_subtitle">Auto-curated</string>
     <string name="private_reassurance">Private, secure, and fully on-device.</string>
 </resources>

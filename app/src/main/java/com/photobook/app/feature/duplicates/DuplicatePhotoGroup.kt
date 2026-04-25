@@ -5,6 +5,8 @@ import com.photobook.app.data.model.PhotoRecord
 enum class DuplicateMatchKind {
     Exact,
     Similar,
+    Burst,
+    Blurry,
 }
 
 data class DuplicatePhotoGroup(

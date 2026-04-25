@@ -10,6 +10,7 @@ import java.security.MessageDigest
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
 
 class DuplicatePhotoFinder @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -20,11 +21,32 @@ class DuplicatePhotoFinder @Inject constructor(
         return withContext(Dispatchers.IO) {
             val exactGroups = findExactDuplicates(records)
             val exactIds = exactGroups.flatMap { group -> group.photos.map { it.id } }.toSet()
-            val similarGroups = findNearDuplicates(records.filterNot { it.id in exactIds })
+            val remainingForSimilar = records.filterNot { it.id in exactIds }
+            val similarGroups = findNearDuplicates(remainingForSimilar)
+            val similarIds = similarGroups.flatMap { group -> group.photos.map { it.id } }.toSet()
 
-            (exactGroups + similarGroups)
+            val remainingForBurst = records.filterNot { it.id in exactIds || it.id in similarIds }
+            val burstGroups = findBurstGroups(remainingForBurst)
+            val burstIds = burstGroups.flatMap { group -> group.photos.map { it.id } }.toSet()
+
+            val remainingForBlur = records.filterNot {
+                it.id in exactIds || it.id in similarIds || it.id in burstIds
+            }
+            val blurryGroup = findBlurryGroup(remainingForBlur)
+
+            val allGroups = buildList {
+                addAll(exactGroups)
+                addAll(similarGroups)
+                addAll(burstGroups)
+                if (blurryGroup != null) {
+                    add(blurryGroup)
+                }
+            }
+
+            allGroups
                 .sortedWith(
-                    compareByDescending<DuplicatePhotoGroup> { it.photos.size }
+                    compareByDescending<DuplicatePhotoGroup> { priorityOf(it.kind) }
+                        .thenByDescending { it.photos.size }
                         .thenByDescending { it.totalBytes }
                 )
                 .take(MAX_GROUPS)
@@ -91,6 +113,144 @@ class DuplicatePhotoFinder @Inject constructor(
                     photos = photos.sortedByDescending { it.dateAdded },
                 )
             }
+    }
+
+    private fun findBurstGroups(records: List<PhotoRecord>): List<DuplicatePhotoGroup> {
+        if (records.size < BURST_MIN_COUNT) return emptyList()
+
+        val sorted = records
+            .asSequence()
+            .filter { it.dateAdded > 0L && it.width > 0 && it.height > 0 }
+            .sortedBy { it.dateAdded }
+            .toList()
+
+        if (sorted.size < BURST_MIN_COUNT) return emptyList()
+
+        val groups = mutableListOf<DuplicatePhotoGroup>()
+        var current = mutableListOf<PhotoRecord>()
+        sorted.forEach { photo ->
+            if (current.isEmpty()) {
+                current += photo
+                return@forEach
+            }
+
+            val last = current.last()
+            if (belongsToSameBurst(last, photo)) {
+                current += photo
+            } else {
+                if (current.size >= BURST_MIN_COUNT) {
+                    groups += DuplicatePhotoGroup(
+                        id = "burst-${current.minOf { it.id }}",
+                        kind = DuplicateMatchKind.Burst,
+                        photos = current.sortedByDescending { it.dateAdded },
+                    )
+                }
+                current = mutableListOf(photo)
+            }
+        }
+
+        if (current.size >= BURST_MIN_COUNT) {
+            groups += DuplicatePhotoGroup(
+                id = "burst-${current.minOf { it.id }}",
+                kind = DuplicateMatchKind.Burst,
+                photos = current.sortedByDescending { it.dateAdded },
+            )
+        }
+
+        return groups.take(MAX_BURST_GROUPS)
+    }
+
+    private fun belongsToSameBurst(left: PhotoRecord, right: PhotoRecord): Boolean {
+        if (right.dateAdded < left.dateAdded) return false
+        if (right.dateAdded - left.dateAdded > BURST_WINDOW_MS) return false
+        if (!left.folderPath.equals(right.folderPath, ignoreCase = true)) return false
+
+        val leftRatio = left.aspectRatio
+        val rightRatio = right.aspectRatio
+        if (abs(leftRatio - rightRatio) > BURST_ASPECT_RATIO_DELTA) return false
+
+        val widthDelta = abs(left.width - right.width).toFloat() / maxOf(left.width, right.width).toFloat()
+        val heightDelta = abs(left.height - right.height).toFloat() / maxOf(left.height, right.height).toFloat()
+        return widthDelta <= BURST_DIMENSION_DELTA && heightDelta <= BURST_DIMENSION_DELTA
+    }
+
+    private fun findBlurryGroup(records: List<PhotoRecord>): DuplicatePhotoGroup? {
+        if (records.size < 2) return null
+
+        val blurryCandidates = mutableListOf<Pair<PhotoRecord, Double>>()
+        records.forEach { photo ->
+            val score = blurVariance(photo.uriString) ?: return@forEach
+            if (score <= BLUR_VARIANCE_THRESHOLD) {
+                blurryCandidates += photo to score
+            }
+        }
+
+        if (blurryCandidates.size < MIN_BLUR_GROUP_SIZE) return null
+
+        val rankedPhotos = blurryCandidates
+            .sortedWith(
+                compareBy<Pair<PhotoRecord, Double>> { it.second }
+                    .thenByDescending { it.first.fileSize }
+            )
+            .take(MAX_BLUR_CANDIDATES)
+            .map { it.first }
+
+        if (rankedPhotos.size < MIN_BLUR_GROUP_SIZE) return null
+
+        return DuplicatePhotoGroup(
+            id = "blur-${rankedPhotos.minOf { it.id }}",
+            kind = DuplicateMatchKind.Blurry,
+            photos = rankedPhotos,
+        )
+    }
+
+    private fun blurVariance(uriString: String): Double? {
+        val bitmap = decodeSampledBitmap(Uri.parse(uriString), BLUR_SAMPLE_MAX_DIMENSION) ?: return null
+        if (bitmap.width < 3 || bitmap.height < 3) {
+            bitmap.recycleSafely()
+            return null
+        }
+
+        return try {
+            val width = bitmap.width
+            val height = bitmap.height
+            val pixels = IntArray(width * height)
+            bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+
+            val luminance = IntArray(pixels.size)
+            for (i in pixels.indices) {
+                val px = pixels[i]
+                val red = android.graphics.Color.red(px)
+                val green = android.graphics.Color.green(px)
+                val blue = android.graphics.Color.blue(px)
+                luminance[i] = (red * 299 + green * 587 + blue * 114) / 1000
+            }
+
+            var sum = 0.0
+            var sumSquares = 0.0
+            var count = 0
+
+            for (y in 1 until height - 1) {
+                for (x in 1 until width - 1) {
+                    val idx = y * width + x
+                    val center = luminance[idx]
+                    val up = luminance[idx - width]
+                    val down = luminance[idx + width]
+                    val left = luminance[idx - 1]
+                    val right = luminance[idx + 1]
+                    val laplacian = (4 * center - up - down - left - right).toDouble()
+                    sum += laplacian
+                    sumSquares += laplacian * laplacian
+                    count += 1
+                }
+            }
+
+            if (count == 0) return null
+            val mean = sum / count.toDouble()
+            (sumSquares / count.toDouble()) - (mean * mean)
+        } finally {
+            bitmap.recycleSafely()
+        }
     }
 
     private fun bucketKey(band: Int, hash: Long): String {
@@ -230,5 +390,23 @@ class DuplicatePhotoFinder @Inject constructor(
         private const val BAND_COUNT = 8
         private const val NEAR_DUPLICATE_DISTANCE = 8
         private const val MAX_GROUPS = 30
+        private const val BURST_MIN_COUNT = 3
+        private const val BURST_WINDOW_MS = 2_500L
+        private const val BURST_ASPECT_RATIO_DELTA = 0.16f
+        private const val BURST_DIMENSION_DELTA = 0.16f
+        private const val MAX_BURST_GROUPS = 15
+        private const val BLUR_SAMPLE_MAX_DIMENSION = 256
+        private const val BLUR_VARIANCE_THRESHOLD = 95.0
+        private const val MIN_BLUR_GROUP_SIZE = 2
+        private const val MAX_BLUR_CANDIDATES = 36
+
+        private fun priorityOf(kind: DuplicateMatchKind): Int {
+            return when (kind) {
+                DuplicateMatchKind.Exact -> 4
+                DuplicateMatchKind.Similar -> 3
+                DuplicateMatchKind.Burst -> 2
+                DuplicateMatchKind.Blurry -> 1
+            }
+        }
     }
 }

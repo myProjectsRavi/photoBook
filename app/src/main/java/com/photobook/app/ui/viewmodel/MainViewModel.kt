@@ -19,6 +19,8 @@ import com.photobook.app.data.model.RawPhotoData
 import com.photobook.app.data.source.MediaStoreScanner
 import com.photobook.app.feature.duplicates.DuplicatePhotoFinder
 import com.photobook.app.feature.duplicates.DuplicatePhotoGroup
+import com.photobook.app.feature.memories.MemoryCurator
+import com.photobook.app.feature.memories.MemoryStory
 import com.photobook.app.ml.TaggingWorker
 import com.photobook.app.search.FilterEngine
 import com.photobook.app.search.FolderToken
@@ -62,6 +64,7 @@ class MainViewModel @Inject constructor(
     private val tokenClassifier: TokenClassifier,
     private val suggestionEngine: SuggestionEngine,
     private val duplicatePhotoFinder: DuplicatePhotoFinder,
+    private val memoryCurator: MemoryCurator,
     private val sharedPreferences: SharedPreferences,
 ) : ViewModel() {
 
@@ -77,6 +80,7 @@ class MainViewModel @Inject constructor(
         val selectedPhotoIds: Set<Long> = emptySet(),
         val suggestions: List<SuggestionItem> = emptyList(),
         val showSuggestions: Boolean = false,
+        val memoryStories: List<MemoryStory> = emptyList(),
         val viewerStartIndex: Int? = null,
         val viewerPhotos: List<PhotoRecord> = emptyList(),
         val duplicateGroups: List<DuplicatePhotoGroup> = emptyList(),
@@ -95,8 +99,10 @@ class MainViewModel @Inject constructor(
     private var hasInitializedIndex = false
     private var mediaObserver: ContentObserver? = null
     private var mediaRebuildJob: Job? = null
+    private var memoryRefreshJob: Job? = null
     private var latestSearchResultIds: List<Long> = emptyList()
     private var latestVisibleResultIds: List<Long> = emptyList()
+    private var lastMemoryRecordsIdentity: Int = 0
 
     init {
         observeSearchResults()
@@ -156,6 +162,21 @@ class MainViewModel @Inject constructor(
         uiState.update {
             it.copy(
                 query = suggestion.text,
+                selectedPhotoIds = emptySet(),
+                viewerStartIndex = null,
+                showSuggestions = false,
+            )
+        }
+    }
+
+    fun onMemoryStorySelected(story: MemoryStory) {
+        val query = story.suggestedQuery.trim()
+        if (query.isBlank()) return
+        queryFlow.value = query
+        runImmediateSearch(query)
+        uiState.update {
+            it.copy(
+                query = query,
                 selectedPhotoIds = emptySet(),
                 viewerStartIndex = null,
                 showSuggestions = false,
@@ -372,6 +393,7 @@ class MainViewModel @Inject constructor(
             ) { query, records ->
                 Pair(query, records)
             }.collect { (query, records) ->
+                maybeRefreshMemoryStories(records)
                 val searchResult = runSearch(query, records)
                 latestSearchResultIds = searchResult.results.map { photo -> photo.id }
 
@@ -629,6 +651,7 @@ class MainViewModel @Inject constructor(
 
     override fun onCleared() {
         mediaRebuildJob?.cancel()
+        memoryRefreshJob?.cancel()
         mediaObserver?.let { observer ->
             context.contentResolver.unregisterContentObserver(observer)
         }
@@ -674,6 +697,18 @@ class MainViewModel @Inject constructor(
         if (latestVisibleResultIds.isEmpty()) return emptyList()
         val byId = photoIndex.snapshot().associateBy { record -> record.id }
         return latestVisibleResultIds.mapNotNull(byId::get)
+    }
+
+    private fun maybeRefreshMemoryStories(records: List<PhotoRecord>) {
+        val identity = System.identityHashCode(records)
+        if (identity == lastMemoryRecordsIdentity) return
+        lastMemoryRecordsIdentity = identity
+
+        memoryRefreshJob?.cancel()
+        memoryRefreshJob = viewModelScope.launch(Dispatchers.Default) {
+            val curated = memoryCurator.curate(records)
+            uiState.update { state -> state.copy(memoryStories = curated) }
+        }
     }
 
     private suspend fun refreshVisibleResultsFromLatestSearch() {

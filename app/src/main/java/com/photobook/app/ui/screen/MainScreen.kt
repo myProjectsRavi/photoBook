@@ -48,6 +48,7 @@ import com.photobook.app.R
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.feature.duplicates.DuplicateMatchKind
 import com.photobook.app.feature.duplicates.DuplicatePhotoGroup
+import com.photobook.app.feature.memories.MemoryStory
 import com.photobook.app.search.PhotoSource
 import com.photobook.app.ui.component.EmptyState
 import com.photobook.app.ui.component.PhotoGrid
@@ -68,6 +69,7 @@ fun MainScreen(
     selectedPhotoIds: Set<Long>,
     suggestions: List<SuggestionItem>,
     showSuggestions: Boolean,
+    memoryStories: List<MemoryStory>,
     duplicateGroups: List<DuplicatePhotoGroup>,
     isFindingDuplicates: Boolean,
     showDuplicateFinder: Boolean,
@@ -88,6 +90,7 @@ fun MainScreen(
     onRefreshDuplicates: () -> Unit,
     onDismissDuplicateFinder: () -> Unit,
     onDuplicatePhotoClick: (String, Int) -> Unit,
+    onMemoryStorySelected: (MemoryStory) -> Unit,
 ) {
     val isSelectionMode = selectedPhotoIds.isNotEmpty()
 
@@ -227,7 +230,11 @@ fun MainScreen(
             }
 
             if (!searchReady || query.isBlank()) {
-                WelcomeState(modifier = Modifier.fillMaxSize())
+                WelcomeState(
+                    memories = memoryStories,
+                    onMemoryClick = onMemoryStorySelected,
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
 
             if (searchReady && query.isNotBlank() && resultCount == 0) {
@@ -400,8 +407,28 @@ private fun DuplicateGroupCard(
                         R.string.duplicates_similar_group,
                         group.photos.size,
                     )
+
+                    DuplicateMatchKind.Burst -> stringResource(
+                        R.string.duplicates_burst_group,
+                        group.photos.size,
+                    )
+
+                    DuplicateMatchKind.Blurry -> stringResource(
+                        R.string.duplicates_blurry_group,
+                        group.photos.size,
+                    )
                 },
                 style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                text = when (group.kind) {
+                    DuplicateMatchKind.Exact -> stringResource(R.string.duplicates_exact_hint)
+                    DuplicateMatchKind.Similar -> stringResource(R.string.duplicates_similar_hint)
+                    DuplicateMatchKind.Burst -> stringResource(R.string.duplicates_burst_hint)
+                    DuplicateMatchKind.Blurry -> stringResource(R.string.duplicates_blurry_hint)
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),

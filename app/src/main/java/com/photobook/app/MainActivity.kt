@@ -131,6 +131,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         selectedPhotoIds = uiState.selectedPhotoIds,
         suggestions = uiState.suggestions,
         showSuggestions = uiState.showSuggestions,
+        memoryStories = uiState.memoryStories,
         duplicateGroups = uiState.duplicateGroups,
         isFindingDuplicates = uiState.isFindingDuplicates,
         showDuplicateFinder = uiState.showDuplicateFinder,
@@ -204,6 +205,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         onRefreshDuplicates = viewModel::refreshDuplicateGroups,
         onDismissDuplicateFinder = viewModel::dismissDuplicateFinder,
         onDuplicatePhotoClick = viewModel::openDuplicatePhoto,
+        onMemoryStorySelected = viewModel::onMemoryStorySelected,
     )
 
     val viewerIndex = uiState.viewerStartIndex
