@@ -55,12 +55,14 @@ import com.photobook.app.ui.component.SearchBar
 import com.photobook.app.ui.component.SuggestionDropdown
 import com.photobook.app.ui.component.WelcomeState
 import com.photobook.app.search.SuggestionItem
+import androidx.paging.compose.LazyPagingItems
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
     query: String,
-    results: List<PhotoRecord>,
+    results: LazyPagingItems<PhotoRecord>,
+    resultCount: Int,
     searchReady: Boolean,
     favoritesOnly: Boolean,
     selectedPhotoIds: Set<Long>,
@@ -75,11 +77,11 @@ fun MainScreen(
     onSuggestionSelected: (SuggestionItem) -> Unit,
     onClearQuery: () -> Unit,
     onToggleFavoritesOnly: () -> Unit,
-    onShareSelected: (List<PhotoRecord>) -> Unit,
-    onCreatePdfSelected: (List<PhotoRecord>) -> Unit,
+    onShareSelected: (Set<Long>) -> Unit,
+    onCreatePdfSelected: (Set<Long>) -> Unit,
     onClearSelection: () -> Unit,
-    onPhotoClick: (Int) -> Unit,
-    onPhotoLongClick: (Int) -> Unit,
+    onPhotoClick: (PhotoRecord) -> Unit,
+    onPhotoLongClick: (PhotoRecord) -> Unit,
     onOpenQrScanner: () -> Unit,
     onSourceSelected: (PhotoSource) -> Unit,
     onOpenDuplicateFinder: () -> Unit,
@@ -88,7 +90,6 @@ fun MainScreen(
     onDuplicatePhotoClick: (String, Int) -> Unit,
 ) {
     val isSelectionMode = selectedPhotoIds.isNotEmpty()
-    val selectedPhotos = results.filter { it.id in selectedPhotoIds }
 
     Box(
         modifier = Modifier.fillMaxSize(),
@@ -182,7 +183,7 @@ fun MainScreen(
                                 TextButton(onClick = onClearSelection) {
                                     Text(text = stringResource(R.string.clear_selection))
                                 }
-                                Button(onClick = { onCreatePdfSelected(selectedPhotos) }) {
+                                Button(onClick = { onCreatePdfSelected(selectedPhotoIds) }) {
                                     Icon(
                                         imageVector = Icons.Default.PictureAsPdf,
                                         contentDescription = null,
@@ -192,7 +193,7 @@ fun MainScreen(
                                         modifier = Modifier.padding(start = 6.dp),
                                     )
                                 }
-                                Button(onClick = { onShareSelected(selectedPhotos) }) {
+                                Button(onClick = { onShareSelected(selectedPhotoIds) }) {
                                     Icon(
                                         imageVector = Icons.Default.Share,
                                         contentDescription = null,
@@ -212,7 +213,7 @@ fun MainScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Text(
-                            text = stringResource(R.string.found_photos, results.size),
+                            text = stringResource(R.string.found_photos, resultCount),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -229,7 +230,7 @@ fun MainScreen(
                 WelcomeState(modifier = Modifier.fillMaxSize())
             }
 
-            if (searchReady && query.isNotBlank() && results.isEmpty()) {
+            if (searchReady && query.isNotBlank() && resultCount == 0) {
                 EmptyState(modifier = Modifier.fillMaxSize())
             } else if (searchReady && query.isNotBlank()) {
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {

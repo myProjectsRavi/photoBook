@@ -41,7 +41,11 @@ class QrShareEncoder @Inject constructor(
                 ?: return@withContext QrShareGenerationResult.Error()
 
             val bitmap = loadBitmap(uri) ?: return@withContext QrShareGenerationResult.Error()
-            val imageBytes = compressForTransfer(bitmap)
+            val imageBytes = try {
+                compressForTransfer(bitmap)
+            } finally {
+                bitmap.recycleSafely()
+            }
             if (imageBytes.isEmpty()) {
                 return@withContext QrShareGenerationResult.Error()
             }
@@ -144,16 +148,22 @@ class QrShareEncoder @Inject constructor(
 
         while (currentMaxDimension >= MIN_MAX_DIMENSION_PX) {
             val scaled = scaleBitmapToMaxDimension(source, currentMaxDimension)
-            var quality = INITIAL_JPEG_QUALITY
-            while (quality >= MIN_JPEG_QUALITY) {
-                val encoded = encodeJpeg(scaled, quality)
-                if (bestBytes.isEmpty() || encoded.size < bestBytes.size) {
-                    bestBytes = encoded
+            try {
+                var quality = INITIAL_JPEG_QUALITY
+                while (quality >= MIN_JPEG_QUALITY) {
+                    val encoded = encodeJpeg(scaled, quality)
+                    if (bestBytes.isEmpty() || encoded.size < bestBytes.size) {
+                        bestBytes = encoded
+                    }
+                    if (encoded.size <= MAX_TRANSFER_BYTES) {
+                        return encoded
+                    }
+                    quality -= JPEG_QUALITY_STEP
                 }
-                if (encoded.size <= MAX_TRANSFER_BYTES) {
-                    return encoded
+            } finally {
+                if (scaled !== source) {
+                    scaled.recycleSafely()
                 }
-                quality -= JPEG_QUALITY_STEP
             }
             currentMaxDimension = (currentMaxDimension * DOWNSCALE_FACTOR).toInt()
         }
@@ -176,6 +186,14 @@ class QrShareEncoder @Inject constructor(
         val targetWidth = (bitmap.width * scale).toInt().coerceAtLeast(1)
         val targetHeight = (bitmap.height * scale).toInt().coerceAtLeast(1)
         return Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
+    }
+
+    private fun Bitmap.recycleSafely() {
+        runCatching {
+            if (!isRecycled) {
+                recycle()
+            }
+        }
     }
 
     companion object {

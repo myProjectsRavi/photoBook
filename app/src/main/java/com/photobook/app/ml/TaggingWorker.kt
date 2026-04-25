@@ -5,11 +5,14 @@ import android.os.BatteryManager
 import androidx.hilt.work.HiltWorker
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
+import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import com.photobook.app.data.index.IndexPersistence
 import com.photobook.app.data.index.PhotoIndex
 import com.photobook.app.data.model.PhotoRecord
@@ -32,7 +35,12 @@ class TaggingWorker @AssistedInject constructor(
             return Result.retry()
         }
 
-        val photos = photoIndex.snapshot()
+        val requestedIds = inputData.getLongArray(KEY_TARGET_PHOTO_IDS)?.toSet().orEmpty()
+        val photos = if (requestedIds.isEmpty()) {
+            photoIndex.snapshot()
+        } else {
+            photoIndex.snapshot().filter { photo -> photo.id in requestedIds }
+        }
         if (photos.isEmpty()) {
             return Result.success()
         }
@@ -88,10 +96,14 @@ class TaggingWorker @AssistedInject constructor(
     }
 
     companion object {
-        fun enqueue(context: Context) {
+        private const val KEY_TARGET_PHOTO_IDS = "target_photo_ids"
+        private const val PRIORITY_WORK_NAME_PREFIX = "photobook_ml_worker_priority"
+
+        fun enqueueLibraryMaintenance(context: Context) {
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
                 .setRequiresBatteryNotLow(true)
+                .setRequiresCharging(true)
                 .build()
 
             val request = OneTimeWorkRequestBuilder<TaggingWorker>()
@@ -101,6 +113,31 @@ class TaggingWorker @AssistedInject constructor(
             WorkManager.getInstance(context).enqueueUniqueWork(
                 Constants.ML_WORKER_NAME,
                 ExistingWorkPolicy.KEEP,
+                request,
+            )
+        }
+
+        fun enqueueFocusedPhoto(context: Context, photoId: Long) {
+            if (photoId <= 0L) return
+
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
+                .setRequiresBatteryNotLow(true)
+                .build()
+
+            val input: Data = workDataOf(
+                KEY_TARGET_PHOTO_IDS to longArrayOf(photoId),
+            )
+
+            val request = OneTimeWorkRequestBuilder<TaggingWorker>()
+                .setInputData(input)
+                .setConstraints(constraints)
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                .build()
+
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                "$PRIORITY_WORK_NAME_PREFIX-$photoId",
+                ExistingWorkPolicy.REPLACE,
                 request,
             )
         }

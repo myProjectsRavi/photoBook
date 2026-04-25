@@ -16,6 +16,7 @@ object MLModule {
         return Constraints.Builder()
             .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
             .setRequiresBatteryNotLow(true)
+            .setRequiresCharging(true)
             .build()
     }
 }

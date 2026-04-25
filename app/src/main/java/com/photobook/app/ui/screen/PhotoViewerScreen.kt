@@ -1,6 +1,5 @@
 package com.photobook.app.ui.screen
 
-import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -31,6 +30,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AssistChip
@@ -80,7 +80,13 @@ import com.photobook.app.feature.copytext.NormalizedTextRegion
 import com.photobook.app.feature.copytext.OnDevicePhotoTextExtractor
 import com.photobook.app.feature.copytext.PhotoTextCopyCoordinator
 import com.photobook.app.feature.copytext.PreviewSeed
+import com.photobook.app.feature.metadata.ExifDetails
+import com.photobook.app.feature.metadata.ExifDetailsResult
+import com.photobook.app.feature.metadata.ExifMetadataService
+import com.photobook.app.feature.metadata.MetadataCleanResult
+import com.photobook.app.feature.metadata.SafeShareResult
 import com.photobook.app.feature.qrshare.QrShareEncoder
+import java.util.Locale
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.min
@@ -107,6 +113,9 @@ fun PhotoViewerScreen(
             extractor = OnDevicePhotoTextExtractor(context.applicationContext),
         )
     }
+    val exifMetadataService = remember(context.applicationContext) {
+        ExifMetadataService(context.applicationContext)
+    }
     val qrShareEncoder = remember(context.applicationContext) {
         QrShareEncoder(context.applicationContext)
     }
@@ -117,6 +126,10 @@ fun PhotoViewerScreen(
     var copySheetRegion by remember { mutableStateOf<NormalizedTextRegion?>(null) }
     var autoCopyPending by remember { mutableStateOf(false) }
     var showTextRegionSelector by remember { mutableStateOf(false) }
+    var showExifSheet by remember { mutableStateOf(false) }
+    var exifSheetState by remember { mutableStateOf<ExifSheetState>(ExifSheetState.Idle) }
+    var exifSheetPhotoId by remember { mutableStateOf<Long?>(null) }
+    var isCleaningMetadata by remember { mutableStateOf(false) }
     var showQrShareSheet by remember { mutableStateOf(false) }
     var qrSharePhotoId by remember { mutableStateOf<Long?>(null) }
 
@@ -143,6 +156,52 @@ fun PhotoViewerScreen(
     fun dismissQrShareSheet() {
         showQrShareSheet = false
         qrSharePhotoId = null
+    }
+
+    fun dismissExifSheet() {
+        showExifSheet = false
+        exifSheetState = ExifSheetState.Idle
+        exifSheetPhotoId = null
+        isCleaningMetadata = false
+    }
+
+    fun openExifSheet() {
+        val active = photos[pagerState.currentPage]
+        exifSheetPhotoId = active.id
+        showExifSheet = true
+        exifSheetState = ExifSheetState.Loading
+        coroutineScope.launch {
+            exifSheetState = when (val result = exifMetadataService.loadDetails(active)) {
+                is ExifDetailsResult.Success -> ExifSheetState.Ready(result.details)
+                is ExifDetailsResult.Error -> ExifSheetState.Error
+            }
+        }
+    }
+
+    fun cleanMetadataCopy() {
+        val active = photos[pagerState.currentPage]
+        if (isCleaningMetadata) return
+        isCleaningMetadata = true
+        coroutineScope.launch {
+            when (exifMetadataService.createCleanCopy(active)) {
+                is MetadataCleanResult.Success -> {
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.viewer_metadata_clean_success),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+
+                is MetadataCleanResult.Error -> {
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.viewer_metadata_clean_error),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+            isCleaningMetadata = false
+        }
     }
 
     fun applyCopyResult(result: ExtractedTextResult, fallbackText: String?) {
@@ -219,6 +278,9 @@ fun PhotoViewerScreen(
         if (copySheetPhotoId != null && copySheetPhotoId != activeId) {
             dismissCopySheet()
         }
+        if (exifSheetPhotoId != null && exifSheetPhotoId != activeId) {
+            dismissExifSheet()
+        }
         showTextRegionSelector = false
         if (qrSharePhotoId != null && qrSharePhotoId != activeId) {
             dismissQrShareSheet()
@@ -234,6 +296,7 @@ fun PhotoViewerScreen(
     Dialog(
         onDismissRequest = {
             dismissCopySheet()
+            dismissExifSheet()
             dismissQrShareSheet()
             onDismiss()
         },
@@ -300,6 +363,22 @@ fun PhotoViewerScreen(
                         ) {
                             IconButton(
                                 modifier = Modifier.size(42.dp),
+                                onClick = ::openExifSheet,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Info,
+                                    contentDescription = stringResource(R.string.viewer_metadata),
+                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            }
+                        }
+                        Surface(
+                            color = Color(0x22FFFFFF),
+                            shape = RoundedCornerShape(28.dp),
+                        ) {
+                            IconButton(
+                                modifier = Modifier.size(42.dp),
                                 onClick = ::startCopyAllTextFlow,
                             ) {
                                 Icon(
@@ -356,23 +435,37 @@ fun PhotoViewerScreen(
                             IconButton(
                                 modifier = Modifier.size(42.dp),
                                 onClick = {
-                                    val uri = Uri.parse(active.uriString)
-                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                        type = active.mimeType.ifBlank { "image/*" }
-                                        putExtra(Intent.EXTRA_STREAM, uri)
-                                        clipData = ClipData.newUri(
-                                            context.contentResolver,
-                                            active.fileName,
-                                            uri,
-                                        )
-                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    coroutineScope.launch {
+                                        when (val safeShare = exifMetadataService.createSafeShareCopies(listOf(active))) {
+                                            is SafeShareResult.Success -> {
+                                                val item = safeShare.items.firstOrNull() ?: return@launch
+                                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                                    type = item.mimeType.ifBlank { "image/*" }
+                                                    putExtra(Intent.EXTRA_STREAM, item.uri)
+                                                    clipData = android.content.ClipData.newUri(
+                                                        context.contentResolver,
+                                                        item.label,
+                                                        item.uri,
+                                                    )
+                                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                }
+                                                context.startActivity(
+                                                    Intent.createChooser(
+                                                        shareIntent,
+                                                        context.getString(R.string.viewer_share),
+                                                    )
+                                                )
+                                            }
+
+                                            is SafeShareResult.Error -> {
+                                                Toast.makeText(
+                                                    context,
+                                                    context.getString(R.string.safe_share_prepare_error),
+                                                    Toast.LENGTH_SHORT,
+                                                ).show()
+                                            }
+                                        }
                                     }
-                                    context.startActivity(
-                                        Intent.createChooser(
-                                            shareIntent,
-                                            context.getString(R.string.viewer_share),
-                                        )
-                                    )
                                 },
                             ) {
                                 Icon(
@@ -479,6 +572,15 @@ fun PhotoViewerScreen(
                 onDismiss = ::dismissCopySheet,
                 onRetry = ::retryCopyTextFlow,
                 onCopy = { text -> copyToClipboard(text) },
+            )
+        }
+        if (showExifSheet) {
+            ExifMetadataBottomSheet(
+                state = exifSheetState,
+                isCleaning = isCleaningMetadata,
+                onDismiss = ::dismissExifSheet,
+                onRetry = ::openExifSheet,
+                onCleanCopy = ::cleanMetadataCopy,
             )
         }
         if (showTextRegionSelector) {
@@ -675,6 +777,167 @@ private fun TextRegionSelectionDialog(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+private fun ExifMetadataBottomSheet(
+    state: ExifSheetState,
+    isCleaning: Boolean,
+    onDismiss: () -> Unit,
+    onRetry: () -> Unit,
+    onCleanCopy: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.viewer_metadata_title),
+                style = MaterialTheme.typography.titleMedium,
+            )
+
+            when (state) {
+                ExifSheetState.Idle -> Unit
+                ExifSheetState.Loading -> {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                        )
+                        Text(
+                            text = stringResource(R.string.viewer_metadata_loading),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+
+                ExifSheetState.Error -> {
+                    Text(
+                        text = stringResource(R.string.viewer_metadata_error),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    TextButton(onClick = onRetry) {
+                        Text(text = stringResource(R.string.viewer_copy_text_retry))
+                    }
+                }
+
+                is ExifSheetState.Ready -> {
+                    val details = state.details
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        tonalElevation = 1.dp,
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 140.dp, max = 360.dp),
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(12.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            ExifDetailRow(
+                                label = stringResource(R.string.viewer_metadata_file),
+                                value = details.fileName,
+                            )
+                            ExifDetailRow(
+                                label = stringResource(R.string.viewer_metadata_dimensions),
+                                value = details.dimensions,
+                            )
+                            ExifDetailRow(
+                                label = stringResource(R.string.viewer_metadata_size),
+                                value = formatBytes(details.fileSizeBytes),
+                            )
+                            ExifDetailRow(
+                                label = stringResource(R.string.viewer_metadata_mime),
+                                value = details.mimeType,
+                            )
+                            ExifDetailRow(
+                                label = stringResource(R.string.viewer_metadata_folder),
+                                value = details.folderName,
+                            )
+                            ExifDetailRow(
+                                label = stringResource(R.string.viewer_metadata_camera),
+                                value = details.cameraModel,
+                            )
+                            ExifDetailRow(
+                                label = stringResource(R.string.viewer_metadata_lens),
+                                value = details.lensModel,
+                            )
+                            ExifDetailRow(
+                                label = stringResource(R.string.viewer_metadata_capture_time),
+                                value = details.captureDateTime,
+                            )
+                            ExifDetailRow(
+                                label = stringResource(R.string.viewer_metadata_orientation),
+                                value = details.orientation,
+                            )
+                            ExifDetailRow(
+                                label = stringResource(R.string.viewer_metadata_location),
+                                value = if (details.latitude != null && details.longitude != null) {
+                                    String.format(
+                                        Locale.US,
+                                        "%.6f, %.6f",
+                                        details.latitude,
+                                        details.longitude,
+                                    )
+                                } else {
+                                    stringResource(R.string.viewer_metadata_location_missing)
+                                },
+                            )
+                        }
+                    }
+
+                    Button(
+                        onClick = onCleanCopy,
+                        enabled = !isCleaning,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        if (isCleaning) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            Text(text = stringResource(R.string.viewer_metadata_clean_action))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExifDetailRow(
+    label: String,
+    value: String,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = value.ifBlank { "Unknown" },
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 private fun CopyTextBottomSheet(
     mode: CopyTextMode,
     state: CopySheetState,
@@ -784,6 +1047,13 @@ private fun CopyTextBottomSheet(
     }
 }
 
+private sealed interface ExifSheetState {
+    data object Idle : ExifSheetState
+    data object Loading : ExifSheetState
+    data object Error : ExifSheetState
+    data class Ready(val details: ExifDetails) : ExifSheetState
+}
+
 private sealed interface CopySheetState {
     data object Idle : CopySheetState
     data object Loading : CopySheetState
@@ -890,6 +1160,16 @@ private data class TextSelectionBox(
     companion object {
         private const val MIN_SIZE = 0.08f
     }
+}
+
+private fun formatBytes(bytes: Long): String {
+    if (bytes < 1024L) return "$bytes B"
+    val kb = bytes / 1024.0
+    if (kb < 1024.0) return String.format(Locale.US, "%.1f KB", kb)
+    val mb = kb / 1024.0
+    if (mb < 1024.0) return String.format(Locale.US, "%.1f MB", mb)
+    val gb = mb / 1024.0
+    return String.format(Locale.US, "%.2f GB", gb)
 }
 
 private fun reduceCopySheetState(

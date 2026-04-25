@@ -116,21 +116,33 @@ class DuplicatePhotoFinder @Inject constructor(
         val source = decodeSampledBitmap(Uri.parse(uriString), HASH_SOURCE_MAX_DIMENSION) ?: return null
         val scaled = runCatching {
             Bitmap.createScaledBitmap(source, HASH_WIDTH, HASH_HEIGHT, true)
-        }.getOrNull() ?: return null
+        }.getOrNull()
 
-        var hash = 0L
-        var bit = 0
-        for (y in 0 until HASH_HEIGHT) {
-            for (x in 0 until HASH_WIDTH - 1) {
-                val left = luminance(scaled.getPixel(x, y))
-                val right = luminance(scaled.getPixel(x + 1, y))
-                if (left > right) {
-                    hash = hash or (1L shl bit)
-                }
-                bit += 1
-            }
+        if (scaled == null) {
+            source.recycleSafely()
+            return null
         }
-        return hash
+
+        return try {
+            var hash = 0L
+            var bit = 0
+            for (y in 0 until HASH_HEIGHT) {
+                for (x in 0 until HASH_WIDTH - 1) {
+                    val left = luminance(scaled.getPixel(x, y))
+                    val right = luminance(scaled.getPixel(x + 1, y))
+                    if (left > right) {
+                        hash = hash or (1L shl bit)
+                    }
+                    bit += 1
+                }
+            }
+            hash
+        } finally {
+            if (scaled !== source) {
+                scaled.recycleSafely()
+            }
+            source.recycleSafely()
+        }
     }
 
     private fun decodeSampledBitmap(uri: Uri, maxDimensionPx: Int): Bitmap? {
@@ -160,6 +172,14 @@ class DuplicatePhotoFinder @Inject constructor(
         val green = android.graphics.Color.green(pixel)
         val blue = android.graphics.Color.blue(pixel)
         return (red * 299 + green * 587 + blue * 114) / 1000
+    }
+
+    private fun Bitmap.recycleSafely() {
+        runCatching {
+            if (!isRecycled) {
+                recycle()
+            }
+        }
     }
 
     private data class ExactCandidateKey(

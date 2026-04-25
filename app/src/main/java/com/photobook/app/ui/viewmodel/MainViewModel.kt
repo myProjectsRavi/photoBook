@@ -8,12 +8,15 @@ import android.os.Looper
 import android.provider.MediaStore
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.paging.Pager
+import androidx.paging.PagingConfig
+import androidx.paging.PagingData
 import com.photobook.app.data.index.IndexBuilder
 import com.photobook.app.data.index.IndexPersistence
 import com.photobook.app.data.index.PhotoIndex
+import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.data.model.RawPhotoData
 import com.photobook.app.data.source.MediaStoreScanner
-import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.feature.duplicates.DuplicatePhotoFinder
 import com.photobook.app.feature.duplicates.DuplicatePhotoGroup
 import com.photobook.app.ml.TaggingWorker
@@ -25,24 +28,27 @@ import com.photobook.app.search.PhotoSource
 import com.photobook.app.search.QueryParser
 import com.photobook.app.search.QueryToken
 import com.photobook.app.search.SearchContext
-import com.photobook.app.search.SuggestionItem
 import com.photobook.app.search.SuggestionEngine
+import com.photobook.app.search.SuggestionItem
 import com.photobook.app.search.TextToken
 import com.photobook.app.search.TokenClassifier
 import com.photobook.app.util.Constants
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import javax.inject.Inject
 
 @HiltViewModel
 class MainViewModel @Inject constructor(
@@ -66,7 +72,7 @@ class MainViewModel @Inject constructor(
         val searchReady: Boolean = false,
         val query: String = "",
         val photoCount: Int = 0,
-        val results: List<PhotoRecord> = emptyList(),
+        val resultCount: Int = 0,
         val favoritesOnly: Boolean = false,
         val selectedPhotoIds: Set<Long> = emptySet(),
         val suggestions: List<SuggestionItem> = emptyList(),
@@ -80,13 +86,17 @@ class MainViewModel @Inject constructor(
 
     val uiState = MutableStateFlow(UiState())
 
+    private val pagedResultsFlow = MutableStateFlow<PagingData<PhotoRecord>>(PagingData.empty())
+    val pagedResults: StateFlow<PagingData<PhotoRecord>> = pagedResultsFlow.asStateFlow()
+
     private val queryFlow = MutableStateFlow("")
     private val focusFlow = MutableStateFlow(false)
 
     private var hasInitializedIndex = false
     private var mediaObserver: ContentObserver? = null
     private var mediaRebuildJob: Job? = null
-    private var latestSearchResults: List<PhotoRecord> = emptyList()
+    private var latestSearchResultIds: List<Long> = emptyList()
+    private var latestVisibleResultIds: List<Long> = emptyList()
 
     init {
         observeSearchResults()
@@ -165,26 +175,36 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    fun onPhotoClicked(index: Int) {
+    fun onPhotoClicked(photo: PhotoRecord) {
+        var openedViewer = false
         uiState.update { state ->
-            val photo = state.results.getOrNull(index) ?: return@update state
             if (state.selectedPhotoIds.isNotEmpty()) {
                 val nextSelected = state.selectedPhotoIds.toMutableSet().apply {
                     if (!add(photo.id)) remove(photo.id)
                 }
                 state.copy(selectedPhotoIds = nextSelected)
             } else {
-                state.copy(
-                    viewerStartIndex = index,
-                    viewerPhotos = state.results,
-                )
+                val visiblePhotos = resolveVisiblePhotos()
+                val viewerIndex = visiblePhotos.indexOfFirst { it.id == photo.id }
+                if (viewerIndex < 0) {
+                    state
+                } else {
+                    openedViewer = true
+                    state.copy(
+                        viewerStartIndex = viewerIndex,
+                        viewerPhotos = visiblePhotos,
+                    )
+                }
             }
+        }
+
+        if (openedViewer) {
+            TaggingWorker.enqueueFocusedPhoto(context, photo.id)
         }
     }
 
-    fun onPhotoLongPressed(index: Int) {
+    fun onPhotoLongPressed(photo: PhotoRecord) {
         uiState.update { state ->
-            val photo = state.results.getOrNull(index) ?: return@update state
             val nextSelected = state.selectedPhotoIds.toMutableSet().apply {
                 if (!add(photo.id)) remove(photo.id)
             }
@@ -213,20 +233,40 @@ class MainViewModel @Inject constructor(
                     },
                 )
             }
+
+            if (uiState.value.favoritesOnly) {
+                refreshVisibleResultsFromLatestSearch()
+            }
         }
     }
 
     fun onToggleFavoritesOnly() {
-        uiState.update { state ->
-            val nextFavoritesOnly = !state.favoritesOnly
-            val filtered = applyFavoritesFilter(latestSearchResults, nextFavoritesOnly)
-            val nextSelected = clampSelectionToResults(state.selectedPhotoIds, filtered)
-            state.copy(
+        viewModelScope.launch {
+            val recordsById = photoIndex.snapshot().associateBy { record -> record.id }
+            val currentState = uiState.value
+            val nextFavoritesOnly = !currentState.favoritesOnly
+            val filteredIds = applyFavoritesFilter(
+                resultIds = latestSearchResultIds,
                 favoritesOnly = nextFavoritesOnly,
-                results = filtered,
-                selectedPhotoIds = nextSelected,
-                viewerStartIndex = normalizeViewerIndex(state.viewerStartIndex, filtered),
+                recordsById = recordsById,
             )
+            latestVisibleResultIds = filteredIds
+            val visibleIds = filteredIds.toSet()
+
+            uiState.update { state ->
+                val nextSelected = clampSelectionToResultIds(state.selectedPhotoIds, visibleIds)
+                val nextViewerIndex = normalizeViewerIndex(
+                    currentIndex = state.viewerStartIndex,
+                    resultSize = if (state.viewerPhotos.isNotEmpty()) state.viewerPhotos.size else filteredIds.size,
+                )
+                state.copy(
+                    favoritesOnly = nextFavoritesOnly,
+                    resultCount = filteredIds.size,
+                    selectedPhotoIds = nextSelected,
+                    viewerStartIndex = nextViewerIndex,
+                )
+            }
+            publishPagedResults(filteredIds)
         }
     }
 
@@ -235,6 +275,10 @@ class MainViewModel @Inject constructor(
     }
 
     fun onViewerPageChanged(index: Int) {
+        val focusedPhotoId = uiState.value.viewerPhotos.getOrNull(index)?.id
+        if (focusedPhotoId != null) {
+            TaggingWorker.enqueueFocusedPhoto(context, focusedPhotoId)
+        }
         uiState.update { it.copy(viewerStartIndex = index) }
     }
 
@@ -288,6 +332,16 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    fun resolvePhotosByIds(photoIds: Set<Long>): List<PhotoRecord> {
+        if (photoIds.isEmpty()) return emptyList()
+        val byId = photoIndex.snapshot().associateBy { record -> record.id }
+        val orderedVisible = latestVisibleResultIds.filter { id -> id in photoIds }
+        if (orderedVisible.isNotEmpty()) {
+            return orderedVisible.mapNotNull(byId::get)
+        }
+        return photoIds.mapNotNull(byId::get)
+    }
+
     private fun observeSuggestions() {
         viewModelScope.launch {
             combine(
@@ -319,19 +373,32 @@ class MainViewModel @Inject constructor(
                 Pair(query, records)
             }.collect { (query, records) ->
                 val searchResult = runSearch(query, records)
-                latestSearchResults = searchResult.results
+                latestSearchResultIds = searchResult.results.map { photo -> photo.id }
 
-                uiState.update {
-                    val filtered = applyFavoritesFilter(latestSearchResults, it.favoritesOnly)
-                    val nextSelected = clampSelectionToResults(it.selectedPhotoIds, filtered)
-                    it.copy(
+                var filteredIds: List<Long> = emptyList()
+                uiState.update { state ->
+                    val recordsById = records.associateBy { photo -> photo.id }
+                    filteredIds = applyFavoritesFilter(
+                        resultIds = latestSearchResultIds,
+                        favoritesOnly = state.favoritesOnly,
+                        recordsById = recordsById,
+                    )
+                    latestVisibleResultIds = filteredIds
+                    val visibleIds = filteredIds.toSet()
+                    val nextSelected = clampSelectionToResultIds(state.selectedPhotoIds, visibleIds)
+                    state.copy(
                         photoCount = records.size,
-                        results = filtered,
+                        resultCount = filteredIds.size,
                         selectedPhotoIds = nextSelected,
-                        viewerStartIndex = normalizeViewerIndex(it.viewerStartIndex, filtered),
-                        searchReady = !it.isIndexing,
+                        viewerStartIndex = normalizeViewerIndex(
+                            currentIndex = state.viewerStartIndex,
+                            resultSize = if (state.viewerPhotos.isNotEmpty()) state.viewerPhotos.size else filteredIds.size,
+                        ),
+                        searchReady = !state.isIndexing,
                     )
                 }
+
+                publishPagedResults(filteredIds)
             }
         }
     }
@@ -340,16 +407,29 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             val records = photoIndex.snapshot()
             val searchResult = runSearch(query, records)
-            latestSearchResults = searchResult.results
-            uiState.update {
-                val filtered = applyFavoritesFilter(latestSearchResults, it.favoritesOnly)
-                val nextSelected = clampSelectionToResults(it.selectedPhotoIds, filtered)
-                it.copy(
-                    results = filtered,
+            latestSearchResultIds = searchResult.results.map { photo -> photo.id }
+            val recordsById = records.associateBy { photo -> photo.id }
+            val filteredIds = applyFavoritesFilter(
+                resultIds = latestSearchResultIds,
+                favoritesOnly = uiState.value.favoritesOnly,
+                recordsById = recordsById,
+            )
+            latestVisibleResultIds = filteredIds
+            val visibleIds = filteredIds.toSet()
+
+            uiState.update { state ->
+                val nextSelected = clampSelectionToResultIds(state.selectedPhotoIds, visibleIds)
+                state.copy(
+                    resultCount = filteredIds.size,
                     selectedPhotoIds = nextSelected,
-                    viewerStartIndex = normalizeViewerIndex(it.viewerStartIndex, filtered),
+                    viewerStartIndex = normalizeViewerIndex(
+                        currentIndex = state.viewerStartIndex,
+                        resultSize = if (state.viewerPhotos.isNotEmpty()) state.viewerPhotos.size else filteredIds.size,
+                    ),
                 )
             }
+
+            publishPagedResults(filteredIds)
         }
     }
 
@@ -378,7 +458,7 @@ class MainViewModel @Inject constructor(
                 )
             }
 
-            TaggingWorker.enqueue(context)
+            TaggingWorker.enqueueLibraryMaintenance(context)
             registerMediaObserver()
         }
     }
@@ -506,7 +586,7 @@ class MainViewModel @Inject constructor(
             indexPersistence.removeByIds(removedIds)
         }
 
-        TaggingWorker.enqueue(context)
+        TaggingWorker.enqueueLibraryMaintenance(context)
     }
 
     private fun changedRawPhotosForLegacySync(
@@ -571,20 +651,79 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    private fun applyFavoritesFilter(results: List<PhotoRecord>, favoritesOnly: Boolean): List<PhotoRecord> {
-        if (!favoritesOnly) return results
-        return results.filter { it.isFavorite }
+    private fun applyFavoritesFilter(
+        resultIds: List<Long>,
+        favoritesOnly: Boolean,
+        recordsById: Map<Long, PhotoRecord>,
+    ): List<Long> {
+        if (!favoritesOnly) return resultIds
+        return resultIds.filter { id -> recordsById[id]?.isFavorite == true }
     }
 
-    private fun clampSelectionToResults(selectedPhotoIds: Set<Long>, results: List<PhotoRecord>): Set<Long> {
-        if (selectedPhotoIds.isEmpty() || results.isEmpty()) return emptySet()
-        val visibleIds = results.asSequence().map { it.id }.toSet()
-        return selectedPhotoIds.filterTo(linkedSetOf()) { it in visibleIds }
+    private fun clampSelectionToResultIds(selectedPhotoIds: Set<Long>, visibleResultIds: Set<Long>): Set<Long> {
+        if (selectedPhotoIds.isEmpty() || visibleResultIds.isEmpty()) return emptySet()
+        return selectedPhotoIds.filterTo(linkedSetOf()) { it in visibleResultIds }
     }
 
-    private fun normalizeViewerIndex(currentIndex: Int?, results: List<PhotoRecord>): Int? {
-        if (currentIndex == null || results.isEmpty()) return null
-        return currentIndex.coerceIn(0, results.lastIndex)
+    private fun normalizeViewerIndex(currentIndex: Int?, resultSize: Int): Int? {
+        if (currentIndex == null || resultSize <= 0) return null
+        return currentIndex.coerceIn(0, resultSize - 1)
+    }
+
+    private fun resolveVisiblePhotos(): List<PhotoRecord> {
+        if (latestVisibleResultIds.isEmpty()) return emptyList()
+        val byId = photoIndex.snapshot().associateBy { record -> record.id }
+        return latestVisibleResultIds.mapNotNull(byId::get)
+    }
+
+    private suspend fun refreshVisibleResultsFromLatestSearch() {
+        val recordsById = photoIndex.snapshot().associateBy { record -> record.id }
+        val favoritesOnly = uiState.value.favoritesOnly
+        val filteredIds = applyFavoritesFilter(
+            resultIds = latestSearchResultIds,
+            favoritesOnly = favoritesOnly,
+            recordsById = recordsById,
+        )
+        latestVisibleResultIds = filteredIds
+        val visibleIds = filteredIds.toSet()
+
+        uiState.update { state ->
+            val nextSelected = clampSelectionToResultIds(state.selectedPhotoIds, visibleIds)
+            state.copy(
+                resultCount = filteredIds.size,
+                selectedPhotoIds = nextSelected,
+                viewerStartIndex = normalizeViewerIndex(
+                    currentIndex = state.viewerStartIndex,
+                    resultSize = if (state.viewerPhotos.isNotEmpty()) state.viewerPhotos.size else filteredIds.size,
+                ),
+            )
+        }
+
+        publishPagedResults(filteredIds)
+    }
+
+    private suspend fun publishPagedResults(orderedPhotoIds: List<Long>) {
+        if (orderedPhotoIds.isEmpty()) {
+            pagedResultsFlow.value = PagingData.empty()
+            return
+        }
+
+        val pagingData = Pager(
+            config = PagingConfig(
+                pageSize = SEARCH_PAGE_SIZE,
+                initialLoadSize = SEARCH_PAGE_SIZE * 2,
+                prefetchDistance = SEARCH_PREFETCH_DISTANCE,
+                enablePlaceholders = false,
+            ),
+            pagingSourceFactory = {
+                SearchResultsPagingSource(
+                    orderedPhotoIds = orderedPhotoIds,
+                    indexPersistence = indexPersistence,
+                )
+            },
+        ).flow.first()
+
+        pagedResultsFlow.value = pagingData
     }
 
     private suspend fun runSearch(query: String, records: List<PhotoRecord>): FilterEngine.SearchResult {
@@ -625,5 +764,10 @@ class MainViewModel @Inject constructor(
                 else -> false
             }
         }
+    }
+
+    companion object {
+        private const val SEARCH_PAGE_SIZE = 60
+        private const val SEARCH_PREFETCH_DISTANCE = 20
     }
 }

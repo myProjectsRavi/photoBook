@@ -27,8 +27,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.paging.compose.collectAsLazyPagingItems
 import com.photobook.app.R
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.feature.metadata.ExifMetadataService
+import com.photobook.app.feature.metadata.SafeShareItem
+import com.photobook.app.feature.metadata.SafeShareResult
 import com.photobook.app.feature.pdf.PdfExportResult
 import com.photobook.app.feature.pdf.PdfExportService
 import com.photobook.app.feature.qrshare.QrReceivedImageStore
@@ -63,10 +67,14 @@ class MainActivity : ComponentActivity() {
 private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val pagedResults = viewModel.pagedResults.collectAsLazyPagingItems()
     val permissions = PermissionUtils.requiredPermissions()
     val coroutineScope = rememberCoroutineScope()
     val qrReceivedImageStore = remember(context.applicationContext) {
         QrReceivedImageStore(context.applicationContext)
+    }
+    val exifMetadataService = remember(context.applicationContext) {
+        ExifMetadataService(context.applicationContext)
     }
     val pdfExportService = remember(context.applicationContext) {
         PdfExportService(context.applicationContext)
@@ -116,7 +124,8 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
 
     MainScreen(
         query = uiState.query,
-        results = uiState.results,
+        results = pagedResults,
+        resultCount = uiState.resultCount,
         searchReady = uiState.searchReady,
         favoritesOnly = uiState.favoritesOnly,
         selectedPhotoIds = uiState.selectedPhotoIds,
@@ -131,13 +140,31 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         onSuggestionSelected = viewModel::onSuggestionSelected,
         onClearQuery = viewModel::onClearQuery,
         onToggleFavoritesOnly = viewModel::onToggleFavoritesOnly,
-        onShareSelected = { selected ->
-            sharePhotos(context, selected)
-            viewModel.clearSelection()
-        },
-        onCreatePdfSelected = { selected ->
+        onShareSelected = { selectedIds ->
             coroutineScope.launch {
-                when (val result = pdfExportService.exportPhotos(selected)) {
+                val selectedPhotos = viewModel.resolvePhotosByIds(selectedIds)
+                if (selectedPhotos.isEmpty()) return@launch
+                when (val safeShare = exifMetadataService.createSafeShareCopies(selectedPhotos)) {
+                    is SafeShareResult.Success -> {
+                        sharePhotos(context, safeShare.items)
+                        viewModel.clearSelection()
+                    }
+
+                    is SafeShareResult.Error -> {
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.safe_share_prepare_error),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            }
+        },
+        onCreatePdfSelected = { selectedIds ->
+            coroutineScope.launch {
+                val selectedPhotos = viewModel.resolvePhotosByIds(selectedIds)
+                if (selectedPhotos.isEmpty()) return@launch
+                when (val result = pdfExportService.exportPhotos(selectedPhotos)) {
                     is PdfExportResult.Success -> {
                         Toast.makeText(
                             context,
@@ -180,8 +207,8 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     )
 
     val viewerIndex = uiState.viewerStartIndex
-    if (viewerIndex != null) {
-        val viewerPhotos = uiState.viewerPhotos.ifEmpty { uiState.results }
+    val viewerPhotos = uiState.viewerPhotos
+    if (viewerIndex != null && viewerPhotos.isNotEmpty()) {
         PhotoViewerScreen(
             photos = viewerPhotos,
             startIndex = viewerIndex,
@@ -199,10 +226,10 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     }
 }
 
-private fun sharePhotos(context: Context, photos: List<PhotoRecord>) {
+private fun sharePhotos(context: Context, photos: List<SafeShareItem>) {
     if (photos.isEmpty()) return
 
-    val uris = photos.map { Uri.parse(it.uriString) }
+    val uris = photos.map { it.uri }
     val mimeType = photos
         .map { it.mimeType.ifBlank { "image/*" } }
         .distinct()
@@ -223,7 +250,7 @@ private fun sharePhotos(context: Context, photos: List<PhotoRecord>) {
 
     val clipData = ClipData.newUri(
         context.contentResolver,
-        photos.first().fileName,
+        photos.first().label,
         uris.first(),
     )
     uris.drop(1).forEach { uri ->

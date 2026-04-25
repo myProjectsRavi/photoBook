@@ -1,10 +1,17 @@
 package com.photobook.app.data.db
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.photobook.app.data.model.PhotoRecord
 
-@Entity(tableName = "photos")
+@Entity(
+    tableName = "photos",
+    indices = [
+        Index(value = ["dateAdded"]),
+        Index(value = ["isFavorite", "dateAdded"]),
+    ],
+)
 data class PhotoEntity(
     @PrimaryKey
     val id: Long,
