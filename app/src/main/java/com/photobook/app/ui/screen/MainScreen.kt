@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -61,6 +62,7 @@ import com.photobook.app.ui.component.SearchBar
 import com.photobook.app.ui.component.SuggestionDropdown
 import com.photobook.app.ui.component.WelcomeState
 import com.photobook.app.search.SuggestionItem
+import com.photobook.app.ui.model.TimelineMark
 import androidx.paging.compose.LazyPagingItems
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -72,6 +74,7 @@ fun MainScreen(
     searchReady: Boolean,
     favoritesOnly: Boolean,
     selectedPhotoIds: Set<Long>,
+    timelineMarks: List<TimelineMark>,
     suggestions: List<SuggestionItem>,
     showSuggestions: Boolean,
     memoryStories: List<MemoryStory>,
@@ -90,10 +93,12 @@ fun MainScreen(
     onShareSelected: (Set<Long>) -> Unit,
     onMoveSelectedToTrash: (Set<Long>) -> Unit,
     onCreatePdfSelected: (Set<Long>) -> Unit,
+    onAddSelectedToVault: (Set<Long>) -> Unit,
     onClearSelection: () -> Unit,
     onPhotoClick: (PhotoRecord) -> Unit,
     onPhotoLongClick: (PhotoRecord) -> Unit,
     onOpenQrScanner: () -> Unit,
+    onOpenVault: () -> Unit,
     onSourceSelected: (PhotoSource) -> Unit,
     onOpenDuplicateFinder: () -> Unit,
     onRefreshDuplicates: () -> Unit,
@@ -139,6 +144,20 @@ fun MainScreen(
                     enabled = searchReady && !isSelectionMode,
                 ) {
                     Text(text = stringResource(R.string.duplicates_action))
+                }
+                TextButton(
+                    onClick = onOpenVault,
+                    enabled = searchReady,
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text(
+                        text = stringResource(R.string.vault_short_action),
+                        modifier = Modifier.padding(start = 4.dp),
+                    )
                 }
             }
             Row(
@@ -243,6 +262,16 @@ fun MainScreen(
                                         modifier = Modifier.padding(start = 6.dp),
                                     )
                                 }
+                                Button(onClick = { onAddSelectedToVault(selectedPhotoIds) }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Lock,
+                                        contentDescription = null,
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.vault_add_selected),
+                                        modifier = Modifier.padding(start = 6.dp),
+                                    )
+                                }
                                 Button(onClick = { onMoveSelectedToTrash(selectedPhotoIds) }) {
                                     Icon(
                                         imageVector = Icons.Default.Delete,
@@ -298,6 +327,7 @@ fun MainScreen(
                     PhotoGrid(
                         photos = results,
                         columns = columns,
+                        timelineMarks = timelineMarks,
                         selectedPhotoIds = selectedPhotoIds,
                         isSelectionMode = isSelectionMode,
                         onPhotoClick = onPhotoClick,

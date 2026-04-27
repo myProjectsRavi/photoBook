@@ -36,6 +36,7 @@ import com.photobook.app.search.SuggestionEngine
 import com.photobook.app.search.SuggestionItem
 import com.photobook.app.search.TextToken
 import com.photobook.app.search.TokenClassifier
+import com.photobook.app.ui.model.TimelineMark
 import com.photobook.app.util.Constants
 import com.photobook.app.worker.TrashPurgeWorker
 import com.photobook.app.worker.VideoIndexWorker
@@ -92,6 +93,7 @@ class MainViewModel @Inject constructor(
         val videoMoments: List<VideoSearchMoment> = emptyList(),
         val viewerStartIndex: Int? = null,
         val viewerPhotos: List<PhotoRecord> = emptyList(),
+        val timelineMarks: List<TimelineMark> = emptyList(),
         val duplicateGroups: List<DuplicatePhotoGroup> = emptyList(),
         val isFindingDuplicates: Boolean = false,
         val showDuplicateFinder: Boolean = false,
@@ -325,11 +327,13 @@ class MainViewModel @Inject constructor(
                     currentIndex = state.viewerStartIndex,
                     resultSize = if (state.viewerPhotos.isNotEmpty()) state.viewerPhotos.size else filteredIds.size,
                 )
+                val timelineMarks = buildTimelineMarks(filteredIds, recordsById)
                 state.copy(
                     favoritesOnly = nextFavoritesOnly,
                     resultCount = filteredIds.size,
                     selectedPhotoIds = nextSelected,
                     viewerStartIndex = nextViewerIndex,
+                    timelineMarks = timelineMarks,
                 )
             }
             publishPagedResults(filteredIds)
@@ -482,6 +486,7 @@ class MainViewModel @Inject constructor(
                     latestVisibleResultIds = filteredIds
                     val visibleIds = filteredIds.toSet()
                     val nextSelected = clampSelectionToResultIds(state.selectedPhotoIds, visibleIds)
+                    val timelineMarks = buildTimelineMarks(filteredIds, recordsById)
                     state.copy(
                         photoCount = records.size,
                         resultCount = filteredIds.size,
@@ -490,6 +495,7 @@ class MainViewModel @Inject constructor(
                             currentIndex = state.viewerStartIndex,
                             resultSize = if (state.viewerPhotos.isNotEmpty()) state.viewerPhotos.size else filteredIds.size,
                         ),
+                        timelineMarks = timelineMarks,
                         searchReady = !state.isIndexing,
                     )
                 }
@@ -523,6 +529,7 @@ class MainViewModel @Inject constructor(
 
             uiState.update { state ->
                 val nextSelected = clampSelectionToResultIds(state.selectedPhotoIds, visibleIds)
+                val timelineMarks = buildTimelineMarks(filteredIds, recordsById)
                 state.copy(
                     resultCount = filteredIds.size,
                     selectedPhotoIds = nextSelected,
@@ -530,6 +537,7 @@ class MainViewModel @Inject constructor(
                         currentIndex = state.viewerStartIndex,
                         resultSize = if (state.viewerPhotos.isNotEmpty()) state.viewerPhotos.size else filteredIds.size,
                     ),
+                    timelineMarks = timelineMarks,
                 )
             }
 
@@ -812,6 +820,7 @@ class MainViewModel @Inject constructor(
 
         uiState.update { state ->
             val nextSelected = clampSelectionToResultIds(state.selectedPhotoIds, visibleIds)
+            val timelineMarks = buildTimelineMarks(filteredIds, recordsById)
             state.copy(
                 resultCount = filteredIds.size,
                 selectedPhotoIds = nextSelected,
@@ -819,6 +828,7 @@ class MainViewModel @Inject constructor(
                     currentIndex = state.viewerStartIndex,
                     resultSize = if (state.viewerPhotos.isNotEmpty()) state.viewerPhotos.size else filteredIds.size,
                 ),
+                timelineMarks = timelineMarks,
             )
         }
 
@@ -836,7 +846,7 @@ class MainViewModel @Inject constructor(
                 pageSize = SEARCH_PAGE_SIZE,
                 initialLoadSize = SEARCH_PAGE_SIZE * 2,
                 prefetchDistance = SEARCH_PREFETCH_DISTANCE,
-                enablePlaceholders = false,
+                enablePlaceholders = true,
             ),
             pagingSourceFactory = {
                 SearchResultsPagingSource(
@@ -886,6 +896,47 @@ class MainViewModel @Inject constructor(
                 is LocationToken -> token.keyword !in setOf("near_me", "here", "home", "office", "abroad")
                 else -> false
             }
+        }
+    }
+
+    private fun buildTimelineMarks(
+        orderedResultIds: List<Long>,
+        recordsById: Map<Long, PhotoRecord>,
+    ): List<TimelineMark> {
+        if (orderedResultIds.isEmpty()) return emptyList()
+        val marks = ArrayList<TimelineMark>()
+        var lastYear = Int.MIN_VALUE
+        var lastMonth = Int.MIN_VALUE
+
+        orderedResultIds.forEachIndexed { index, photoId ->
+            val record = recordsById[photoId] ?: return@forEachIndexed
+            if (record.year != lastYear || record.month != lastMonth) {
+                marks += TimelineMark(
+                    index = index,
+                    label = "${monthLabel(record.month)} ${record.year}",
+                )
+                lastYear = record.year
+                lastMonth = record.month
+            }
+        }
+        return marks
+    }
+
+    private fun monthLabel(month: Int): String {
+        return when (month) {
+            1 -> "Jan"
+            2 -> "Feb"
+            3 -> "Mar"
+            4 -> "Apr"
+            5 -> "May"
+            6 -> "Jun"
+            7 -> "Jul"
+            8 -> "Aug"
+            9 -> "Sep"
+            10 -> "Oct"
+            11 -> "Nov"
+            12 -> "Dec"
+            else -> "Month"
         }
     }
 

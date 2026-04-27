@@ -90,7 +90,9 @@ import com.photobook.app.feature.metadata.ExifDetails
 import com.photobook.app.feature.metadata.ExifDetailsResult
 import com.photobook.app.feature.metadata.ExifMetadataService
 import com.photobook.app.feature.metadata.MetadataCleanResult
+import com.photobook.app.feature.metadata.SafeShareOptions
 import com.photobook.app.feature.metadata.SafeShareResult
+import com.photobook.app.feature.metadata.SharePrivacyScanResult
 import com.photobook.app.feature.qrshare.QrShareEncoder
 import java.util.Locale
 import kotlinx.coroutines.launch
@@ -139,6 +141,11 @@ fun PhotoViewerScreen(
     var isCleaningMetadata by remember { mutableStateOf(false) }
     var showQrShareSheet by remember { mutableStateOf(false) }
     var qrSharePhotoId by remember { mutableStateOf<Long?>(null) }
+    var showSharePrepSheet by remember { mutableStateOf(false) }
+    var sharePrepState by remember { mutableStateOf<SharePrivacyPrepState>(SharePrivacyPrepState.Loading) }
+    var shareStripMetadata by remember { mutableStateOf(true) }
+    var shareBlurFaces by remember { mutableStateOf(false) }
+    var isPreparingShare by remember { mutableStateOf(false) }
     var viewerZoomScale by remember { mutableStateOf(MIN_VIEWER_ZOOM) }
     var viewerZoomOffset by remember { mutableStateOf(Offset.Zero) }
     var viewerImageSize by remember { mutableStateOf(IntSize.Zero) }
@@ -171,6 +178,12 @@ fun PhotoViewerScreen(
     fun dismissQrShareSheet() {
         showQrShareSheet = false
         qrSharePhotoId = null
+    }
+
+    fun dismissSharePrepSheet() {
+        showSharePrepSheet = false
+        sharePrepState = SharePrivacyPrepState.Loading
+        isPreparingShare = false
     }
 
     fun dismissExifSheet() {
@@ -287,6 +300,20 @@ fun PhotoViewerScreen(
         }
     }
 
+    fun startSharePrepForActivePhoto() {
+        val active = photos[pagerState.currentPage]
+        showSharePrepSheet = true
+        sharePrepState = SharePrivacyPrepState.Loading
+        shareStripMetadata = true
+        shareBlurFaces = false
+        coroutineScope.launch {
+            sharePrepState = when (val scan = exifMetadataService.scanSharePrivacy(listOf(active))) {
+                is SharePrivacyScanResult.Success -> SharePrivacyPrepState.Ready(scan.summary)
+                is SharePrivacyScanResult.Error -> SharePrivacyPrepState.Error
+            }
+        }
+    }
+
     LaunchedEffect(pagerState.currentPage) {
         onPageChanged(pagerState.currentPage)
         val activeId = photos[pagerState.currentPage].id
@@ -299,6 +326,9 @@ fun PhotoViewerScreen(
         showTextRegionSelector = false
         if (qrSharePhotoId != null && qrSharePhotoId != activeId) {
             dismissQrShareSheet()
+        }
+        if (showSharePrepSheet) {
+            dismissSharePrepSheet()
         }
         resetViewerZoom()
     }
@@ -314,6 +344,7 @@ fun PhotoViewerScreen(
             dismissCopySheet()
             dismissExifSheet()
             dismissQrShareSheet()
+            dismissSharePrepSheet()
             onDismiss()
         },
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -467,37 +498,7 @@ fun PhotoViewerScreen(
                             IconButton(
                                 modifier = Modifier.size(42.dp),
                                 onClick = {
-                                    coroutineScope.launch {
-                                        when (val safeShare = exifMetadataService.createSafeShareCopies(listOf(active))) {
-                                            is SafeShareResult.Success -> {
-                                                val item = safeShare.items.firstOrNull() ?: return@launch
-                                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                                    type = item.mimeType.ifBlank { "image/*" }
-                                                    putExtra(Intent.EXTRA_STREAM, item.uri)
-                                                    clipData = android.content.ClipData.newUri(
-                                                        context.contentResolver,
-                                                        item.label,
-                                                        item.uri,
-                                                    )
-                                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                                }
-                                                context.startActivity(
-                                                    Intent.createChooser(
-                                                        shareIntent,
-                                                        context.getString(R.string.viewer_share),
-                                                    )
-                                                )
-                                            }
-
-                                            is SafeShareResult.Error -> {
-                                                Toast.makeText(
-                                                    context,
-                                                    context.getString(R.string.safe_share_prepare_error),
-                                                    Toast.LENGTH_SHORT,
-                                                ).show()
-                                            }
-                                        }
-                                    }
+                                    startSharePrepForActivePhoto()
                                 },
                             ) {
                                 Icon(
@@ -697,6 +698,71 @@ fun PhotoViewerScreen(
                 photo = photos[pagerState.currentPage],
                 encoder = qrShareEncoder,
                 onDismiss = ::dismissQrShareSheet,
+            )
+        }
+        if (showSharePrepSheet) {
+            SharePrivacyPrepSheet(
+                state = sharePrepState,
+                stripMetadata = shareStripMetadata,
+                blurFaces = shareBlurFaces,
+                isPreparingShare = isPreparingShare,
+                onToggleStripMetadata = { enabled -> shareStripMetadata = enabled },
+                onToggleBlurFaces = { enabled -> shareBlurFaces = enabled },
+                onRetryScan = ::startSharePrepForActivePhoto,
+                onConfirmShare = {
+                    val activePhoto = photos[pagerState.currentPage]
+                    coroutineScope.launch {
+                        isPreparingShare = true
+                        when (
+                            val safeShare = exifMetadataService.createSafeShareCopies(
+                                photos = listOf(activePhoto),
+                                options = SafeShareOptions(
+                                    stripMetadata = shareStripMetadata,
+                                    blurFaces = shareBlurFaces,
+                                ),
+                            )
+                        ) {
+                            is SafeShareResult.Success -> {
+                                val item = safeShare.items.firstOrNull()
+                                if (item != null) {
+                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = item.mimeType.ifBlank { "image/*" }
+                                        putExtra(Intent.EXTRA_STREAM, item.uri)
+                                        clipData = android.content.ClipData.newUri(
+                                            context.contentResolver,
+                                            item.label,
+                                            item.uri,
+                                        )
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(
+                                        Intent.createChooser(
+                                            shareIntent,
+                                            context.getString(R.string.viewer_share),
+                                        ),
+                                    )
+                                    dismissSharePrepSheet()
+                                } else {
+                                    Toast.makeText(
+                                        context,
+                                        context.getString(R.string.safe_share_prepare_error),
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                            }
+
+                            is SafeShareResult.Error -> {
+                                Toast.makeText(
+                                    context,
+                                    context.getString(R.string.safe_share_prepare_error),
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        }
+                        isPreparingShare = false
+                    }
+                },
+                onDismiss = ::dismissSharePrepSheet,
             )
         }
     }

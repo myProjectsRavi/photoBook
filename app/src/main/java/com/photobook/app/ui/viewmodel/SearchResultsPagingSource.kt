@@ -18,6 +18,8 @@ class SearchResultsPagingSource(
                     data = emptyList(),
                     prevKey = null,
                     nextKey = null,
+                    itemsBefore = 0,
+                    itemsAfter = 0,
                 )
             }
 
@@ -27,6 +29,8 @@ class SearchResultsPagingSource(
                     data = emptyList(),
                     prevKey = null,
                     nextKey = null,
+                    itemsBefore = orderedPhotoIds.size,
+                    itemsAfter = 0,
                 )
             }
 
@@ -49,6 +53,8 @@ class SearchResultsPagingSource(
                 data = page,
                 prevKey = prevKey,
                 nextKey = nextKey,
+                itemsBefore = start,
+                itemsAfter = (orderedPhotoIds.size - endExclusive).coerceAtLeast(0),
             )
         }.getOrElse { throwable ->
             LoadResult.Error(throwable)

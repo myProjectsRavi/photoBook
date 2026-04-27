@@ -4,12 +4,19 @@ import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.exifinterface.media.ExifInterface
 import androidx.core.content.FileProvider
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.face.FaceDetection
+import com.google.mlkit.vision.face.FaceDetector
+import com.google.mlkit.vision.face.FaceDetectorOptions
 import com.photobook.app.data.model.PhotoRecord
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
@@ -17,6 +24,7 @@ import java.io.FileOutputStream
 import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 
 sealed interface ExifDetailsResult {
@@ -38,10 +46,26 @@ sealed interface SafeShareResult {
     data class Error(val throwable: Throwable? = null) : SafeShareResult
 }
 
+sealed interface SharePrivacyScanResult {
+    data class Success(val summary: SharePrivacySummary) : SharePrivacyScanResult
+    data class Error(val throwable: Throwable? = null) : SharePrivacyScanResult
+}
+
 data class SafeShareItem(
     val uri: Uri,
     val mimeType: String,
     val label: String,
+)
+
+data class SafeShareOptions(
+    val stripMetadata: Boolean = true,
+    val blurFaces: Boolean = false,
+)
+
+data class SharePrivacySummary(
+    val photoCount: Int,
+    val faceCount: Int,
+    val metadataRiskCount: Int,
 )
 
 data class ExifDetails(
@@ -61,6 +85,13 @@ data class ExifDetails(
 class ExifMetadataService @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
+    private val faceDetector: FaceDetector by lazy {
+        FaceDetection.getClient(
+            FaceDetectorOptions.Builder()
+                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+                .build(),
+        )
+    }
 
     suspend fun loadDetails(photo: PhotoRecord): ExifDetailsResult {
         return withContext(Dispatchers.IO) {
@@ -172,7 +203,49 @@ class ExifMetadataService @Inject constructor(
         }
     }
 
-    suspend fun createSafeShareCopies(photos: List<PhotoRecord>): SafeShareResult {
+    suspend fun scanSharePrivacy(photos: List<PhotoRecord>): SharePrivacyScanResult {
+        if (photos.isEmpty()) {
+            return SharePrivacyScanResult.Success(
+                SharePrivacySummary(
+                    photoCount = 0,
+                    faceCount = 0,
+                    metadataRiskCount = 0,
+                ),
+            )
+        }
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                var faceCount = 0
+                photos.forEach { photo ->
+                    val uri = runCatching { Uri.parse(photo.uriString) }.getOrNull() ?: return@forEach
+                    val bitmap = decodeSampledBitmap(uri, PRIVACY_SCAN_MAX_DIMENSION) ?: return@forEach
+                    try {
+                        faceCount += detectFaces(bitmap).size
+                    } finally {
+                        bitmap.recycle()
+                    }
+                }
+
+                val metadataRiskCount = photos.count { photo ->
+                    photo.latitude != null || photo.longitude != null || !photo.cameraModel.isNullOrBlank()
+                }
+
+                SharePrivacySummary(
+                    photoCount = photos.size,
+                    faceCount = faceCount,
+                    metadataRiskCount = metadataRiskCount,
+                )
+            }.fold(
+                onSuccess = { summary -> SharePrivacyScanResult.Success(summary) },
+                onFailure = { error -> SharePrivacyScanResult.Error(error) },
+            )
+        }
+    }
+
+    suspend fun createSafeShareCopies(
+        photos: List<PhotoRecord>,
+        options: SafeShareOptions = SafeShareOptions(),
+    ): SafeShareResult {
         if (photos.isEmpty()) return SafeShareResult.Error()
         return withContext(Dispatchers.IO) {
             val safeShareDir = File(context.cacheDir, SAFE_SHARE_CACHE_DIR).apply {
@@ -200,15 +273,28 @@ class ExifMetadataService @Inject constructor(
                     }
                     createdFiles += targetFile
 
-                    val stripped = stripSensitiveExif(targetFile)
-                    if (!stripped) {
-                        val rewritten = rewriteImageWithoutMetadataToFile(
+                    if (options.blurFaces) {
+                        val blurred = blurFacesInSafeShareCopy(
                             sourceUri = sourceUri,
                             targetFile = targetFile,
                             mimeType = mimeType,
                         )
-                        if (!rewritten) {
-                            throw IllegalStateException("Failed to sanitize image metadata")
+                        if (!blurred) {
+                            throw IllegalStateException("Failed to apply face blur")
+                        }
+                    }
+
+                    if (options.stripMetadata) {
+                        val stripped = stripSensitiveExif(targetFile)
+                        if (!stripped) {
+                            val rewritten = rewriteImageWithoutMetadataToFile(
+                                sourceUri = sourceUri,
+                                targetFile = targetFile,
+                                mimeType = mimeType,
+                            )
+                            if (!rewritten) {
+                                throw IllegalStateException("Failed to sanitize image metadata")
+                            }
                         }
                     }
 
@@ -299,6 +385,44 @@ class ExifMetadataService @Inject constructor(
         }
     }
 
+    private suspend fun blurFacesInSafeShareCopy(
+        sourceUri: Uri,
+        targetFile: File,
+        mimeType: String,
+    ): Boolean {
+        val bitmap = decodeSampledBitmap(sourceUri, SHARE_BLUR_MAX_DIMENSION) ?: return false
+        val faces = runCatching { detectFaces(bitmap) }.getOrDefault(emptyList())
+        if (faces.isEmpty()) {
+            bitmap.recycle()
+            return true
+        }
+
+        val mutable = bitmap.copy(Bitmap.Config.ARGB_8888, true) ?: bitmap
+        if (mutable !== bitmap) {
+            bitmap.recycle()
+        }
+        val canvas = Canvas(mutable)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        faces.forEach { face ->
+            pixelateRect(
+                bitmap = mutable,
+                canvas = canvas,
+                paint = paint,
+                bounds = face,
+            )
+        }
+
+        val format = compressFormatForMime(mimeType)
+        return runCatching {
+            FileOutputStream(targetFile, false).use { output ->
+                mutable.compress(format, JPEG_QUALITY, output)
+            }
+            true
+        }.getOrDefault(false).also {
+            mutable.recycle()
+        }
+    }
+
     private fun copyImageBytesToFile(sourceUri: Uri, targetFile: File): Boolean {
         val input = context.contentResolver.openInputStream(sourceUri) ?: return false
         return runCatching {
@@ -335,6 +459,54 @@ class ExifMetadataService @Inject constructor(
 
         return context.contentResolver.openInputStream(uri)?.use { stream ->
             BitmapFactory.decodeStream(stream, null, options)
+        }
+    }
+
+    private suspend fun detectFaces(bitmap: Bitmap): List<Rect> {
+        val image = InputImage.fromBitmap(bitmap, 0)
+        return runCatching {
+            faceDetector.process(image)
+                .await()
+                .map { face -> face.boundingBox }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun pixelateRect(
+        bitmap: Bitmap,
+        canvas: Canvas,
+        paint: Paint,
+        bounds: Rect,
+    ) {
+        val imageWidth = bitmap.width
+        val imageHeight = bitmap.height
+        val clipped = Rect(
+            bounds.left.coerceIn(0, imageWidth - 1),
+            bounds.top.coerceIn(0, imageHeight - 1),
+            bounds.right.coerceIn(1, imageWidth),
+            bounds.bottom.coerceIn(1, imageHeight),
+        )
+        if (clipped.width() <= 0 || clipped.height() <= 0) return
+
+        val block = (minOf(clipped.width(), clipped.height()) / 8).coerceIn(MIN_PIXEL_BLOCK, MAX_PIXEL_BLOCK)
+        var y = clipped.top
+        while (y < clipped.bottom) {
+            var x = clipped.left
+            while (x < clipped.right) {
+                val sampleX = (x + block / 2).coerceIn(0, imageWidth - 1)
+                val sampleY = (y + block / 2).coerceIn(0, imageHeight - 1)
+                paint.color = bitmap.getPixel(sampleX, sampleY)
+                val right = (x + block).coerceAtMost(clipped.right)
+                val bottom = (y + block).coerceAtMost(clipped.bottom)
+                canvas.drawRect(
+                    x.toFloat(),
+                    y.toFloat(),
+                    right.toFloat(),
+                    bottom.toFloat(),
+                    paint,
+                )
+                x += block
+            }
+            y += block
         }
     }
 
@@ -432,6 +604,10 @@ class ExifMetadataService @Inject constructor(
         )
 
         private const val MAX_BITMAP_DIMENSION = 4096
+        private const val PRIVACY_SCAN_MAX_DIMENSION = 1280
+        private const val SHARE_BLUR_MAX_DIMENSION = 2048
+        private const val MIN_PIXEL_BLOCK = 12
+        private const val MAX_PIXEL_BLOCK = 40
         private const val JPEG_QUALITY = 97
         private const val SAFE_SHARE_CACHE_DIR = "safe_share"
         private const val SAFE_SHARE_TTL_MS = 24L * 60L * 60L * 1000L
