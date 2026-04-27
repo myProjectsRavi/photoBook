@@ -23,13 +23,26 @@ class PerceptualHashComputer @Inject constructor(
         }
 
         return try {
+            val width = scaled.width
+            val height = scaled.height
+            val pixels = IntArray(width * height)
+            scaled.getPixels(pixels, 0, width, 0, 0, width, height)
+
             var hash = 0L
             var bit = 0
-            for (y in 0 until HASH_HEIGHT) {
-                for (x in 0 until HASH_WIDTH - 1) {
-                    val left = luminance(scaled.getPixel(x, y))
-                    val right = luminance(scaled.getPixel(x + 1, y))
-                    if (left > right) {
+            for (y in 0 until height) {
+                for (x in 0 until width - 1) {
+                    val leftPixel = pixels[y * width + x]
+                    val rightPixel = pixels[y * width + x + 1]
+                    
+                    val leftLum = ((leftPixel shr 16 and 0xFF) * 299 + 
+                                  (leftPixel shr 8 and 0xFF) * 587 + 
+                                  (leftPixel and 0xFF) * 114) / 1000
+                    val rightLum = ((rightPixel shr 16 and 0xFF) * 299 + 
+                                   (rightPixel shr 8 and 0xFF) * 587 + 
+                                   (rightPixel and 0xFF) * 114) / 1000
+                    
+                    if (leftLum > rightLum) {
                         hash = hash or (1L shl bit)
                     }
                     bit += 1

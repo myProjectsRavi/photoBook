@@ -73,10 +73,10 @@ class BlurScoreComputer @Inject constructor(
         bitmap.getPixels(rowPixels, 0, bitmap.width, 0, y, bitmap.width, 1)
         for (x in rowPixels.indices) {
             val pixel = rowPixels[x]
-            val red = android.graphics.Color.red(pixel)
-            val green = android.graphics.Color.green(pixel)
-            val blue = android.graphics.Color.blue(pixel)
-            targetLuminance[x] = (red * 299 + green * 587 + blue * 114) / 1000
+            val r = (pixel shr 16) and 0xFF
+            val g = (pixel shr 8) and 0xFF
+            val b = pixel and 0xFF
+            targetLuminance[x] = (r * 299 + g * 587 + b * 114) / 1000
         }
     }
 

@@ -14,6 +14,7 @@ import javax.inject.Singleton
 class PhotoIndex @Inject constructor() {
 
     private val mutex = Mutex()
+    private val recordsMap = mutableMapOf<Long, PhotoRecord>()
     private val recordsFlow = MutableStateFlow<List<PhotoRecord>>(emptyList())
 
     private var folderKeywords: Set<String> = emptySet()
@@ -32,25 +33,11 @@ class PhotoIndex @Inject constructor() {
 
     suspend fun setRecords(records: List<PhotoRecord>) {
         mutex.withLock {
-            recordsFlow.value = records
-            rebuildAuxiliarySets(records)
-        }
-    }
-
-    suspend fun updateMlTags(id: Long, tags: List<MLTag>) {
-        mutex.withLock {
-            val updated = recordsFlow.value.map { record ->
-                if (record.id == id) {
-                    record.copy(
-                        mlTags = mergeTags(record.mlTags, tags),
-                        isMlProcessed = true,
-                    )
-                } else {
-                    record
-                }
-            }
-            recordsFlow.value = updated
-            rebuildAuxiliarySets(updated)
+            recordsMap.clear()
+            records.forEach { recordsMap[it.id] = it }
+            val sorted = records.sortedByDescending { it.dateAdded }
+            recordsFlow.value = sorted
+            rebuildAuxiliarySets(sorted)
         }
     }
 
@@ -63,116 +50,116 @@ class PhotoIndex @Inject constructor() {
         perceptualHash: Long? = null,
         blurScore: Double? = null,
     ): PhotoRecord? {
-        var updatedRecord: PhotoRecord? = null
-        mutex.withLock {
-            val updated = recordsFlow.value.map { record ->
-                if (record.id != id) return@map record
+        return updatePhotosIntelligence(listOf(PhotoIntelligenceUpdate(
+            id, tags, isMlProcessed, ocrText, isOcrProcessed, perceptualHash, blurScore
+        ))).firstOrNull()
+    }
 
-                val nextTags = tags?.let { incoming ->
+    suspend fun updatePhotosIntelligence(updates: List<PhotoIntelligenceUpdate>): List<PhotoRecord> {
+        if (updates.isEmpty()) return emptyList()
+        val results = mutableListOf<PhotoRecord>()
+        mutex.withLock {
+            var anyChanged = false
+            updates.forEach { update ->
+                val record = recordsMap[update.id] ?: return@forEach
+                val nextTags = update.tags?.let { incoming ->
                     mergeTags(record.mlTags, incoming)
                 } ?: record.mlTags
 
                 val nextRecord = record.copy(
                     mlTags = nextTags,
-                    isMlProcessed = isMlProcessed ?: record.isMlProcessed,
-                    ocrText = ocrText ?: record.ocrText,
-                    isOcrProcessed = isOcrProcessed ?: record.isOcrProcessed,
-                    perceptualHash = perceptualHash ?: record.perceptualHash,
-                    blurScore = blurScore ?: record.blurScore,
+                    isMlProcessed = update.isMlProcessed ?: record.isMlProcessed,
+                    ocrText = update.ocrText ?: record.ocrText,
+                    isOcrProcessed = update.isOcrProcessed ?: record.isOcrProcessed,
+                    perceptualHash = update.perceptualHash ?: record.perceptualHash,
+                    blurScore = update.blurScore ?: record.blurScore,
                 )
-                updatedRecord = nextRecord
-                nextRecord
+                if (nextRecord != record) {
+                    recordsMap[update.id] = nextRecord
+                    results += nextRecord
+                    anyChanged = true
+                }
             }
-            recordsFlow.value = updated
-            rebuildAuxiliarySets(updated)
+            if (anyChanged) {
+                val updatedList = recordsMap.values.sortedByDescending { it.dateAdded }
+                recordsFlow.value = updatedList
+                rebuildAuxiliarySets(updatedList)
+            }
         }
-        return updatedRecord
+        return results
     }
 
     suspend fun setFavorite(id: Long, isFavorite: Boolean) {
         mutex.withLock {
-            val updated = recordsFlow.value.map { record ->
-                if (record.id == id) {
-                    record.copy(isFavorite = isFavorite)
-                } else {
-                    record
-                }
-            }
-            recordsFlow.value = updated
-            rebuildAuxiliarySets(updated)
+            val record = recordsMap[id] ?: return@withLock
+            if (record.isFavorite == isFavorite) return@withLock
+            val updated = record.copy(isFavorite = isFavorite)
+            recordsMap[id] = updated
+            val updatedList = recordsMap.values.sortedByDescending { it.dateAdded }
+            recordsFlow.value = updatedList
         }
     }
 
     suspend fun toggleFavorite(id: Long): Boolean {
         var nextFavorite = false
         mutex.withLock {
-            val updated = recordsFlow.value.map { record ->
-                if (record.id == id) {
-                    nextFavorite = !record.isFavorite
-                    record.copy(isFavorite = nextFavorite)
-                } else {
-                    record
-                }
-            }
-            recordsFlow.value = updated
-            rebuildAuxiliarySets(updated)
+            val record = recordsMap[id] ?: return@withLock false
+            nextFavorite = !record.isFavorite
+            val updated = record.copy(isFavorite = nextFavorite)
+            recordsMap[id] = updated
+            val updatedList = recordsMap.values.sortedByDescending { it.dateAdded }
+            recordsFlow.value = updatedList
         }
         return nextFavorite
     }
 
     suspend fun upsertRecord(record: PhotoRecord) {
         mutex.withLock {
-            val mutable = recordsFlow.value.toMutableList()
-            val index = mutable.indexOfFirst { it.id == record.id }
-            if (index >= 0) {
-                mutable[index] = record
-            } else {
-                mutable += record
-            }
-            recordsFlow.value = mutable
-            rebuildAuxiliarySets(mutable)
-        }
-    }
-
-    suspend fun removeRecord(id: Long) {
-        mutex.withLock {
-            val filtered = recordsFlow.value.filterNot { it.id == id }
-            recordsFlow.value = filtered
-            rebuildAuxiliarySets(filtered)
+            recordsMap[record.id] = record
+            val updatedList = recordsMap.values.sortedByDescending { it.dateAdded }
+            recordsFlow.value = updatedList
+            rebuildAuxiliarySets(updatedList)
         }
     }
 
     suspend fun removeRecords(ids: Set<Long>) {
         if (ids.isEmpty()) return
         mutex.withLock {
-            val filtered = recordsFlow.value.filterNot { record -> record.id in ids }
-            recordsFlow.value = filtered
-            rebuildAuxiliarySets(filtered)
+            var anyRemoved = false
+            ids.forEach { id ->
+                if (recordsMap.remove(id) != null) {
+                    anyRemoved = true
+                }
+            }
+            if (anyRemoved) {
+                val updatedList = recordsMap.values.sortedByDescending { it.dateAdded }
+                recordsFlow.value = updatedList
+                rebuildAuxiliarySets(updatedList)
+            }
         }
     }
 
     private fun rebuildAuxiliarySets(records: List<PhotoRecord>) {
-        folderKeywords = records.flatMap { record ->
-            listOf(record.folderName, record.folderPath)
+        // Optimization: only rebuild if it's really needed and use more efficient collection builders
+        folderKeywords = records.asSequence().flatMap { record ->
+            sequenceOf(record.folderName, record.folderPath)
         }.flatMap { text ->
-            text.lowercase().split('/', ' ', '-', '_')
+            text.lowercase().splitToSequence('/', ' ', '-', '_')
         }.filter { it.length >= 3 }.toSet()
 
-        cityKeywords = records.flatMap { record ->
-            listOf(record.city, record.state, record.country)
+        cityKeywords = records.asSequence().flatMap { record ->
+            sequenceOf(record.city, record.state, record.country)
         }.mapNotNull { it?.lowercase()?.trim()?.takeIf(String::isNotBlank) }
             .toSet()
 
-        mlKeywords = records.flatMap { record ->
-            record.mlTags.map { it.label.lowercase() }
+        mlKeywords = records.asSequence().flatMap { record ->
+            record.mlTags.asSequence().map { it.label.lowercase() }
         }.toSet()
     }
 
     private fun mergeTags(existing: List<MLTag>, incoming: List<MLTag>): List<MLTag> {
-        val merged = linkedMapOf<String, MLTag>()
-        existing.forEach { tag ->
-            merged[tag.label.lowercase()] = tag
-        }
+        if (incoming.isEmpty()) return existing
+        val merged = existing.associateByTo(LinkedHashMap()) { it.label.lowercase() }
         incoming.forEach { tag ->
             val key = tag.label.lowercase()
             val current = merged[key]
@@ -182,4 +169,14 @@ class PhotoIndex @Inject constructor() {
         }
         return merged.values.toList()
     }
+
+    data class PhotoIntelligenceUpdate(
+        val id: Long,
+        val tags: List<MLTag>? = null,
+        val isMlProcessed: Boolean? = null,
+        val ocrText: String? = null,
+        val isOcrProcessed: Boolean? = null,
+        val perceptualHash: Long? = null,
+        val blurScore: Double? = null,
+    )
 }

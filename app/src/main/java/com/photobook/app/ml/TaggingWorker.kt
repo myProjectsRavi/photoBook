@@ -15,7 +15,6 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.photobook.app.data.index.IndexPersistence
 import com.photobook.app.data.index.PhotoIndex
-import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.feature.duplicates.BlurScoreComputer
 import com.photobook.app.feature.duplicates.PerceptualHashComputer
 import com.photobook.app.util.Constants
@@ -49,8 +48,8 @@ class TaggingWorker @AssistedInject constructor(
             return Result.success()
         }
 
-        var processed = 0
-        val pendingUpdates = mutableListOf<PhotoRecord>()
+        val pendingIndexUpdates = mutableListOf<PhotoIndex.PhotoIntelligenceUpdate>()
+
         photos.forEachIndexed { index, photo ->
             if (isStopped) return Result.retry()
 
@@ -58,6 +57,7 @@ class TaggingWorker @AssistedInject constructor(
             val needsOcr = !photo.isOcrProcessed
             val needsPerceptualHash = photo.perceptualHash == null
             val needsBlurScore = photo.blurScore == null
+
             if (needsMl || needsOcr || needsPerceptualHash || needsBlurScore) {
                 val analysis = if (needsMl || needsOcr) {
                     mlTagger.analyzePhoto(photo.uriString, photo.isFrontCamera)
@@ -74,7 +74,8 @@ class TaggingWorker @AssistedInject constructor(
                 } else {
                     null
                 }
-                val updated = photoIndex.updatePhotoIntelligence(
+
+                pendingIndexUpdates += PhotoIndex.PhotoIntelligenceUpdate(
                     id = photo.id,
                     tags = if (needsMl) analysis?.tags else null,
                     isMlProcessed = if (needsMl) true else null,
@@ -83,17 +84,15 @@ class TaggingWorker @AssistedInject constructor(
                     perceptualHash = perceptualHash,
                     blurScore = blurScore,
                 )
-                if (updated != null) {
-                    pendingUpdates += updated
-                }
-                processed += 1
             }
 
-            if (processed > 0 && processed % Constants.BATCH_SIZE == 0) {
-                if (pendingUpdates.isNotEmpty()) {
-                    indexPersistence.upsertAll(pendingUpdates.toList())
-                    pendingUpdates.clear()
+            if (pendingIndexUpdates.size >= Constants.BATCH_SIZE) {
+                val updatedRecords = photoIndex.updatePhotosIntelligence(pendingIndexUpdates)
+                if (updatedRecords.isNotEmpty()) {
+                    indexPersistence.upsertAll(updatedRecords)
                 }
+                pendingIndexUpdates.clear()
+
                 if (isBatteryTooLow()) return Result.retry()
                 delay(Constants.BATCH_DELAY_MS)
             }
@@ -103,9 +102,12 @@ class TaggingWorker @AssistedInject constructor(
             }
         }
 
-        if (pendingUpdates.isNotEmpty()) {
-            indexPersistence.upsertAll(pendingUpdates.toList())
-            pendingUpdates.clear()
+        if (pendingIndexUpdates.isNotEmpty()) {
+            val updatedRecords = photoIndex.updatePhotosIntelligence(pendingIndexUpdates)
+            if (updatedRecords.isNotEmpty()) {
+                indexPersistence.upsertAll(updatedRecords)
+            }
+            pendingIndexUpdates.clear()
         }
         return Result.success()
     }

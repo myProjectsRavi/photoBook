@@ -23,6 +23,9 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
 import javax.inject.Inject
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
@@ -215,15 +218,24 @@ class ExifMetadataService @Inject constructor(
         }
         return withContext(Dispatchers.IO) {
             runCatching {
-                var faceCount = 0
-                photos.forEach { photo ->
-                    val uri = runCatching { Uri.parse(photo.uriString) }.getOrNull() ?: return@forEach
-                    val bitmap = decodeSampledBitmap(uri, PRIVACY_SCAN_MAX_DIMENSION) ?: return@forEach
-                    try {
-                        faceCount += detectFaces(bitmap).size
-                    } finally {
-                        bitmap.recycle()
+                val chunkedPhotos = photos.chunked(8)
+                var totalFaceCount = 0
+
+                for (chunk in chunkedPhotos) {
+                    val chunkFaceCount = coroutineScope {
+                        chunk.map { photo ->
+                            async {
+                                val uri = runCatching { Uri.parse(photo.uriString) }.getOrNull() ?: return@async 0
+                                val bitmap = decodeSampledBitmap(uri, PRIVACY_SCAN_MAX_DIMENSION) ?: return@async 0
+                                try {
+                                    detectFaces(bitmap).size
+                                } finally {
+                                    bitmap.recycle()
+                                }
+                            }
+                        }.awaitAll().sum()
                     }
+                    totalFaceCount += chunkFaceCount
                 }
 
                 val metadataRiskCount = photos.count { photo ->
@@ -232,7 +244,7 @@ class ExifMetadataService @Inject constructor(
 
                 SharePrivacySummary(
                     photoCount = photos.size,
-                    faceCount = faceCount,
+                    faceCount = totalFaceCount,
                     metadataRiskCount = metadataRiskCount,
                 )
             }.fold(
@@ -257,57 +269,67 @@ class ExifMetadataService @Inject constructor(
             val prepared = mutableListOf<SafeShareItem>()
 
             try {
-                photos.forEach { photo ->
-                    val sourceUri = runCatching { Uri.parse(photo.uriString) }.getOrNull()
-                        ?: throw IllegalStateException("Invalid photo uri for safe share")
-                    val mimeType = normalizeImageMime(photo.mimeType)
-                    val extension = extensionForMime(mimeType)
-                    val targetFile = File(
-                        safeShareDir,
-                        safeShareFileName(photo.fileName, extension),
-                    )
+                val chunked = photos.chunked(4)
+                for (chunk in chunked) {
+                    val results = coroutineScope {
+                        chunk.map { photo ->
+                            async {
+                                val sourceUri = runCatching { Uri.parse(photo.uriString) }.getOrNull()
+                                    ?: throw IllegalStateException("Invalid photo uri for safe share")
+                                val mimeType = normalizeImageMime(photo.mimeType)
+                                val extension = extensionForMime(mimeType)
+                                val targetFile = File(
+                                    safeShareDir,
+                                    safeShareFileName(photo.fileName, extension),
+                                )
 
-                    val copied = copyImageBytesToFile(sourceUri, targetFile)
-                    if (!copied) {
-                        throw IllegalStateException("Failed to copy image to safe share cache")
-                    }
-                    createdFiles += targetFile
+                                val copied = copyImageBytesToFile(sourceUri, targetFile)
+                                if (!copied) {
+                                    throw IllegalStateException("Failed to copy image to safe share cache")
+                                }
 
-                    if (options.blurFaces) {
-                        val blurred = blurFacesInSafeShareCopy(
-                            sourceUri = sourceUri,
-                            targetFile = targetFile,
-                            mimeType = mimeType,
-                        )
-                        if (!blurred) {
-                            throw IllegalStateException("Failed to apply face blur")
-                        }
-                    }
+                                if (options.blurFaces) {
+                                    val blurred = blurFacesInSafeShareCopy(
+                                        sourceUri = sourceUri,
+                                        targetFile = targetFile,
+                                        mimeType = mimeType,
+                                    )
+                                    if (!blurred) {
+                                        throw IllegalStateException("Failed to apply face blur")
+                                    }
+                                }
 
-                    if (options.stripMetadata) {
-                        val stripped = stripSensitiveExif(targetFile)
-                        if (!stripped) {
-                            val rewritten = rewriteImageWithoutMetadataToFile(
-                                sourceUri = sourceUri,
-                                targetFile = targetFile,
-                                mimeType = mimeType,
-                            )
-                            if (!rewritten) {
-                                throw IllegalStateException("Failed to sanitize image metadata")
+                                if (options.stripMetadata) {
+                                    val stripped = stripSensitiveExif(targetFile)
+                                    if (!stripped) {
+                                        val rewritten = rewriteImageWithoutMetadataFromFile(
+                                            sourceFile = targetFile,
+                                            mimeType = mimeType,
+                                        )
+                                        if (!rewritten) {
+                                            throw IllegalStateException("Failed to sanitize image metadata")
+                                        }
+                                    }
+                                }
+
+                                val shareUri = FileProvider.getUriForFile(
+                                    context,
+                                    "${context.packageName}.fileprovider",
+                                    targetFile,
+                                )
+                                SafeShareItem(
+                                    uri = shareUri,
+                                    mimeType = mimeType,
+                                    label = photo.fileName.ifBlank { targetFile.name },
+                                ) to targetFile
                             }
-                        }
+                        }.awaitAll()
                     }
 
-                    val shareUri = FileProvider.getUriForFile(
-                        context,
-                        "${context.packageName}.fileprovider",
-                        targetFile,
-                    )
-                    prepared += SafeShareItem(
-                        uri = shareUri,
-                        mimeType = mimeType,
-                        label = photo.fileName.ifBlank { targetFile.name },
-                    )
+                    results.forEach { (item, file) ->
+                        prepared += item
+                        createdFiles += file
+                    }
                 }
 
                 SafeShareResult.Success(prepared)
@@ -371,12 +393,13 @@ class ExifMetadataService @Inject constructor(
         }
     }
 
-    private fun rewriteImageWithoutMetadataToFile(sourceUri: Uri, targetFile: File, mimeType: String): Boolean {
-        val bitmap = decodeSampledBitmap(sourceUri, MAX_BITMAP_DIMENSION) ?: return false
+    private fun rewriteImageWithoutMetadataFromFile(sourceFile: File, mimeType: String): Boolean {
+        val uri = Uri.fromFile(sourceFile)
+        val bitmap = decodeSampledBitmap(uri, MAX_BITMAP_DIMENSION) ?: return false
         val format = compressFormatForMime(mimeType)
 
         return runCatching {
-            FileOutputStream(targetFile, false).use { stream ->
+            FileOutputStream(sourceFile, false).use { stream ->
                 bitmap.compress(format, JPEG_QUALITY, stream)
             }
             true
@@ -488,13 +511,20 @@ class ExifMetadataService @Inject constructor(
         if (clipped.width() <= 0 || clipped.height() <= 0) return
 
         val block = (minOf(clipped.width(), clipped.height()) / 8).coerceIn(MIN_PIXEL_BLOCK, MAX_PIXEL_BLOCK)
+        
+        // Optimize: Use cached pixels for the region if possible, or at least avoid many getPixel calls
         var y = clipped.top
         while (y < clipped.bottom) {
             var x = clipped.left
             while (x < clipped.right) {
                 val sampleX = (x + block / 2).coerceIn(0, imageWidth - 1)
                 val sampleY = (y + block / 2).coerceIn(0, imageHeight - 1)
+                
+                // Still using getPixel for simplicity in this specific block logic, 
+                // but for massive regions we could grab all pixels at once.
+                // Given faces are usually small, getPixel might be okay, but let's be safe.
                 paint.color = bitmap.getPixel(sampleX, sampleY)
+                
                 val right = (x + block).coerceAtMost(clipped.right)
                 val bottom = (y + block).coerceAtMost(clipped.bottom)
                 canvas.drawRect(
