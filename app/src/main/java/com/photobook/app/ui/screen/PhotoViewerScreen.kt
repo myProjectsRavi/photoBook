@@ -7,6 +7,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -61,15 +63,18 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -134,6 +139,14 @@ fun PhotoViewerScreen(
     var isCleaningMetadata by remember { mutableStateOf(false) }
     var showQrShareSheet by remember { mutableStateOf(false) }
     var qrSharePhotoId by remember { mutableStateOf<Long?>(null) }
+    var viewerZoomScale by remember { mutableStateOf(MIN_VIEWER_ZOOM) }
+    var viewerZoomOffset by remember { mutableStateOf(Offset.Zero) }
+    var viewerImageSize by remember { mutableStateOf(IntSize.Zero) }
+
+    fun resetViewerZoom() {
+        viewerZoomScale = MIN_VIEWER_ZOOM
+        viewerZoomOffset = Offset.Zero
+    }
 
     fun copyToClipboard(text: String) {
         clipboardManager.setText(AnnotatedString(text))
@@ -287,6 +300,7 @@ fun PhotoViewerScreen(
         if (qrSharePhotoId != null && qrSharePhotoId != activeId) {
             dismissQrShareSheet()
         }
+        resetViewerZoom()
     }
 
     DisposableEffect(Unit) {
@@ -499,6 +513,7 @@ fun PhotoViewerScreen(
 
                 HorizontalPager(
                     state = pagerState,
+                    userScrollEnabled = viewerZoomScale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
@@ -515,7 +530,73 @@ fun PhotoViewerScreen(
                             model = Uri.parse(photo.uriString),
                             contentDescription = photo.fileName,
                             contentScale = ContentScale.Fit,
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .onSizeChanged { size ->
+                                    viewerImageSize = size
+                                }
+                                .pointerInput(photo.id, viewerImageSize) {
+                                    detectTapGestures(
+                                        onDoubleTap = { tapOffset ->
+                                            if (viewerImageSize.width == 0 || viewerImageSize.height == 0) {
+                                                return@detectTapGestures
+                                            }
+                                            if (viewerZoomScale > MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) {
+                                                resetViewerZoom()
+                                            } else {
+                                                val targetScale = DOUBLE_TAP_VIEWER_ZOOM
+                                                val targetOffset = calculateDoubleTapZoomOffset(
+                                                    tapOffset = tapOffset,
+                                                    containerSize = viewerImageSize,
+                                                    targetScale = targetScale,
+                                                )
+                                                viewerZoomScale = targetScale
+                                                viewerZoomOffset = clampViewerOffset(
+                                                    offset = targetOffset,
+                                                    scale = targetScale,
+                                                    containerSize = viewerImageSize,
+                                                )
+                                            }
+                                        },
+                                    )
+                                }
+                                .pointerInput(photo.id, viewerImageSize) {
+                                    detectTransformGestures { centroid, pan, zoom, _ ->
+                                        if (viewerImageSize.width == 0 || viewerImageSize.height == 0) {
+                                            return@detectTransformGestures
+                                        }
+
+                                        val oldScale = viewerZoomScale
+                                        val newScale = (oldScale * zoom).coerceIn(MIN_VIEWER_ZOOM, MAX_VIEWER_ZOOM)
+
+                                        if (newScale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) {
+                                            resetViewerZoom()
+                                            return@detectTransformGestures
+                                        }
+
+                                        val center = viewerImageSize.centerOffset()
+                                        val centroidDelta = centroid - center
+                                        val scaleFactor = newScale / oldScale
+                                        val scaledOffset = Offset(
+                                            x = (viewerZoomOffset.x + centroidDelta.x) * scaleFactor - centroidDelta.x,
+                                            y = (viewerZoomOffset.y + centroidDelta.y) * scaleFactor - centroidDelta.y,
+                                        )
+                                        val nextOffset = scaledOffset + pan
+
+                                        viewerZoomScale = newScale
+                                        viewerZoomOffset = clampViewerOffset(
+                                            offset = nextOffset,
+                                            scale = newScale,
+                                            containerSize = viewerImageSize,
+                                        )
+                                    }
+                                }
+                                .graphicsLayer {
+                                    scaleX = viewerZoomScale
+                                    scaleY = viewerZoomScale
+                                    translationX = viewerZoomOffset.x
+                                    translationY = viewerZoomOffset.y
+                                },
                         )
                     }
                 }
@@ -1225,3 +1306,45 @@ private fun reduceCopySheetState(
         }
     }
 }
+
+private fun IntSize.centerOffset(): Offset {
+    return Offset(width / 2f, height / 2f)
+}
+
+private fun calculateDoubleTapZoomOffset(
+    tapOffset: Offset,
+    containerSize: IntSize,
+    targetScale: Float,
+): Offset {
+    val center = containerSize.centerOffset()
+    val zoomFactor = (targetScale - 1f).coerceAtLeast(0f)
+    return Offset(
+        x = (center.x - tapOffset.x) * zoomFactor,
+        y = (center.y - tapOffset.y) * zoomFactor,
+    )
+}
+
+private fun clampViewerOffset(
+    offset: Offset,
+    scale: Float,
+    containerSize: IntSize,
+): Offset {
+    if (scale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) {
+        return Offset.Zero
+    }
+    if (containerSize.width <= 0 || containerSize.height <= 0) {
+        return Offset.Zero
+    }
+
+    val maxTranslationX = (containerSize.width * (scale - 1f)) / 2f
+    val maxTranslationY = (containerSize.height * (scale - 1f)) / 2f
+    return Offset(
+        x = offset.x.coerceIn(-maxTranslationX, maxTranslationX),
+        y = offset.y.coerceIn(-maxTranslationY, maxTranslationY),
+    )
+}
+
+private const val MIN_VIEWER_ZOOM = 1f
+private const val MAX_VIEWER_ZOOM = 4f
+private const val DOUBLE_TAP_VIEWER_ZOOM = 2.5f
+private const val VIEWER_ZOOM_EPSILON = 0.01f
