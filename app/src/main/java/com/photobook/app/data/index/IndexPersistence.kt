@@ -228,6 +228,7 @@ class IndexPersistence @Inject constructor(
             isHdr = optBoolean("isHdr"),
             isFavorite = optBoolean("isFavorite", false),
             perceptualHash = if (isNull("perceptualHash")) null else optLong("perceptualHash"),
+            blurScore = if (isNull("blurScore")) null else optDouble("blurScore"),
             mlTags = tags,
             isMlProcessed = optBoolean("isMlProcessed", tags.isNotEmpty()),
             ocrText = optString("ocrText", ""),

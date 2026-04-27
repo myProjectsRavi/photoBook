@@ -34,7 +34,7 @@ object AppModule {
         )
             .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
             .addCallback(WAL_OPEN_CALLBACK)
-            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
             .fallbackToDestructiveMigration()
             .build()
     }
@@ -124,6 +124,12 @@ object AppModule {
                 SELECT id, searchableText FROM video_frames
                 """.trimIndent(),
             )
+        }
+    }
+
+    private val MIGRATION_5_6 = object : Migration(5, 6) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE photos ADD COLUMN blurScore REAL")
         }
     }
 

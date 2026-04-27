@@ -10,7 +10,7 @@ import androidx.room.RoomDatabase
         VideoFrameEntity::class,
         VideoFrameFtsEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 abstract class PhotoBookDatabase : RoomDatabase() {

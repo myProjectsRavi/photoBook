@@ -753,6 +753,7 @@ class MainViewModel @Inject constructor(
             rebuilt.copy(
                 isFavorite = existing.isFavorite,
                 perceptualHash = existing.perceptualHash,
+                blurScore = existing.blurScore,
                 mlTags = existing.mlTags,
                 isMlProcessed = existing.isMlProcessed,
                 ocrText = existing.ocrText,

@@ -207,7 +207,7 @@ class DuplicatePhotoFinder @Inject constructor(
 
         val blurryCandidates = mutableListOf<Pair<PhotoRecord, Double>>()
         records.forEach { photo ->
-            val score = blurVariance(photo.uriString) ?: return@forEach
+            val score = photo.blurScore ?: return@forEach
             if (score <= BLUR_VARIANCE_THRESHOLD) {
                 blurryCandidates += photo to score
             }
@@ -316,59 +316,6 @@ class DuplicatePhotoFinder @Inject constructor(
     private fun normalizeMetric(value: Double, min: Double, max: Double): Double {
         if (max - min <= NORMALIZE_EPSILON) return 0.5
         return ((value - min) / (max - min)).coerceIn(0.0, 1.0)
-    }
-
-    private fun blurVariance(uriString: String): Double? {
-        val bitmap = decodeSampledBitmap(Uri.parse(uriString), BLUR_SAMPLE_MAX_DIMENSION) ?: return null
-        if (bitmap.width < 3 || bitmap.height < 3) {
-            bitmap.recycleSafely()
-            return null
-        }
-
-        return try {
-            val width = bitmap.width
-            val height = bitmap.height
-            val rowPixels = IntArray(width)
-            var rowAbove = IntArray(width)
-            var rowCenter = IntArray(width)
-            var rowBelow = IntArray(width)
-
-            fillLuminanceRow(bitmap, rowPixels, rowAbove, 0)
-            fillLuminanceRow(bitmap, rowPixels, rowCenter, 1)
-            fillLuminanceRow(bitmap, rowPixels, rowBelow, 2)
-
-            var sum = 0.0
-            var sumSquares = 0.0
-            var count = 0
-
-            for (y in 1 until height - 1) {
-                for (x in 1 until width - 1) {
-                    val center = rowCenter[x]
-                    val up = rowAbove[x]
-                    val down = rowBelow[x]
-                    val left = rowCenter[x - 1]
-                    val right = rowCenter[x + 1]
-                    val laplacian = (4 * center - up - down - left - right).toDouble()
-                    sum += laplacian
-                    sumSquares += laplacian * laplacian
-                    count += 1
-                }
-
-                if (y < height - 2) {
-                    val reusable = rowAbove
-                    rowAbove = rowCenter
-                    rowCenter = rowBelow
-                    rowBelow = reusable
-                    fillLuminanceRow(bitmap, rowPixels, rowBelow, y + 2)
-                }
-            }
-
-            if (count == 0) return null
-            val mean = sum / count.toDouble()
-            (sumSquares / count.toDouble()) - (mean * mean)
-        } finally {
-            bitmap.recycleSafely()
-        }
     }
 
     private fun fillLuminanceRow(
@@ -506,7 +453,6 @@ class DuplicatePhotoFinder @Inject constructor(
         private const val BURST_ASPECT_RATIO_DELTA = 0.16f
         private const val BURST_DIMENSION_DELTA = 0.16f
         private const val MAX_BURST_GROUPS = 15
-        private const val BLUR_SAMPLE_MAX_DIMENSION = 256
         private const val HERO_SAMPLE_MAX_DIMENSION = 320
         private const val BLUR_VARIANCE_THRESHOLD = 95.0
         private const val MIN_BLUR_GROUP_SIZE = 2

@@ -16,6 +16,7 @@ import androidx.work.workDataOf
 import com.photobook.app.data.index.IndexPersistence
 import com.photobook.app.data.index.PhotoIndex
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.feature.duplicates.BlurScoreComputer
 import com.photobook.app.feature.duplicates.PerceptualHashComputer
 import com.photobook.app.util.Constants
 import dagger.assisted.Assisted
@@ -30,6 +31,7 @@ class TaggingWorker @AssistedInject constructor(
     private val indexPersistence: IndexPersistence,
     private val mlTagger: MLTagger,
     private val perceptualHashComputer: PerceptualHashComputer,
+    private val blurScoreComputer: BlurScoreComputer,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
@@ -55,7 +57,8 @@ class TaggingWorker @AssistedInject constructor(
             val needsMl = !photo.isMlProcessed
             val needsOcr = !photo.isOcrProcessed
             val needsPerceptualHash = photo.perceptualHash == null
-            if (needsMl || needsOcr || needsPerceptualHash) {
+            val needsBlurScore = photo.blurScore == null
+            if (needsMl || needsOcr || needsPerceptualHash || needsBlurScore) {
                 val analysis = if (needsMl || needsOcr) {
                     mlTagger.analyzePhoto(photo.uriString, photo.isFrontCamera)
                 } else {
@@ -66,6 +69,11 @@ class TaggingWorker @AssistedInject constructor(
                 } else {
                     null
                 }
+                val blurScore = if (needsBlurScore) {
+                    blurScoreComputer.computeFromUri(photo.uriString)
+                } else {
+                    null
+                }
                 val updated = photoIndex.updatePhotoIntelligence(
                     id = photo.id,
                     tags = if (needsMl) analysis?.tags else null,
@@ -73,6 +81,7 @@ class TaggingWorker @AssistedInject constructor(
                     ocrText = if (needsOcr) analysis?.ocrText else null,
                     isOcrProcessed = if (needsOcr) true else null,
                     perceptualHash = perceptualHash,
+                    blurScore = blurScore,
                 )
                 if (updated != null) {
                     pendingUpdates += updated
