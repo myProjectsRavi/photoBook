@@ -752,6 +752,7 @@ class MainViewModel @Inject constructor(
             val existing = byId[rebuilt.id] ?: return@map rebuilt
             rebuilt.copy(
                 isFavorite = existing.isFavorite,
+                perceptualHash = existing.perceptualHash,
                 mlTags = existing.mlTags,
                 isMlProcessed = existing.isMlProcessed,
                 ocrText = existing.ocrText,

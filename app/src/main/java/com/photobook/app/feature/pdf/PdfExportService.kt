@@ -28,6 +28,12 @@ class PdfExportService @Inject constructor(
 
     suspend fun exportPhotos(photos: List<PhotoRecord>): PdfExportResult {
         if (photos.isEmpty()) return PdfExportResult.Error()
+        if (photos.size > MAX_PDF_PAGE_COUNT) {
+            return PdfExportResult.TooManyPages(
+                requested = photos.size,
+                maxAllowed = MAX_PDF_PAGE_COUNT,
+            )
+        }
 
         return withContext(Dispatchers.IO) {
             var outputUri: Uri? = null
@@ -151,6 +157,7 @@ class PdfExportService @Inject constructor(
         private const val PAGE_WIDTH = 1240
         private const val PAGE_HEIGHT = 1754
         private const val MAX_IMAGE_DIMENSION = 2400
+        private const val MAX_PDF_PAGE_COUNT = 100
         private const val MIME_TYPE = "application/pdf"
     }
 }

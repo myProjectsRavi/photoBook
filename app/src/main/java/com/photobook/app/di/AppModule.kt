@@ -34,7 +34,7 @@ object AppModule {
         )
             .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
             .addCallback(WAL_OPEN_CALLBACK)
-            .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
+            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
             .fallbackToDestructiveMigration()
             .build()
     }
@@ -101,6 +101,28 @@ object AppModule {
             db.execSQL(
                 "CREATE INDEX IF NOT EXISTS index_video_frames_videoDateModifiedMs " +
                     "ON video_frames(videoDateModifiedMs)",
+            )
+        }
+    }
+
+    private val MIGRATION_4_5 = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE photos ADD COLUMN perceptualHash INTEGER")
+            db.execSQL(
+                """
+                CREATE VIRTUAL TABLE IF NOT EXISTS video_frame_fts
+                USING fts4(
+                    searchableText,
+                    tokenize=unicode61,
+                    prefix='2,3,4'
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                INSERT INTO video_frame_fts(rowid, searchableText)
+                SELECT id, searchableText FROM video_frames
+                """.trimIndent(),
             )
         }
     }

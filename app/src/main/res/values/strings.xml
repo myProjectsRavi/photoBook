@@ -17,6 +17,7 @@
     <string name="create_pdf_selected">Create PDF</string>
     <string name="create_pdf_success">PDF created (%1$d pages)</string>
     <string name="create_pdf_error">Couldn\'t create PDF. Try again.</string>
+    <string name="create_pdf_too_many_pages">For best performance, select up to %1$d photos per PDF.</string>
     <string name="create_pdf_share">Share PDF</string>
     <string name="safe_share_prepare_error">Couldn\'t prepare private safe share. Try again.</string>
     <string name="clear_selection">Clear selection</string>

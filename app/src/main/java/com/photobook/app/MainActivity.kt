@@ -245,6 +245,14 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                         viewModel.clearSelection()
                     }
 
+                    is PdfExportResult.TooManyPages -> {
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.create_pdf_too_many_pages, result.maxAllowed),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+
                     is PdfExportResult.Error -> {
                         Toast.makeText(
                             context,

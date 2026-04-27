@@ -60,6 +60,7 @@ class PhotoIndex @Inject constructor() {
         isMlProcessed: Boolean? = null,
         ocrText: String? = null,
         isOcrProcessed: Boolean? = null,
+        perceptualHash: Long? = null,
     ): PhotoRecord? {
         var updatedRecord: PhotoRecord? = null
         mutex.withLock {
@@ -75,6 +76,7 @@ class PhotoIndex @Inject constructor() {
                     isMlProcessed = isMlProcessed ?: record.isMlProcessed,
                     ocrText = ocrText ?: record.ocrText,
                     isOcrProcessed = isOcrProcessed ?: record.isOcrProcessed,
+                    perceptualHash = perceptualHash ?: record.perceptualHash,
                 )
                 updatedRecord = nextRecord
                 nextRecord

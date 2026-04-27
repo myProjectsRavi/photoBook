@@ -82,7 +82,7 @@ class DuplicatePhotoFinder @Inject constructor(
         val buckets = mutableMapOf<String, MutableList<HashRecord>>()
 
         records.forEach { photo ->
-            val hash = perceptualHash(photo.uriString) ?: return@forEach
+            val hash = photo.perceptualHash ?: return@forEach
             val current = HashRecord(photo.id, hash)
             unionFind.add(photo.id)
 
@@ -406,39 +406,6 @@ class DuplicatePhotoFinder @Inject constructor(
         }.getOrNull()
     }
 
-    private fun perceptualHash(uriString: String): Long? {
-        val source = decodeSampledBitmap(Uri.parse(uriString), HASH_SOURCE_MAX_DIMENSION) ?: return null
-        val scaled = runCatching {
-            Bitmap.createScaledBitmap(source, HASH_WIDTH, HASH_HEIGHT, true)
-        }.getOrNull()
-
-        if (scaled == null) {
-            source.recycleSafely()
-            return null
-        }
-
-        return try {
-            var hash = 0L
-            var bit = 0
-            for (y in 0 until HASH_HEIGHT) {
-                for (x in 0 until HASH_WIDTH - 1) {
-                    val left = luminance(scaled.getPixel(x, y))
-                    val right = luminance(scaled.getPixel(x + 1, y))
-                    if (left > right) {
-                        hash = hash or (1L shl bit)
-                    }
-                    bit += 1
-                }
-            }
-            hash
-        } finally {
-            if (scaled !== source) {
-                scaled.recycleSafely()
-            }
-            source.recycleSafely()
-        }
-    }
-
     private fun decodeSampledBitmap(uri: Uri, maxDimensionPx: Int): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         context.contentResolver.openInputStream(uri)?.use { stream ->
@@ -531,9 +498,6 @@ class DuplicatePhotoFinder @Inject constructor(
     }
 
     companion object {
-        private const val HASH_WIDTH = 9
-        private const val HASH_HEIGHT = 8
-        private const val HASH_SOURCE_MAX_DIMENSION = 96
         private const val BAND_COUNT = 8
         private const val NEAR_DUPLICATE_DISTANCE = 8
         private const val MAX_GROUPS = 30

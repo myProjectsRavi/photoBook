@@ -46,22 +46,42 @@ interface PhotoDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertVideoFrames(frames: List<VideoFrameEntity>)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertVideoFrameFtsRows(rows: List<VideoFrameFtsEntity>)
+
     @Query("DELETE FROM video_frames WHERE videoUriString = :videoUri")
     suspend fun deleteVideoFramesForVideo(videoUri: String)
+
+    @Query("DELETE FROM video_frame_fts WHERE rowid IN (:ids)")
+    suspend fun deleteVideoFrameFtsByRowIds(ids: List<Long>)
 
     @Query("DELETE FROM video_frames WHERE videoUriString NOT IN (:videoUris)")
     suspend fun deleteVideoFramesNotIn(videoUris: List<String>)
 
+    @Query("SELECT id FROM video_frames WHERE videoUriString = :videoUri")
+    suspend fun getVideoFrameIdsForVideo(videoUri: String): List<Long>
+
+    @Query("SELECT id FROM video_frames WHERE videoUriString NOT IN (:videoUris)")
+    suspend fun getVideoFrameIdsNotIn(videoUris: List<String>): List<Long>
+
     @Query("SELECT DISTINCT videoUriString FROM video_frames")
     suspend fun getIndexedVideoUris(): List<String>
+
+    @Query("SELECT * FROM video_frames WHERE videoUriString = :videoUri")
+    suspend fun getVideoFramesForVideo(videoUri: String): List<VideoFrameEntity>
+
+    @Query("SELECT * FROM video_frames WHERE id IN (:ids)")
+    suspend fun getVideoFramesByIds(ids: List<Long>): List<VideoFrameEntity>
+
+    @Query("SELECT rowid FROM video_frame_fts WHERE video_frame_fts MATCH :matchQuery LIMIT :limit")
+    suspend fun searchVideoFrameIdsByText(matchQuery: String, limit: Int): List<Long>
 
     @Query(
         """
         SELECT * FROM video_frames
-        WHERE searchableText LIKE '%' || :query || '%'
         ORDER BY videoDateModifiedMs DESC, timestampMs ASC
         LIMIT :limit
         """,
     )
-    suspend fun searchVideoFrames(query: String, limit: Int): List<VideoFrameEntity>
+    suspend fun latestVideoFrames(limit: Int): List<VideoFrameEntity>
 }

@@ -227,6 +227,7 @@ class IndexPersistence @Inject constructor(
             isFrontCamera = optBoolean("isFrontCamera"),
             isHdr = optBoolean("isHdr"),
             isFavorite = optBoolean("isFavorite", false),
+            perceptualHash = if (isNull("perceptualHash")) null else optLong("perceptualHash"),
             mlTags = tags,
             isMlProcessed = optBoolean("isMlProcessed", tags.isNotEmpty()),
             ocrText = optString("ocrText", ""),

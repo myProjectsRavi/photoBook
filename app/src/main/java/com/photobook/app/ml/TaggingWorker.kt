@@ -16,6 +16,7 @@ import androidx.work.workDataOf
 import com.photobook.app.data.index.IndexPersistence
 import com.photobook.app.data.index.PhotoIndex
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.feature.duplicates.PerceptualHashComputer
 import com.photobook.app.util.Constants
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -28,6 +29,7 @@ class TaggingWorker @AssistedInject constructor(
     private val photoIndex: PhotoIndex,
     private val indexPersistence: IndexPersistence,
     private val mlTagger: MLTagger,
+    private val perceptualHashComputer: PerceptualHashComputer,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
@@ -52,14 +54,25 @@ class TaggingWorker @AssistedInject constructor(
 
             val needsMl = !photo.isMlProcessed
             val needsOcr = !photo.isOcrProcessed
-            if (needsMl || needsOcr) {
-                val analysis = mlTagger.analyzePhoto(photo.uriString, photo.isFrontCamera)
+            val needsPerceptualHash = photo.perceptualHash == null
+            if (needsMl || needsOcr || needsPerceptualHash) {
+                val analysis = if (needsMl || needsOcr) {
+                    mlTagger.analyzePhoto(photo.uriString, photo.isFrontCamera)
+                } else {
+                    null
+                }
+                val perceptualHash = if (needsPerceptualHash) {
+                    perceptualHashComputer.computeFromUri(photo.uriString)
+                } else {
+                    null
+                }
                 val updated = photoIndex.updatePhotoIntelligence(
                     id = photo.id,
-                    tags = if (needsMl) analysis.tags else null,
+                    tags = if (needsMl) analysis?.tags else null,
                     isMlProcessed = if (needsMl) true else null,
-                    ocrText = if (needsOcr) analysis.ocrText else null,
+                    ocrText = if (needsOcr) analysis?.ocrText else null,
                     isOcrProcessed = if (needsOcr) true else null,
+                    perceptualHash = perceptualHash,
                 )
                 if (updated != null) {
                     pendingUpdates += updated

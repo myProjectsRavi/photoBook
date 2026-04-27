@@ -9,6 +9,11 @@ sealed interface PdfExportResult {
         val pageCount: Int,
     ) : PdfExportResult
 
+    data class TooManyPages(
+        val requested: Int,
+        val maxAllowed: Int,
+    ) : PdfExportResult
+
     data class Error(
         val throwable: Throwable? = null,
     ) : PdfExportResult
