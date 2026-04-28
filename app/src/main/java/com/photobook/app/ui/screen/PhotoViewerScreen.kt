@@ -1,7 +1,11 @@
 package com.photobook.app.ui.screen
 
+import android.content.ClipData
+import android.content.ContentValues
 import android.content.Intent
+import android.os.Build
 import android.net.Uri
+import android.provider.MediaStore
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -11,6 +15,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -27,15 +32,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -45,7 +53,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -86,6 +96,13 @@ import com.photobook.app.feature.copytext.NormalizedTextRegion
 import com.photobook.app.feature.copytext.OnDevicePhotoTextExtractor
 import com.photobook.app.feature.copytext.PhotoTextCopyCoordinator
 import com.photobook.app.feature.copytext.PreviewSeed
+import com.photobook.app.feature.duplicates.BestShotRecommendation
+import com.photobook.app.feature.duplicates.BurstBestShotPicker
+import com.photobook.app.feature.editor.CropPreset
+import com.photobook.app.feature.editor.PhotoEditResult
+import com.photobook.app.feature.editor.PhotoEditService
+import com.photobook.app.feature.editor.PhotoEditState
+import com.photobook.app.feature.editor.QuickFilter
 import com.photobook.app.feature.metadata.ExifDetails
 import com.photobook.app.feature.metadata.ExifDetailsResult
 import com.photobook.app.feature.metadata.ExifMetadataService
@@ -93,9 +110,12 @@ import com.photobook.app.feature.metadata.MetadataCleanResult
 import com.photobook.app.feature.metadata.SafeShareOptions
 import com.photobook.app.feature.metadata.SafeShareResult
 import com.photobook.app.feature.metadata.SharePrivacyScanResult
+import com.photobook.app.feature.notes.PhotoNoteStore
 import com.photobook.app.feature.qrshare.QrShareEncoder
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.min
 
@@ -128,6 +148,13 @@ fun PhotoViewerScreen(
     val qrShareEncoder = remember(context.applicationContext) {
         QrShareEncoder(context.applicationContext)
     }
+    val bestShotPicker = remember { BurstBestShotPicker() }
+    val photoEditService = remember(context.applicationContext) {
+        PhotoEditService(context.applicationContext)
+    }
+    val photoNoteStore = remember(context.applicationContext) {
+        PhotoNoteStore(context.applicationContext)
+    }
     var showCopyTextSheet by remember { mutableStateOf(false) }
     var copySheetState by remember { mutableStateOf<CopySheetState>(CopySheetState.Idle) }
     var copySheetPhotoId by remember { mutableStateOf<Long?>(null) }
@@ -149,6 +176,14 @@ fun PhotoViewerScreen(
     var viewerZoomScale by remember { mutableStateOf(MIN_VIEWER_ZOOM) }
     var viewerZoomOffset by remember { mutableStateOf(Offset.Zero) }
     var viewerImageSize by remember { mutableStateOf(IntSize.Zero) }
+    var bestShotRecommendation by remember { mutableStateOf<BestShotRecommendation?>(null) }
+    var showEditorSheet by remember { mutableStateOf(false) }
+    var editorState by remember { mutableStateOf(PhotoEditState()) }
+    var isApplyingEditorAction by remember { mutableStateOf(false) }
+    var showNotesSheet by remember { mutableStateOf(false) }
+    var notePhotoId by remember { mutableStateOf<Long?>(null) }
+    var noteDraft by remember { mutableStateOf("") }
+    var hasNoteForCurrent by remember { mutableStateOf(false) }
 
     fun resetViewerZoom() {
         viewerZoomScale = MIN_VIEWER_ZOOM
@@ -229,6 +264,121 @@ fun PhotoViewerScreen(
                 }
             }
             isCleaningMetadata = false
+        }
+    }
+
+    fun openNotesSheet() {
+        val active = photos[pagerState.currentPage]
+        notePhotoId = active.id
+        noteDraft = photoNoteStore.getNote(active.id)
+        showNotesSheet = true
+    }
+
+    fun saveNoteForActivePhoto() {
+        val active = photos[pagerState.currentPage]
+        photoNoteStore.saveNote(active.id, noteDraft)
+        hasNoteForCurrent = noteDraft.trim().isNotEmpty()
+        Toast.makeText(
+            context,
+            context.getString(R.string.viewer_note_saved),
+            Toast.LENGTH_SHORT,
+        ).show()
+        showNotesSheet = false
+    }
+
+    fun clearNoteForActivePhoto() {
+        val active = photos[pagerState.currentPage]
+        photoNoteStore.deleteNote(active.id)
+        noteDraft = ""
+        hasNoteForCurrent = false
+        Toast.makeText(
+            context,
+            context.getString(R.string.viewer_note_cleared),
+            Toast.LENGTH_SHORT,
+        ).show()
+    }
+
+    fun openEditorSheet() {
+        editorState = PhotoEditState()
+        showEditorSheet = true
+    }
+
+    fun shareEditedCopy(result: PhotoEditResult.Success) {
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = result.mimeType
+            putExtra(Intent.EXTRA_STREAM, result.uri)
+            clipData = ClipData.newUri(context.contentResolver, result.fileName, result.uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.viewer_share)))
+    }
+
+    fun saveEditedCopyToDevice(result: PhotoEditResult.Success): Boolean {
+        val resolver = context.contentResolver
+        val outputName = "PhotoBook_Edit_${System.currentTimeMillis()}.jpg"
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, outputName)
+            put(MediaStore.Images.Media.MIME_TYPE, result.mimeType)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/PhotoBook")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+        }
+
+        val destUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
+        val copied = runCatching {
+            resolver.openInputStream(result.uri)?.use { input ->
+                resolver.openOutputStream(destUri)?.use { output ->
+                    input.copyTo(output)
+                    true
+                } ?: false
+            } ?: false
+        }.getOrDefault(false)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val doneValues = ContentValues().apply {
+                put(MediaStore.Images.Media.IS_PENDING, 0)
+            }
+            resolver.update(destUri, doneValues, null, null)
+        }
+        if (!copied) {
+            runCatching { resolver.delete(destUri, null, null) }
+        }
+        return copied
+    }
+
+    fun runEditorAction(shareAfterRender: Boolean) {
+        if (isApplyingEditorAction) return
+        val active = photos[pagerState.currentPage]
+        isApplyingEditorAction = true
+        coroutineScope.launch {
+            when (val result = photoEditService.renderEditedCopy(active, editorState)) {
+                is PhotoEditResult.Success -> {
+                    if (shareAfterRender) {
+                        shareEditedCopy(result)
+                    } else {
+                        val saved = saveEditedCopyToDevice(result)
+                        Toast.makeText(
+                            context,
+                            if (saved) {
+                                context.getString(R.string.viewer_editor_save_success)
+                            } else {
+                                context.getString(R.string.viewer_editor_save_error)
+                            },
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+
+                PhotoEditResult.Error -> {
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.viewer_editor_render_error),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+            isApplyingEditorAction = false
         }
     }
 
@@ -317,6 +467,10 @@ fun PhotoViewerScreen(
     LaunchedEffect(pagerState.currentPage) {
         onPageChanged(pagerState.currentPage)
         val activeId = photos[pagerState.currentPage].id
+        bestShotRecommendation = withContext(Dispatchers.Default) {
+            bestShotPicker.pick(photos, pagerState.currentPage)
+        }
+        hasNoteForCurrent = photoNoteStore.getNote(activeId).isNotBlank()
         if (copySheetPhotoId != null && copySheetPhotoId != activeId) {
             dismissCopySheet()
         }
@@ -329,6 +483,15 @@ fun PhotoViewerScreen(
         }
         if (showSharePrepSheet) {
             dismissSharePrepSheet()
+        }
+        if (showNotesSheet && notePhotoId != activeId) {
+            showNotesSheet = false
+            notePhotoId = null
+            noteDraft = ""
+        }
+        if (showEditorSheet) {
+            showEditorSheet = false
+            editorState = PhotoEditState()
         }
         resetViewerZoom()
     }
@@ -384,6 +547,8 @@ fun PhotoViewerScreen(
                         color = Color.White,
                     )
                     val active = photos[pagerState.currentPage]
+                    val bestIndex = bestShotRecommendation?.bestIndex
+                    val isCurrentBestShot = bestIndex == pagerState.currentPage
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -404,6 +569,30 @@ fun PhotoViewerScreen(
                                 )
                             }
                         }
+                        if (bestIndex != null) {
+                            Surface(
+                                color = Color(0x22FFFFFF),
+                                shape = RoundedCornerShape(28.dp),
+                            ) {
+                                IconButton(
+                                    modifier = Modifier.size(42.dp),
+                                    onClick = {
+                                        if (!isCurrentBestShot) {
+                                            coroutineScope.launch {
+                                                pagerState.animateScrollToPage(bestIndex)
+                                            }
+                                        }
+                                    },
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Star,
+                                        contentDescription = stringResource(R.string.viewer_best_shot),
+                                        tint = if (isCurrentBestShot) Color(0xFFFFD54F) else Color.White,
+                                        modifier = Modifier.size(22.dp),
+                                    )
+                                }
+                            }
+                        }
                         Surface(
                             color = Color(0x22FFFFFF),
                             shape = RoundedCornerShape(28.dp),
@@ -416,6 +605,38 @@ fun PhotoViewerScreen(
                                     imageVector = Icons.Default.Info,
                                     contentDescription = stringResource(R.string.viewer_metadata),
                                     tint = Color.White,
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            }
+                        }
+                        Surface(
+                            color = Color(0x22FFFFFF),
+                            shape = RoundedCornerShape(28.dp),
+                        ) {
+                            IconButton(
+                                modifier = Modifier.size(42.dp),
+                                onClick = ::openEditorSheet,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = stringResource(R.string.viewer_edit_photo),
+                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            }
+                        }
+                        Surface(
+                            color = Color(0x22FFFFFF),
+                            shape = RoundedCornerShape(28.dp),
+                        ) {
+                            IconButton(
+                                modifier = Modifier.size(42.dp),
+                                onClick = ::openNotesSheet,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.Notes,
+                                    contentDescription = stringResource(R.string.viewer_private_note),
+                                    tint = if (hasNoteForCurrent) Color(0xFF9FA8FF) else Color.White,
                                     modifier = Modifier.size(22.dp),
                                 )
                             }
@@ -643,6 +864,36 @@ fun PhotoViewerScreen(
                         style = MaterialTheme.typography.bodySmall,
                     )
 
+                    val bestIndex = bestShotRecommendation?.bestIndex
+                    if (bestIndex != null) {
+                        val isBest = bestIndex == pagerState.currentPage
+                        AssistChip(
+                            onClick = {
+                                if (!isBest) {
+                                    coroutineScope.launch { pagerState.animateScrollToPage(bestIndex) }
+                                }
+                            },
+                            label = {
+                                Text(
+                                    text = if (isBest) {
+                                        stringResource(R.string.viewer_best_shot_selected)
+                                    } else {
+                                        stringResource(R.string.viewer_best_shot_jump)
+                                    },
+                                )
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = if (isBest) {
+                                    Color(0x33FFD54F)
+                                } else {
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
+                                },
+                                labelColor = Color.White,
+                            ),
+                        )
+                    }
+
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -763,6 +1014,38 @@ fun PhotoViewerScreen(
                     }
                 },
                 onDismiss = ::dismissSharePrepSheet,
+            )
+        }
+        if (showEditorSheet) {
+            QuickEditorBottomSheet(
+                photo = photos[pagerState.currentPage],
+                state = editorState,
+                isApplying = isApplyingEditorAction,
+                onDismiss = {
+                    showEditorSheet = false
+                    editorState = PhotoEditState()
+                },
+                onStateChange = { next -> editorState = next },
+                onRotate = {
+                    editorState = editorState.copy(rotationQuarterTurns = (editorState.rotationQuarterTurns + 1) % 4)
+                },
+                onSaveCopy = { runEditorAction(shareAfterRender = false) },
+                onShareCopy = { runEditorAction(shareAfterRender = true) },
+            )
+        }
+        if (showNotesSheet) {
+            PrivateNoteBottomSheet(
+                noteText = noteDraft,
+                maxChars = PhotoNoteStore.MAX_NOTE_CHARS,
+                onDismiss = {
+                    showNotesSheet = false
+                    notePhotoId = null
+                },
+                onTextChange = { value ->
+                    noteDraft = value.take(PhotoNoteStore.MAX_NOTE_CHARS)
+                },
+                onSave = ::saveNoteForActivePhoto,
+                onClear = ::clearNoteForActivePhoto,
             )
         }
     }
@@ -1206,6 +1489,240 @@ private fun CopyTextBottomSheet(
                     ) {
                         Text(text = stringResource(R.string.viewer_copy_text_action))
                     }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun QuickEditorBottomSheet(
+    photo: PhotoRecord,
+    state: PhotoEditState,
+    isApplying: Boolean,
+    onDismiss: () -> Unit,
+    onStateChange: (PhotoEditState) -> Unit,
+    onRotate: () -> Unit,
+    onSaveCopy: () -> Unit,
+    onShareCopy: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val cropAspect = if (state.cropPreset == CropPreset.Original) {
+        photo.aspectRatio.coerceIn(0.45f, 2.2f)
+    } else {
+        state.cropPreset.ratio
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.viewer_editor_title),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = stringResource(R.string.viewer_editor_subtitle),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(cropAspect.coerceIn(0.45f, 2.2f))
+                    .heightIn(min = 180.dp, max = 260.dp)
+                    .background(Color.Black, RoundedCornerShape(14.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                AsyncImage(
+                    model = Uri.parse(photo.uriString),
+                    contentDescription = photo.fileName,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            rotationZ = (state.rotationQuarterTurns % 4) * 90f
+                        }
+                        .padding(10.dp),
+                )
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                CropPreset.entries.forEach { preset ->
+                    AssistChip(
+                        onClick = { onStateChange(state.copy(cropPreset = preset)) },
+                        label = { Text(text = preset.label) },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = if (preset == state.cropPreset) {
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                            },
+                        ),
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                QuickFilter.entries.forEach { filter ->
+                    AssistChip(
+                        onClick = { onStateChange(state.copy(filter = filter)) },
+                        label = { Text(text = filter.label) },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = if (filter == state.filter) {
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                            },
+                        ),
+                    )
+                }
+            }
+
+            Text(
+                text = stringResource(R.string.viewer_editor_exposure, state.exposure),
+                style = MaterialTheme.typography.labelMedium,
+            )
+            Slider(
+                value = state.exposure,
+                onValueChange = { value ->
+                    onStateChange(state.copy(exposure = value.coerceIn(-1f, 1f)))
+                },
+                valueRange = -1f..1f,
+                steps = 19,
+            )
+
+            Text(
+                text = stringResource(R.string.viewer_editor_contrast, state.contrast),
+                style = MaterialTheme.typography.labelMedium,
+            )
+            Slider(
+                value = state.contrast,
+                onValueChange = { value ->
+                    onStateChange(state.copy(contrast = value.coerceIn(0.6f, 1.6f)))
+                },
+                valueRange = 0.6f..1.6f,
+                steps = 20,
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(
+                    modifier = Modifier.weight(1f),
+                    onClick = onRotate,
+                ) {
+                    Text(text = stringResource(R.string.viewer_editor_rotate))
+                }
+                Button(
+                    modifier = Modifier.weight(1f),
+                    onClick = onSaveCopy,
+                    enabled = !isApplying,
+                ) {
+                    if (isApplying) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Text(text = stringResource(R.string.viewer_editor_save_copy))
+                    }
+                }
+                Button(
+                    modifier = Modifier.weight(1f),
+                    onClick = onShareCopy,
+                    enabled = !isApplying,
+                ) {
+                    Text(text = stringResource(R.string.viewer_editor_share_copy))
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PrivateNoteBottomSheet(
+    noteText: String,
+    maxChars: Int,
+    onDismiss: () -> Unit,
+    onTextChange: (String) -> Unit,
+    onSave: () -> Unit,
+    onClear: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.viewer_note_title),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = stringResource(R.string.viewer_note_subtitle),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = noteText,
+                onValueChange = onTextChange,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 140.dp),
+                minLines = 5,
+                maxLines = 10,
+                placeholder = {
+                    Text(text = stringResource(R.string.viewer_note_placeholder))
+                },
+            )
+            Text(
+                text = stringResource(R.string.viewer_note_char_count, noteText.length, maxChars),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(
+                    onClick = onClear,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(text = stringResource(R.string.viewer_note_clear))
+                }
+                Button(
+                    onClick = onSave,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(text = stringResource(R.string.viewer_note_save))
                 }
             }
         }
