@@ -1,9 +1,11 @@
 package com.photobook.app.search
 
+import com.photobook.app.data.index.PhotoIndex
 import com.photobook.app.data.model.PhotoRecord
 import javax.inject.Inject
 
 class FilterEngine @Inject constructor(
+    private val index: PhotoIndex,
     private val queryParser: QueryParser,
     private val tokenClassifier: TokenClassifier,
     private val filterFactory: FilterFactory,
@@ -26,7 +28,7 @@ class FilterEngine @Inject constructor(
         context: SearchContext = SearchContext(),
     ): SearchResult {
         val normalized = queryParser.normalize(query)
-        val key = "$normalized|${System.identityHashCode(records)}"
+        val key = "$normalized|${index.version()}|${records.size}"
         cache[key]?.let { cached -> return cached }
 
         if (normalized.isBlank()) {

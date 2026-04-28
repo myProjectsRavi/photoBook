@@ -62,10 +62,17 @@ class DuplicatePhotoFinder @Inject constructor(
             .filter { it.size > 1 }
             .flatMap { candidates ->
                 candidates
-                    .mapNotNull { photo -> sha256(photo.uriString)?.let { hash -> hash to photo } }
+                    .mapNotNull { photo -> partialHash(photo.uriString)?.let { hash -> hash to photo } }
                     .groupBy(keySelector = { it.first }, valueTransform = { it.second })
                     .values
                     .filter { it.size > 1 }
+                    .flatMap { partialMatchCandidates ->
+                        partialMatchCandidates
+                            .mapNotNull { photo -> sha256(photo.uriString)?.let { hash -> hash to photo } }
+                            .groupBy(keySelector = { it.first }, valueTransform = { it.second })
+                            .values
+                            .filter { it.size > 1 }
+                    }
                     .map { photos ->
                         DuplicatePhotoGroup(
                             id = "exact-${photos.minOf { it.id }}",
@@ -74,6 +81,24 @@ class DuplicatePhotoFinder @Inject constructor(
                         )
                     }
             }
+    }
+
+    private fun partialHash(uriString: String): String? {
+        val digest = MessageDigest.getInstance("MD5")
+        val buffer = ByteArray(8192)
+        return runCatching {
+            context.contentResolver.openInputStream(Uri.parse(uriString))?.use { input ->
+                var totalRead = 0
+                while (totalRead < PARTIAL_HASH_LIMIT) {
+                    val toRead = minOf(buffer.size, PARTIAL_HASH_LIMIT - totalRead)
+                    val read = input.read(buffer, 0, toRead)
+                    if (read <= 0) break
+                    digest.update(buffer, 0, read)
+                    totalRead += read
+                }
+            } ?: return null
+            digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+        }.getOrNull()
     }
 
     private fun findNearDuplicates(records: List<PhotoRecord>): List<DuplicatePhotoGroup> {
@@ -416,9 +441,13 @@ class DuplicatePhotoFinder @Inject constructor(
 
     private class UnionFind<T> {
         private val parent = mutableMapOf<T, T>()
+        private val rank = mutableMapOf<T, Int>()
 
         fun add(value: T) {
-            parent.putIfAbsent(value, value)
+            if (!parent.containsKey(value)) {
+                parent[value] = value
+                rank[value] = 0
+            }
         }
 
         fun union(left: T, right: T) {
@@ -427,7 +456,16 @@ class DuplicatePhotoFinder @Inject constructor(
             val leftRoot = find(left)
             val rightRoot = find(right)
             if (leftRoot != rightRoot) {
-                parent[rightRoot] = leftRoot
+                val leftRank = rank[leftRoot] ?: 0
+                val rightRank = rank[rightRoot] ?: 0
+                if (leftRank < rightRank) {
+                    parent[leftRoot] = rightRoot
+                } else if (leftRank > rightRank) {
+                    parent[rightRoot] = leftRoot
+                } else {
+                    parent[rightRoot] = leftRoot
+                    rank[leftRoot] = leftRank + 1
+                }
             }
         }
 
@@ -436,15 +474,16 @@ class DuplicatePhotoFinder @Inject constructor(
         }
 
         private fun find(value: T): T {
-            val current = parent[value] ?: return value
-            if (current == value) return value
-            val root = find(current)
-            parent[value] = root
+            val p = parent[value] ?: return value
+            if (p == value) return value
+            val root = find(p)
+            parent[value] = root // Path compression
             return root
         }
     }
 
     companion object {
+        private const val PARTIAL_HASH_LIMIT = 64 * 1024 // 64KB
         private const val BAND_COUNT = 8
         private const val NEAR_DUPLICATE_DISTANCE = 8
         private const val MAX_GROUPS = 30

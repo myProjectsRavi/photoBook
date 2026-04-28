@@ -35,6 +35,7 @@ class FilterEngineTest {
         index.setRecords(records)
 
         val engine = FilterEngine(
+            index = index,
             queryParser = QueryParser(),
             tokenClassifier = TokenClassifier(index),
             filterFactory = FilterFactory(),
@@ -96,6 +97,7 @@ class FilterEngineTest {
         index.setRecords(records)
 
         val engine = FilterEngine(
+            index = index,
             queryParser = QueryParser(),
             tokenClassifier = TokenClassifier(index),
             filterFactory = FilterFactory(),
@@ -151,6 +153,7 @@ class FilterEngineTest {
         index.setRecords(records)
 
         val engine = FilterEngine(
+            index = index,
             queryParser = QueryParser(),
             tokenClassifier = TokenClassifier(index),
             filterFactory = FilterFactory(),

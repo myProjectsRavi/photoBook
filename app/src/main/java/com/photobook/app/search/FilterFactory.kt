@@ -171,10 +171,19 @@ class FilterFactory @Inject constructor() {
         if (latitude == null || longitude == null) {
             return { false }
         }
+
+        // Bounding box for fast initial filtering
+        val latDelta = radiusKm / 111.0
+        val lonDelta = radiusKm / (111.0 * cos(Math.toRadians(latitude)))
+        val latRange = (latitude - latDelta)..(latitude + latDelta)
+        val lonRange = (longitude - lonDelta)..(longitude + lonDelta)
+
         return { photo ->
             val lat = photo.latitude
             val lon = photo.longitude
-            lat != null && lon != null && haversine(latitude, longitude, lat, lon) <= radiusKm
+            lat != null && lon != null &&
+                lat in latRange && lon in lonRange &&
+                haversine(latitude, longitude, lat, lon) <= radiusKm
         }
     }
 

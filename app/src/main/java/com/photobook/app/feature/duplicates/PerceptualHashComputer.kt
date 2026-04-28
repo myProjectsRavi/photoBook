@@ -13,14 +13,17 @@ class PerceptualHashComputer @Inject constructor(
 
     fun computeFromUri(uriString: String): Long? {
         val source = decodeSampledBitmap(Uri.parse(uriString), HASH_SOURCE_MAX_DIMENSION) ?: return null
+        return try {
+            computeFromBitmap(source)
+        } finally {
+            source.recycleSafely()
+        }
+    }
+
+    fun computeFromBitmap(source: Bitmap): Long? {
         val scaled = runCatching {
             Bitmap.createScaledBitmap(source, HASH_WIDTH, HASH_HEIGHT, true)
-        }.getOrNull()
-
-        if (scaled == null) {
-            source.recycleSafely()
-            return null
-        }
+        }.getOrNull() ?: return null
 
         return try {
             val width = scaled.width
@@ -53,7 +56,6 @@ class PerceptualHashComputer @Inject constructor(
             if (scaled !== source) {
                 scaled.recycleSafely()
             }
-            source.recycleSafely()
         }
     }
 
@@ -77,13 +79,6 @@ class PerceptualHashComputer @Inject constructor(
         return context.contentResolver.openInputStream(uri)?.use { stream ->
             BitmapFactory.decodeStream(stream, null, options)
         }
-    }
-
-    private fun luminance(pixel: Int): Int {
-        val red = android.graphics.Color.red(pixel)
-        val green = android.graphics.Color.green(pixel)
-        val blue = android.graphics.Color.blue(pixel)
-        return (red * 299 + green * 587 + blue * 114) / 1000
     }
 
     private fun Bitmap.recycleSafely() {

@@ -59,21 +59,25 @@ class TaggingWorker @AssistedInject constructor(
             val needsBlurScore = photo.blurScore == null
 
             if (needsMl || needsOcr || needsPerceptualHash || needsBlurScore) {
-                val analysis = if (needsMl || needsOcr) {
-                    mlTagger.analyzePhoto(photo.uriString, photo.isFrontCamera)
+                val bitmap = mlTagger.loadIntelligenceBitmap(photo.uriString)
+                
+                val analysis = if (bitmap != null && (needsMl || needsOcr)) {
+                    mlTagger.analyzeBitmap(bitmap, photo.isFrontCamera)
                 } else {
                     null
                 }
-                val perceptualHash = if (needsPerceptualHash) {
-                    perceptualHashComputer.computeFromUri(photo.uriString)
+                val perceptualHash = if (bitmap != null && needsPerceptualHash) {
+                    perceptualHashComputer.computeFromBitmap(bitmap)
                 } else {
                     null
                 }
-                val blurScore = if (needsBlurScore) {
-                    blurScoreComputer.computeFromUri(photo.uriString)
+                val blurScore = if (bitmap != null && needsBlurScore) {
+                    blurScoreComputer.computeFromBitmap(bitmap)
                 } else {
                     null
                 }
+                
+                bitmap?.recycle()
 
                 pendingIndexUpdates += PhotoIndex.PhotoIntelligenceUpdate(
                     id = photo.id,

@@ -13,8 +13,15 @@ class BlurScoreComputer @Inject constructor(
 
     fun computeFromUri(uriString: String): Double? {
         val bitmap = decodeSampledBitmap(Uri.parse(uriString), BLUR_SAMPLE_MAX_DIMENSION) ?: return null
-        if (bitmap.width < 3 || bitmap.height < 3) {
+        return try {
+            computeFromBitmap(bitmap)
+        } finally {
             bitmap.recycleSafely()
+        }
+    }
+
+    fun computeFromBitmap(bitmap: Bitmap): Double? {
+        if (bitmap.width < 3 || bitmap.height < 3) {
             return null
         }
 
@@ -59,8 +66,8 @@ class BlurScoreComputer @Inject constructor(
             if (count == 0) return null
             val mean = sum / count.toDouble()
             (sumSquares / count.toDouble()) - (mean * mean)
-        } finally {
-            bitmap.recycleSafely()
+        } catch (_: Throwable) {
+            null
         }
     }
 

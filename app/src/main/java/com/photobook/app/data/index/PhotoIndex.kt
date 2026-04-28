@@ -2,6 +2,7 @@ package com.photobook.app.data.index
 
 import com.photobook.app.data.model.MLTag
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.ml.LabelMapping
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,6 +17,8 @@ class PhotoIndex @Inject constructor() {
     private val mutex = Mutex()
     private val recordsMap = mutableMapOf<Long, PhotoRecord>()
     private val recordsFlow = MutableStateFlow<List<PhotoRecord>>(emptyList())
+    
+    private var version = 0L
 
     private var folderKeywords: Set<String> = emptySet()
     private var cityKeywords: Set<String> = emptySet()
@@ -24,6 +27,8 @@ class PhotoIndex @Inject constructor() {
     fun records(): StateFlow<List<PhotoRecord>> = recordsFlow.asStateFlow()
 
     fun snapshot(): List<PhotoRecord> = recordsFlow.value
+    
+    fun version(): Long = version
 
     fun folderKeywords(): Set<String> = folderKeywords
 
@@ -38,6 +43,7 @@ class PhotoIndex @Inject constructor() {
             val sorted = records.sortedByDescending { it.dateAdded }
             recordsFlow.value = sorted
             rebuildAuxiliarySets(sorted)
+            version += 1
         }
     }
 
@@ -81,9 +87,20 @@ class PhotoIndex @Inject constructor() {
                 }
             }
             if (anyChanged) {
-                val updatedList = recordsMap.values.sortedByDescending { it.dateAdded }
-                recordsFlow.value = updatedList
-                rebuildAuxiliarySets(updatedList)
+                // Intelligence updates don't change dateAdded, so we can avoid sorting if we update the list in place
+                val currentList = recordsFlow.value
+                val updatedMap = results.associateBy { it.id }
+                val nextList = currentList.map { photo -> updatedMap[photo.id] ?: photo }
+                recordsFlow.value = nextList
+                version += 1
+                
+                // For intelligence updates, we only really need to update mlKeywords
+                val newMlKeywords = results.asSequence()
+                    .flatMap { it.mlTags.asSequence().map { tag -> tag.label.lowercase() } }
+                    .toSet()
+                if (!mlKeywords.containsAll(newMlKeywords)) {
+                    mlKeywords = mlKeywords + newMlKeywords
+                }
             }
         }
         return results
@@ -95,8 +112,11 @@ class PhotoIndex @Inject constructor() {
             if (record.isFavorite == isFavorite) return@withLock
             val updated = record.copy(isFavorite = isFavorite)
             recordsMap[id] = updated
-            val updatedList = recordsMap.values.sortedByDescending { it.dateAdded }
-            recordsFlow.value = updatedList
+            
+            val currentList = recordsFlow.value
+            val nextList = currentList.map { photo -> if (photo.id == id) updated else photo }
+            recordsFlow.value = nextList
+            version += 1
         }
     }
 
@@ -107,8 +127,11 @@ class PhotoIndex @Inject constructor() {
             nextFavorite = !record.isFavorite
             val updated = record.copy(isFavorite = nextFavorite)
             recordsMap[id] = updated
-            val updatedList = recordsMap.values.sortedByDescending { it.dateAdded }
-            recordsFlow.value = updatedList
+            
+            val currentList = recordsFlow.value
+            val nextList = currentList.map { photo -> if (photo.id == id) updated else photo }
+            recordsFlow.value = nextList
+            version += 1
         }
         return nextFavorite
     }
@@ -119,6 +142,7 @@ class PhotoIndex @Inject constructor() {
             val updatedList = recordsMap.values.sortedByDescending { it.dateAdded }
             recordsFlow.value = updatedList
             rebuildAuxiliarySets(updatedList)
+            version += 1
         }
     }
 
@@ -135,26 +159,53 @@ class PhotoIndex @Inject constructor() {
                 val updatedList = recordsMap.values.sortedByDescending { it.dateAdded }
                 recordsFlow.value = updatedList
                 rebuildAuxiliarySets(updatedList)
+                version += 1
             }
         }
     }
 
     private fun rebuildAuxiliarySets(records: List<PhotoRecord>) {
-        // Optimization: only rebuild if it's really needed and use more efficient collection builders
-        folderKeywords = records.asSequence().flatMap { record ->
-            sequenceOf(record.folderName, record.folderPath)
-        }.flatMap { text ->
-            text.lowercase().splitToSequence('/', ' ', '-', '_')
-        }.filter { it.length >= 3 }.toSet()
+        val folders = HashSet<String>(records.size / 10)
+        val cities = HashSet<String>(records.size / 20)
+        val tags = HashSet<String>(LabelMapping.keywords.size + 100)
 
-        cityKeywords = records.asSequence().flatMap { record ->
-            sequenceOf(record.city, record.state, record.country)
-        }.mapNotNull { it?.lowercase()?.trim()?.takeIf(String::isNotBlank) }
-            .toSet()
+        records.forEach { record ->
+            // Folders
+            splitAndAdd(record.folderName, folders)
+            splitAndAdd(record.folderPath, folders)
 
-        mlKeywords = records.asSequence().flatMap { record ->
-            record.mlTags.asSequence().map { it.label.lowercase() }
-        }.toSet()
+            // Cities
+            record.city?.let { if (it.isNotBlank()) cities.add(it.lowercase().trim()) }
+            record.state?.let { if (it.isNotBlank()) cities.add(it.lowercase().trim()) }
+            record.country?.let { if (it.isNotBlank()) cities.add(it.lowercase().trim()) }
+
+            // ML Tags
+            record.mlTags.forEach { tag ->
+                tags.add(tag.label.lowercase())
+            }
+        }
+
+        folderKeywords = folders
+        cityKeywords = cities
+        mlKeywords = tags
+    }
+
+    private fun splitAndAdd(text: String, target: MutableSet<String>) {
+        if (text.isBlank()) return
+        var start = 0
+        val lower = text.lowercase()
+        for (i in lower.indices) {
+            val c = lower[i]
+            if (c == '/' || c == ' ' || c == '-' || c == '_') {
+                if (i - start >= 3) {
+                    target.add(lower.substring(start, i))
+                }
+                start = i + 1
+            }
+        }
+        if (lower.length - start >= 3) {
+            target.add(lower.substring(start))
+        }
     }
 
     private fun mergeTags(existing: List<MLTag>, incoming: List<MLTag>): List<MLTag> {
