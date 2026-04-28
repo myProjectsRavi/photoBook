@@ -49,3 +49,32 @@ fun PhotoRecord.matchesSource(source: PhotoSource): Boolean {
         PhotoSource.Screenshots -> path.contains("screenshot")
     }
 }
+
+enum class UtilityKind {
+    Screenshot,
+    Download,
+    Social,
+    Document,
+    Meme,
+}
+
+fun PhotoRecord.utilityKind(): UtilityKind? {
+    val path = buildString {
+        append(folderPath)
+        append(' ')
+        append(folderName)
+        append(' ')
+        append(filePath)
+        append(' ')
+        append(fileName)
+    }.lowercase()
+
+    if (matchesSource(PhotoSource.Screenshots)) return UtilityKind.Screenshot
+    if (matchesSource(PhotoSource.Downloads)) return UtilityKind.Download
+    if (path.contains("whatsapp") || path.contains("telegram")) return UtilityKind.Social
+    if (path.contains("document") || path.contains("scan") || path.contains("receipt")) return UtilityKind.Document
+    if (path.contains("meme")) return UtilityKind.Meme
+    return null
+}
+
+fun PhotoRecord.isUtilityPhoto(): Boolean = utilityKind() != null

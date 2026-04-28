@@ -10,4 +10,6 @@ data class MemoryStory(
     val coverUriString: String,
     val photoCount: Int,
     val suggestedQuery: String,
+    val photoIds: List<Long> = emptyList(),
+    val isOnThisDay: Boolean = false,
 )

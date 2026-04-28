@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -75,12 +76,15 @@ fun EmptyState(modifier: Modifier = Modifier) {
 @Composable
 fun WelcomeState(
     memories: List<MemoryStory>,
+    onThisDayStory: MemoryStory?,
+    onOnThisDayClick: () -> Unit,
     onMemoryClick: (MemoryStory) -> Unit,
+    compact: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier
-            .fillMaxSize()
+            .then(if (compact) Modifier else Modifier.fillMaxSize())
             .padding(24.dp),
         verticalArrangement = Arrangement.Top,
         horizontalAlignment = Alignment.Start,
@@ -104,6 +108,47 @@ fun WelcomeState(
             color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.padding(top = 14.dp),
         )
+
+        if (onThisDayStory != null) {
+            Spacer(modifier = Modifier.size(14.dp))
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .clickable(onClick = onOnThisDayClick),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AutoStories,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        Text(
+                            text = onThisDayStory.title,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                        )
+                        Text(
+                            text = onThisDayStory.subtitle,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                        )
+                    }
+                }
+            }
+        }
 
         if (memories.isEmpty()) {
             Text(

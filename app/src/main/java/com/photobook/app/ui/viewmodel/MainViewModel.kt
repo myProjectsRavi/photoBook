@@ -17,8 +17,12 @@ import com.photobook.app.data.index.PhotoIndex
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.data.model.RawPhotoData
 import com.photobook.app.data.source.MediaStoreScanner
+import com.photobook.app.feature.declutter.DeclutterCandidate
+import com.photobook.app.feature.declutter.DeclutterReason
+import com.photobook.app.feature.declutter.DeclutterSession
 import com.photobook.app.feature.duplicates.DuplicatePhotoFinder
 import com.photobook.app.feature.duplicates.DuplicatePhotoGroup
+import com.photobook.app.feature.duplicates.DuplicateMatchKind
 import com.photobook.app.feature.memories.MemoryCurator
 import com.photobook.app.feature.memories.MemoryStory
 import com.photobook.app.feature.videoindex.VideoIndexRepository
@@ -36,8 +40,13 @@ import com.photobook.app.search.SuggestionEngine
 import com.photobook.app.search.SuggestionItem
 import com.photobook.app.search.TextToken
 import com.photobook.app.search.TokenClassifier
+import com.photobook.app.search.UtilityKind
+import com.photobook.app.search.isUtilityPhoto
+import com.photobook.app.search.utilityKind
+import com.photobook.app.ui.model.HomeFeedMode
 import com.photobook.app.ui.model.TimelineMark
 import com.photobook.app.util.Constants
+import com.photobook.app.widget.OnThisDayWidgetProvider
 import com.photobook.app.worker.TrashPurgeWorker
 import com.photobook.app.worker.VideoIndexWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -88,17 +97,24 @@ class MainViewModel @Inject constructor(
         val resultCount: Int = 0,
         val favoritesOnly: Boolean = false,
         val selectedPhotoIds: Set<Long> = emptySet(),
+        val feedMode: HomeFeedMode = HomeFeedMode.Timeline,
         val suggestions: List<SuggestionItem> = emptyList(),
         val showSuggestions: Boolean = false,
+        val onThisDayStory: MemoryStory? = null,
         val memoryStories: List<MemoryStory> = emptyList(),
         val videoIndexingEnabled: Boolean = false,
         val videoMoments: List<VideoSearchMoment> = emptyList(),
         val viewerStartIndex: Int? = null,
         val viewerPhotos: List<PhotoRecord> = emptyList(),
+        val storyViewerTitle: String = "",
+        val storyViewerPhotos: List<PhotoRecord> = emptyList(),
         val timelineMarks: List<TimelineMark> = emptyList(),
         val duplicateGroups: List<DuplicatePhotoGroup> = emptyList(),
         val isFindingDuplicates: Boolean = false,
         val showDuplicateFinder: Boolean = false,
+        val isDeclutterLoading: Boolean = false,
+        val declutterSession: DeclutterSession? = null,
+        val declutterCurrentPhoto: PhotoRecord? = null,
     )
 
     val uiState = MutableStateFlow(UiState())
@@ -112,15 +128,21 @@ class MainViewModel @Inject constructor(
         photoIndex.records().debounce(RECORDS_UPDATE_DEBOUNCE_MS),
         uiState.map { it.favoritesOnly }.distinctUntilChanged(),
         uiState.map { it.videoIndexingEnabled }.distinctUntilChanged(),
-    ) { query, records, favoritesOnly, videoIndexingEnabled ->
+        uiState.map { it.feedMode }.distinctUntilChanged(),
+    ) { query, records, favoritesOnly, videoIndexingEnabled, feedMode ->
         SearchFlowInput(
             query = query,
             records = records,
             favoritesOnly = favoritesOnly,
             videoIndexingEnabled = videoIndexingEnabled,
+            feedMode = feedMode,
         )
     }.flatMapLatest { input ->
-        val searchResult = runSearch(input.query, input.records)
+        val searchResult = runSearch(
+            query = input.query,
+            records = input.records,
+            feedMode = input.feedMode,
+        )
         val filteredRecords = if (input.favoritesOnly) {
             searchResult.results.filter { it.isFavorite }
         } else {
@@ -180,12 +202,19 @@ class MainViewModel @Inject constructor(
     private var latestSearchResultIds: List<Long> = emptyList()
     private var latestVisibleResultIds: List<Long> = emptyList()
     private var lastMemoryRecordsIdentity: Int = 0
+    private var pendingStoryLaunch: PendingStoryLaunch? = null
 
     private data class SearchFlowInput(
         val query: String,
         val records: List<PhotoRecord>,
         val favoritesOnly: Boolean,
         val videoIndexingEnabled: Boolean,
+        val feedMode: HomeFeedMode,
+    )
+
+    private data class PendingStoryLaunch(
+        val photoIds: List<Long>,
+        val title: String,
     )
 
     init {
@@ -208,6 +237,26 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    fun applyExternalQuery(query: String) {
+        val normalized = query.trim()
+        if (normalized.isBlank()) return
+        queryFlow.value = normalized
+        uiState.update { state ->
+            state.copy(
+                query = normalized,
+                selectedPhotoIds = emptySet(),
+                viewerStartIndex = null,
+                showSuggestions = false,
+            )
+        }
+    }
+
+    fun openStoryFromPhotoIds(photoIds: List<Long>, title: String) {
+        if (!openStoryFromIdsInternal(photoIds, title)) {
+            pendingStoryLaunch = PendingStoryLaunch(photoIds = photoIds, title = title)
+        }
+    }
+
     fun onQueryChanged(query: String) {
         queryFlow.value = query
         uiState.update {
@@ -215,6 +264,8 @@ class MainViewModel @Inject constructor(
                 query = query,
                 selectedPhotoIds = emptySet(),
                 viewerStartIndex = null,
+                storyViewerPhotos = emptyList(),
+                storyViewerTitle = "",
             )
         }
     }
@@ -228,6 +279,16 @@ class MainViewModel @Inject constructor(
         uiState.update { state ->
             state.copy(
                 showSuggestions = focused && state.suggestions.isNotEmpty(),
+            )
+        }
+    }
+
+    fun onSelectFeedMode(mode: HomeFeedMode) {
+        uiState.update { state ->
+            state.copy(
+                feedMode = mode,
+                selectedPhotoIds = emptySet(),
+                viewerStartIndex = null,
             )
         }
     }
@@ -258,17 +319,15 @@ class MainViewModel @Inject constructor(
     }
 
     fun onMemoryStorySelected(story: MemoryStory) {
+        if (openStoryFromIdsInternal(story.photoIds, story.title)) return
         val query = story.suggestedQuery.trim()
         if (query.isBlank()) return
-        queryFlow.value = query
-        uiState.update {
-            it.copy(
-                query = query,
-                selectedPhotoIds = emptySet(),
-                viewerStartIndex = null,
-                showSuggestions = false,
-            )
-        }
+        applyExternalQuery(query)
+    }
+
+    fun onOpenOnThisDayStory() {
+        val story = uiState.value.onThisDayStory ?: return
+        onMemoryStorySelected(story)
     }
 
     fun onClearQuery() {
@@ -394,6 +453,20 @@ class MainViewModel @Inject constructor(
             latestVisibleResultIds = latestVisibleResultIds.filterNot { id -> id in photoIds }
 
             uiState.update { state ->
+                val nextDeclutterSession = state.declutterSession?.let { session ->
+                    val filteredCandidates = session.candidates.filterNot { candidate -> candidate.photoId in photoIds }
+                    if (filteredCandidates.isEmpty()) {
+                        null
+                    } else {
+                        val clampedIndex = session.currentIndex.coerceAtMost(filteredCandidates.lastIndex.coerceAtLeast(0))
+                        session.copy(
+                            candidates = filteredCandidates,
+                            currentIndex = clampedIndex,
+                            markedTrashIds = session.markedTrashIds - photoIds,
+                            keptIds = session.keptIds - photoIds,
+                        )
+                    }
+                }
                 state.copy(
                     selectedPhotoIds = state.selectedPhotoIds - photoIds,
                     viewerStartIndex = null,
@@ -403,6 +476,10 @@ class MainViewModel @Inject constructor(
                             group.copy(photos = group.photos.filterNot { photo -> photo.id in photoIds })
                         }
                         .filter { group -> group.photos.size > 1 },
+                    declutterSession = nextDeclutterSession,
+                    declutterCurrentPhoto = nextDeclutterSession?.let { session ->
+                        resolveDeclutterCurrentPhoto(session, photoIndex.snapshot())
+                    },
                 )
             }
         }
@@ -421,6 +498,88 @@ class MainViewModel @Inject constructor(
             it.copy(
                 viewerStartIndex = null,
                 viewerPhotos = emptyList(),
+            )
+        }
+    }
+
+    fun closeStoryViewer() {
+        uiState.update { state ->
+            state.copy(
+                storyViewerPhotos = emptyList(),
+                storyViewerTitle = "",
+            )
+        }
+    }
+
+    fun openStoryPhoto(photo: PhotoRecord) {
+        closeStoryViewer()
+        onPhotoClicked(photo)
+    }
+
+    fun openDeclutterSwipe() {
+        viewModelScope.launch {
+            uiState.update {
+                it.copy(
+                    isDeclutterLoading = true,
+                    declutterSession = null,
+                    declutterCurrentPhoto = null,
+                )
+            }
+
+            val records = photoIndex.snapshot()
+            val groups = if (uiState.value.duplicateGroups.isNotEmpty()) {
+                uiState.value.duplicateGroups
+            } else {
+                duplicatePhotoFinder.findDuplicates(records)
+            }
+
+            val candidates = withContext(Dispatchers.Default) {
+                buildDeclutterCandidates(records, groups)
+            }
+            val session = DeclutterSession(candidates = candidates)
+            uiState.update { state ->
+                state.copy(
+                    duplicateGroups = if (state.duplicateGroups.isEmpty()) groups else state.duplicateGroups,
+                    isDeclutterLoading = false,
+                    declutterSession = session,
+                    declutterCurrentPhoto = resolveDeclutterCurrentPhoto(session, records),
+                )
+            }
+        }
+    }
+
+    fun dismissDeclutterSwipe() {
+        uiState.update {
+            it.copy(
+                isDeclutterLoading = false,
+                declutterSession = null,
+                declutterCurrentPhoto = null,
+            )
+        }
+    }
+
+    fun onDeclutterKeepCurrent() {
+        mutateDeclutterSession(markTrash = false)
+    }
+
+    fun onDeclutterTrashCurrent() {
+        mutateDeclutterSession(markTrash = true)
+    }
+
+    fun onDeclutterUndo() {
+        uiState.update { state ->
+            val session = state.declutterSession ?: return@update state
+            if (session.currentIndex <= 0 || session.candidates.isEmpty()) return@update state
+            val previousIndex = session.currentIndex - 1
+            val previousCandidate = session.candidates.getOrNull(previousIndex) ?: return@update state
+            val nextSession = session.copy(
+                currentIndex = previousIndex,
+                markedTrashIds = session.markedTrashIds - previousCandidate.photoId,
+                keptIds = session.keptIds - previousCandidate.photoId,
+            )
+            state.copy(
+                declutterSession = nextSession,
+                declutterCurrentPhoto = resolveDeclutterCurrentPhoto(nextSession, photoIndex.snapshot()),
             )
         }
     }
@@ -470,10 +629,10 @@ class MainViewModel @Inject constructor(
         if (photoIds.isEmpty()) return emptyList()
         val byId = photoIndex.snapshot().associateBy { record -> record.id }
         val orderedVisible = latestVisibleResultIds.filter { id -> id in photoIds }
-        if (orderedVisible.isNotEmpty()) {
-            return orderedVisible.mapNotNull(byId::get)
-        }
-        return photoIds.mapNotNull(byId::get)
+        val orderedIds = linkedSetOf<Long>()
+        orderedVisible.forEach(orderedIds::add)
+        photoIds.forEach(orderedIds::add)
+        return orderedIds.mapNotNull(byId::get)
     }
 
     private fun observeSuggestions() {
@@ -521,6 +680,7 @@ class MainViewModel @Inject constructor(
                     searchReady = true,
                 )
             }
+            tryConsumePendingStoryLaunch()
 
             TaggingWorker.enqueueLibraryMaintenance(context)
             TrashPurgeWorker.enqueueDaily(context)
@@ -746,15 +906,30 @@ class MainViewModel @Inject constructor(
         memoryRefreshJob?.cancel()
         memoryRefreshJob = viewModelScope.launch(Dispatchers.Default) {
             val curated = memoryCurator.curate(records)
-            uiState.update { state -> state.copy(memoryStories = curated) }
+            val onThisDay = memoryCurator.curateOnThisDay(records)
+            uiState.update { state ->
+                state.copy(
+                    memoryStories = curated,
+                    onThisDayStory = onThisDay,
+                )
+            }
+            OnThisDayWidgetProvider.cacheStory(context, onThisDay)
         }
     }
 
-    private suspend fun runSearch(query: String, records: List<PhotoRecord>): FilterEngine.SearchResult {
+    private suspend fun runSearch(
+        query: String,
+        records: List<PhotoRecord>,
+        feedMode: HomeFeedMode,
+    ): FilterEngine.SearchResult {
         val normalizedQuery = query.trim()
         if (normalizedQuery.isBlank()) {
+            val feedRecords = when (feedMode) {
+                HomeFeedMode.Timeline -> records.filterNot { photo -> photo.isUtilityPhoto() }
+                HomeFeedMode.Utilities -> records.filter { photo -> photo.isUtilityPhoto() }
+            }
             return FilterEngine.SearchResult(
-                results = emptyList(),
+                results = feedRecords,
                 tokens = emptyList(),
             )
         }
@@ -829,9 +1004,125 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    private fun openStoryFromIdsInternal(photoIds: List<Long>, title: String): Boolean {
+        if (photoIds.isEmpty()) return false
+        val snapshot = photoIndex.snapshot()
+        if (snapshot.isEmpty()) return false
+        val byId = snapshot.associateBy { it.id }
+        val photos = photoIds.mapNotNull(byId::get)
+        if (photos.isEmpty()) return false
+
+        uiState.update { state ->
+            state.copy(
+                storyViewerTitle = title.ifBlank { state.storyViewerTitle.ifBlank { "Memory" } },
+                storyViewerPhotos = photos,
+                viewerStartIndex = null,
+                viewerPhotos = emptyList(),
+                selectedPhotoIds = emptySet(),
+            )
+        }
+        return true
+    }
+
+    private fun tryConsumePendingStoryLaunch() {
+        val pending = pendingStoryLaunch ?: return
+        if (openStoryFromIdsInternal(pending.photoIds, pending.title)) {
+            pendingStoryLaunch = null
+        }
+    }
+
+    private fun mutateDeclutterSession(markTrash: Boolean) {
+        uiState.update { state ->
+            val session = state.declutterSession ?: return@update state
+            val candidate = session.currentCandidate ?: return@update state
+            val nextSession = session.copy(
+                currentIndex = (session.currentIndex + 1).coerceAtMost(session.candidates.size),
+                markedTrashIds = if (markTrash) {
+                    session.markedTrashIds + candidate.photoId
+                } else {
+                    session.markedTrashIds - candidate.photoId
+                },
+                keptIds = if (markTrash) {
+                    session.keptIds - candidate.photoId
+                } else {
+                    session.keptIds + candidate.photoId
+                },
+            )
+            state.copy(
+                declutterSession = nextSession,
+                declutterCurrentPhoto = resolveDeclutterCurrentPhoto(nextSession, photoIndex.snapshot()),
+            )
+        }
+    }
+
+    private fun resolveDeclutterCurrentPhoto(
+        session: DeclutterSession,
+        records: List<PhotoRecord>,
+    ): PhotoRecord? {
+        val candidate = session.currentCandidate ?: return null
+        return records.firstOrNull { photo -> photo.id == candidate.photoId }
+    }
+
+    private fun buildDeclutterCandidates(
+        records: List<PhotoRecord>,
+        groups: List<DuplicatePhotoGroup>,
+    ): List<DeclutterCandidate> {
+        val candidates = LinkedHashMap<Long, DeclutterReason>()
+
+        groups.forEach { group ->
+            val keeperId = group.heroPhotoId ?: group.photos.maxByOrNull { photo -> photo.fileSize }?.id
+            group.photos.forEach { photo ->
+                val reason = when (group.kind) {
+                    DuplicateMatchKind.Exact -> {
+                        if (photo.id == keeperId) null else DeclutterReason.ExactDuplicate
+                    }
+
+                    DuplicateMatchKind.Similar -> {
+                        if (photo.id == keeperId) null else DeclutterReason.SimilarDuplicate
+                    }
+
+                    DuplicateMatchKind.Burst -> {
+                        if (photo.id == keeperId) null else DeclutterReason.BurstExtra
+                    }
+
+                    DuplicateMatchKind.Blurry -> DeclutterReason.Blurry
+                }
+                if (reason != null) {
+                    candidates.putIfAbsent(photo.id, reason)
+                }
+            }
+        }
+
+        records.forEach { photo ->
+            val utilityReason = when (photo.utilityKind()) {
+                UtilityKind.Screenshot -> DeclutterReason.Screenshot
+                UtilityKind.Download -> DeclutterReason.Download
+                UtilityKind.Social -> DeclutterReason.Social
+                UtilityKind.Document -> DeclutterReason.Document
+                UtilityKind.Meme -> DeclutterReason.Meme
+                null -> null
+            }
+            if (utilityReason != null) {
+                candidates.putIfAbsent(photo.id, utilityReason)
+            }
+        }
+
+        return candidates.entries
+            .asSequence()
+            .take(MAX_DECLUTTER_CANDIDATES)
+            .map { (photoId, reason) ->
+                DeclutterCandidate(
+                    photoId = photoId,
+                    reason = reason,
+                )
+            }
+            .toList()
+    }
+
     companion object {
         private const val SEARCH_PAGE_SIZE = 60
         private const val SEARCH_PREFETCH_DISTANCE = 20
         private const val RECORDS_UPDATE_DEBOUNCE_MS = 250L
+        private const val MAX_DECLUTTER_CANDIDATES = 300
     }
 }

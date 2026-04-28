@@ -54,6 +54,8 @@ import com.photobook.app.feature.vault.VaultService
 import com.photobook.app.ui.screen.MainScreen
 import com.photobook.app.ui.screen.OnboardingScreen
 import com.photobook.app.ui.screen.PhotoViewerScreen
+import com.photobook.app.ui.screen.MemoryStoryViewerScreen
+import com.photobook.app.ui.screen.DeclutterSwipeScreen
 import com.photobook.app.ui.screen.QrReceiveScannerScreen
 import com.photobook.app.ui.screen.SharePrivacyPrepSheet
 import com.photobook.app.ui.screen.SharePrivacyPrepState
@@ -71,6 +73,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleLaunchIntent(intent)
         setContent {
             PhotoBookTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -78,6 +81,34 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleLaunchIntent(intent)
+    }
+
+    private fun handleLaunchIntent(intent: Intent?) {
+        val storyIds = intent?.getStringExtra(EXTRA_WIDGET_STORY_IDS).orEmpty()
+            .split(',')
+            .mapNotNull { token -> token.trim().toLongOrNull() }
+            .distinct()
+        val storyTitle = intent?.getStringExtra(EXTRA_WIDGET_STORY_TITLE).orEmpty()
+        if (storyIds.isNotEmpty()) {
+            vm.openStoryFromPhotoIds(storyIds, storyTitle)
+            return
+        }
+        val launchQuery = intent?.getStringExtra(EXTRA_LAUNCH_QUERY).orEmpty()
+        if (launchQuery.isNotBlank()) {
+            vm.applyExternalQuery(launchQuery)
+        }
+    }
+
+    companion object {
+        const val EXTRA_LAUNCH_QUERY = "extra_launch_query"
+        const val EXTRA_WIDGET_STORY_IDS = "extra_widget_story_ids"
+        const val EXTRA_WIDGET_STORY_TITLE = "extra_widget_story_title"
     }
 }
 
@@ -253,10 +284,12 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         resultCount = uiState.resultCount,
         searchReady = uiState.searchReady,
         favoritesOnly = uiState.favoritesOnly,
+        feedMode = uiState.feedMode,
         selectedPhotoIds = uiState.selectedPhotoIds,
         timelineMarks = uiState.timelineMarks,
         suggestions = uiState.suggestions,
         showSuggestions = uiState.showSuggestions,
+        onThisDayStory = uiState.onThisDayStory,
         memoryStories = uiState.memoryStories,
         videoIndexingEnabled = uiState.videoIndexingEnabled,
         videoMoments = uiState.videoMoments,
@@ -374,11 +407,14 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                 refreshVaultItems()
             }
         },
+        onSelectFeedMode = viewModel::onSelectFeedMode,
         onSourceSelected = viewModel::onSourceSelected,
+        onOpenDeclutter = viewModel::openDeclutterSwipe,
         onOpenDuplicateFinder = viewModel::openDuplicateFinder,
         onRefreshDuplicates = viewModel::refreshDuplicateGroups,
         onDismissDuplicateFinder = viewModel::dismissDuplicateFinder,
         onDuplicatePhotoClick = viewModel::openDuplicatePhoto,
+        onOpenOnThisDayStory = viewModel::onOpenOnThisDayStory,
         onMemoryStorySelected = viewModel::onMemoryStorySelected,
         onVideoMomentClick = { moment ->
             openVideoMoment(context, moment)
@@ -396,6 +432,38 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             onToggleFavorite = viewModel::onToggleFavorite,
             onMoveToTrash = { photo ->
                 requestMoveToTrash(listOf(photo))
+            },
+        )
+    }
+
+    val storyViewerPhotos = uiState.storyViewerPhotos
+    if (storyViewerPhotos.isNotEmpty()) {
+        MemoryStoryViewerScreen(
+            title = uiState.storyViewerTitle,
+            photos = storyViewerPhotos,
+            onDismiss = viewModel::closeStoryViewer,
+            onOpenPhoto = viewModel::openStoryPhoto,
+        )
+    }
+
+    val declutterSession = uiState.declutterSession
+    if (declutterSession != null || uiState.isDeclutterLoading) {
+        DeclutterSwipeScreen(
+            session = declutterSession ?: com.photobook.app.feature.declutter.DeclutterSession(emptyList()),
+            currentPhoto = uiState.declutterCurrentPhoto,
+            isLoading = uiState.isDeclutterLoading,
+            onDismiss = viewModel::dismissDeclutterSwipe,
+            onKeepCurrent = viewModel::onDeclutterKeepCurrent,
+            onTrashCurrent = viewModel::onDeclutterTrashCurrent,
+            onUndoLast = viewModel::onDeclutterUndo,
+            onApplyTrash = { photoIds ->
+                coroutineScope.launch {
+                    val photos = viewModel.resolvePhotosByIds(photoIds)
+                    if (photos.isNotEmpty()) {
+                        requestMoveToTrash(photos)
+                    }
+                    viewModel.dismissDeclutterSwipe()
+                }
             },
         )
     }

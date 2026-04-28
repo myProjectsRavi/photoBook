@@ -2,6 +2,7 @@ package com.photobook.app.feature.memories
 
 import com.photobook.app.data.model.PhotoRecord
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -36,9 +37,53 @@ class MemoryCurator @Inject constructor() {
                     coverUriString = candidate.coverUriString,
                     photoCount = candidate.photoCount,
                     suggestedQuery = candidate.suggestedQuery,
+                    photoIds = candidate.photoIds,
                 )
             }
             .toList()
+    }
+
+    fun curateOnThisDay(records: List<PhotoRecord>, nowMillis: Long = System.currentTimeMillis()): MemoryStory? {
+        if (records.size < MIN_STORY_PHOTOS) return null
+        val today = Instant.ofEpochMilli(nowMillis)
+            .atZone(ZoneId.systemDefault())
+            .toLocalDate()
+
+        val sameDay = records
+            .asSequence()
+            .filter { record ->
+                record.month == today.monthValue &&
+                    record.dayOfMonth == today.dayOfMonth &&
+                    record.year < today.year &&
+                    record.uriString.isNotBlank()
+            }
+            .groupBy { record -> record.year }
+
+        if (sameDay.isEmpty()) return null
+
+        val selected = sameDay.entries
+            .sortedWith(
+                compareByDescending<Map.Entry<Int, List<PhotoRecord>>> { it.value.size }
+                    .thenByDescending { it.key },
+            )
+            .firstOrNull()
+            ?: return null
+        if (selected.value.size < MIN_STORY_PHOTOS) return null
+
+        val photos = selected.value.sortedByDescending { it.dateAdded }
+        val cover = photos.firstOrNull() ?: return null
+        val prettyDate = formatMonthDay(today)
+
+        return MemoryStory(
+            id = "on-this-day-${today.monthValue}-${today.dayOfMonth}-${selected.key}",
+            title = "On This Day · ${selected.key}",
+            subtitle = "${photos.size} photos · $prettyDate",
+            coverUriString = cover.uriString,
+            photoCount = photos.size,
+            suggestedQuery = "today",
+            photoIds = photos.map { it.id },
+            isOnThisDay = true,
+        )
     }
 
     private fun eventKey(photo: PhotoRecord): String {
@@ -93,6 +138,7 @@ class MemoryCurator @Inject constructor() {
             photoCount = photoCount,
             coverDateMillis = cover.dateAdded,
             suggestedQuery = suggestedQuery,
+            photoIds = sorted.map { photo -> photo.id },
             score = photoCount * 100 + recencyScore(cover.dateAdded),
         )
     }
@@ -134,6 +180,10 @@ class MemoryCurator @Inject constructor() {
         }.getOrDefault("")
     }
 
+    private fun formatMonthDay(localDate: LocalDate): String {
+        return MONTH_DAY_FORMATTER.format(localDate)
+    }
+
     private data class MemoryStoryCandidate(
         val id: String,
         val title: String,
@@ -142,6 +192,7 @@ class MemoryCurator @Inject constructor() {
         val photoCount: Int,
         val coverDateMillis: Long,
         val suggestedQuery: String,
+        val photoIds: List<Long>,
         val score: Int,
     )
 
@@ -151,5 +202,6 @@ class MemoryCurator @Inject constructor() {
         private const val MAX_QUERY_LENGTH = 36
         private const val RECENCY_DIVISOR_MS = 86_400_000L
         private val DATE_FORMATTER = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.getDefault())
+        private val MONTH_DAY_FORMATTER = DateTimeFormatter.ofPattern("MMM d", Locale.getDefault())
     }
 }

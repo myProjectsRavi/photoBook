@@ -62,6 +62,7 @@ import com.photobook.app.ui.component.SearchBar
 import com.photobook.app.ui.component.SuggestionDropdown
 import com.photobook.app.ui.component.WelcomeState
 import com.photobook.app.search.SuggestionItem
+import com.photobook.app.ui.model.HomeFeedMode
 import com.photobook.app.ui.model.TimelineMark
 import androidx.paging.compose.LazyPagingItems
 
@@ -73,10 +74,12 @@ fun MainScreen(
     resultCount: Int,
     searchReady: Boolean,
     favoritesOnly: Boolean,
+    feedMode: HomeFeedMode,
     selectedPhotoIds: Set<Long>,
     timelineMarks: List<TimelineMark>,
     suggestions: List<SuggestionItem>,
     showSuggestions: Boolean,
+    onThisDayStory: MemoryStory?,
     memoryStories: List<MemoryStory>,
     videoIndexingEnabled: Boolean,
     videoMoments: List<VideoSearchMoment>,
@@ -99,11 +102,14 @@ fun MainScreen(
     onPhotoLongClick: (PhotoRecord) -> Unit,
     onOpenQrScanner: () -> Unit,
     onOpenVault: () -> Unit,
+    onSelectFeedMode: (HomeFeedMode) -> Unit,
     onSourceSelected: (PhotoSource) -> Unit,
+    onOpenDeclutter: () -> Unit,
     onOpenDuplicateFinder: () -> Unit,
     onRefreshDuplicates: () -> Unit,
     onDismissDuplicateFinder: () -> Unit,
     onDuplicatePhotoClick: (String, Int) -> Unit,
+    onOpenOnThisDayStory: () -> Unit,
     onMemoryStorySelected: (MemoryStory) -> Unit,
     onVideoMomentClick: (VideoSearchMoment) -> Unit,
 ) {
@@ -139,6 +145,12 @@ fun MainScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
+                TextButton(
+                    onClick = onOpenDeclutter,
+                    enabled = searchReady && !isSelectionMode,
+                ) {
+                    Text(text = stringResource(R.string.declutter_action))
+                }
                 TextButton(
                     onClick = onOpenDuplicateFinder,
                     enabled = searchReady && !isSelectionMode,
@@ -214,6 +226,37 @@ fun MainScreen(
                         )
                     }
                 }
+            }
+
+            if (searchReady && query.isBlank() && !isSelectionMode) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterChip(
+                        selected = feedMode == HomeFeedMode.Timeline,
+                        onClick = { onSelectFeedMode(HomeFeedMode.Timeline) },
+                        label = { Text(text = stringResource(R.string.feed_mode_timeline)) },
+                    )
+                    FilterChip(
+                        selected = feedMode == HomeFeedMode.Utilities,
+                        onClick = { onSelectFeedMode(HomeFeedMode.Utilities) },
+                        label = { Text(text = stringResource(R.string.feed_mode_utilities)) },
+                    )
+                }
+                Text(
+                    text = stringResource(
+                        R.string.feed_mode_result_count,
+                        if (feedMode == HomeFeedMode.Timeline) {
+                            stringResource(R.string.feed_mode_timeline)
+                        } else {
+                            stringResource(R.string.feed_mode_utilities)
+                        },
+                        resultCount,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
 
             if (searchReady && query.isNotBlank()) {
@@ -305,17 +348,28 @@ fun MainScreen(
                 }
             }
 
-            if (!searchReady || query.isBlank()) {
+            if (!searchReady) {
                 WelcomeState(
                     memories = memoryStories,
+                    onThisDayStory = onThisDayStory,
+                    onOnThisDayClick = onOpenOnThisDayStory,
                     onMemoryClick = onMemoryStorySelected,
                     modifier = Modifier.fillMaxSize(),
+                )
+            } else if (query.isBlank()) {
+                WelcomeState(
+                    memories = memoryStories,
+                    onThisDayStory = onThisDayStory,
+                    onOnThisDayClick = onOpenOnThisDayStory,
+                    onMemoryClick = onMemoryStorySelected,
+                    compact = true,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
 
             if (searchReady && query.isNotBlank() && resultCount == 0) {
                 EmptyState(modifier = Modifier.fillMaxSize())
-            } else if (searchReady && query.isNotBlank()) {
+            } else if (searchReady && resultCount > 0) {
                 if (videoIndexingEnabled && videoMoments.isNotEmpty()) {
                     VideoMomentsCard(
                         moments = videoMoments.take(4),
@@ -333,6 +387,19 @@ fun MainScreen(
                         onPhotoClick = onPhotoClick,
                         onPhotoLongClick = onPhotoLongClick,
                         modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            } else if (searchReady && query.isBlank()) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                ) {
+                    Text(
+                        text = stringResource(R.string.feed_mode_empty),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
