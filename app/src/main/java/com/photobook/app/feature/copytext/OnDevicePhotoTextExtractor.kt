@@ -34,18 +34,22 @@ class OnDevicePhotoTextExtractor @Inject constructor(
             val bitmap = loadBitmap(uri)
                 ?: return@withContext ExtractedTextResult.Error()
 
-            val image = InputImage.fromBitmap(bitmap, 0)
-            val rawText = runCatching {
-                recognizer.process(image).await().text
-            }.getOrElse { error ->
-                return@withContext ExtractedTextResult.Error(error)
-            }
+            try {
+                val image = InputImage.fromBitmap(bitmap, 0)
+                val rawText = runCatching {
+                    recognizer.process(image).await().text
+                }.getOrElse { error ->
+                    return@withContext ExtractedTextResult.Error(error)
+                }
 
-            val formatted = formatter.format(rawText)
-            if (formatted.isBlank()) {
-                ExtractedTextResult.Empty
-            } else {
-                ExtractedTextResult.Success(formatted)
+                val formatted = formatter.format(rawText)
+                if (formatted.isBlank()) {
+                    ExtractedTextResult.Empty
+                } else {
+                    ExtractedTextResult.Success(formatted)
+                }
+            } finally {
+                recycleSafely(bitmap)
             }
         }
     }
@@ -66,21 +70,34 @@ class OnDevicePhotoTextExtractor @Inject constructor(
             val bitmap = decodeSampledBitmap(uri, MAX_REGION_BITMAP_DIMENSION_PX)
                 ?: return@withContext ExtractedTextResult.Error()
 
-            val crop = cropBitmap(bitmap, normalizedRegion)
-                ?: return@withContext ExtractedTextResult.Empty
-
-            val image = InputImage.fromBitmap(crop, 0)
-            val rawText = runCatching {
-                recognizer.process(image).await().text
-            }.getOrElse { error ->
-                return@withContext ExtractedTextResult.Error(error)
+            val crop = try {
+                cropBitmap(bitmap, normalizedRegion)
+            } catch (_: Throwable) {
+                null
+            } ?: run {
+                recycleSafely(bitmap)
+                return@withContext ExtractedTextResult.Empty
             }
 
-            val formatted = formatter.format(rawText)
-            if (formatted.isBlank()) {
-                ExtractedTextResult.Empty
-            } else {
-                ExtractedTextResult.Success(formatted)
+            try {
+                val image = InputImage.fromBitmap(crop, 0)
+                val rawText = runCatching {
+                    recognizer.process(image).await().text
+                }.getOrElse { error ->
+                    return@withContext ExtractedTextResult.Error(error)
+                }
+
+                val formatted = formatter.format(rawText)
+                if (formatted.isBlank()) {
+                    ExtractedTextResult.Empty
+                } else {
+                    ExtractedTextResult.Success(formatted)
+                }
+            } finally {
+                recycleSafely(crop)
+                if (crop !== bitmap) {
+                    recycleSafely(bitmap)
+                }
             }
         }
     }
@@ -147,6 +164,14 @@ class OnDevicePhotoTextExtractor @Inject constructor(
         return runCatching {
             Bitmap.createBitmap(bitmap, rect.left, rect.top, rect.width(), rect.height())
         }.getOrNull()
+    }
+
+    private fun recycleSafely(bitmap: Bitmap) {
+        runCatching {
+            if (!bitmap.isRecycled) {
+                bitmap.recycle()
+            }
+        }
     }
 
     companion object {

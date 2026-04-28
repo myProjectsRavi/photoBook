@@ -15,9 +15,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -102,6 +104,9 @@ fun QrShareSheet(
                     var frameIndex by remember(result.packet.transferId) {
                         mutableIntStateOf(0)
                     }
+                    var frameBitmap by remember(result.packet.transferId) {
+                        mutableStateOf<android.graphics.Bitmap?>(null)
+                    }
                     LaunchedEffect(result.packet.transferId) {
                         frameIndex = 0
                         while (isActive) {
@@ -109,15 +114,18 @@ fun QrShareSheet(
                             frameIndex = (frameIndex + 1) % result.packet.frames.size
                         }
                     }
-
-                    val frameBitmap by produceState<android.graphics.Bitmap?>(
-                        initialValue = null,
-                        key1 = result.packet.transferId,
-                        key2 = frameIndex,
-                    ) {
+                    LaunchedEffect(result.packet.transferId, frameIndex) {
                         val payload = result.packet.frames[frameIndex]
-                        value = withContext(Dispatchers.Default) {
+                        val nextBitmap = withContext(Dispatchers.Default) {
                             QrBitmapEncoder.encode(payload)
+                        }
+                        val previousBitmap = frameBitmap
+                        frameBitmap = nextBitmap
+                        previousBitmap.recycleSafely()
+                    }
+                    DisposableEffect(result.packet.transferId) {
+                        onDispose {
+                            frameBitmap.recycleSafely()
                         }
                     }
 
@@ -173,3 +181,12 @@ fun QrShareSheet(
 }
 
 private const val FRAME_INTERVAL_MS = 450L
+
+private fun android.graphics.Bitmap?.recycleSafely() {
+    val bitmap = this ?: return
+    runCatching {
+        if (!bitmap.isRecycled) {
+            bitmap.recycle()
+        }
+    }
+}

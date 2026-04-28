@@ -21,12 +21,17 @@ object QrBitmapEncoder {
             hints,
         )
 
-        val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
-        for (x in 0 until sizePx) {
-            for (y in 0 until sizePx) {
-                bitmap.setPixel(x, y, if (matrix[x, y]) Color.BLACK else Color.WHITE)
+        val pixels = IntArray(sizePx * sizePx)
+        var index = 0
+        for (y in 0 until sizePx) {
+            for (x in 0 until sizePx) {
+                pixels[index] = if (matrix[x, y]) Color.BLACK else Color.WHITE
+                index += 1
             }
         }
+
+        val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.RGB_565)
+        bitmap.setPixels(pixels, 0, sizePx, 0, 0, sizePx, sizePx)
         return bitmap
     }
 }
