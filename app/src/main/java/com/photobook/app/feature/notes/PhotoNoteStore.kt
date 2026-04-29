@@ -46,7 +46,7 @@ class PhotoNoteStore @Inject constructor(
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
             )
         }.getOrElse {
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            context.getSharedPreferences(PREFS_FALLBACK_NAME, Context.MODE_PRIVATE)
         }
     }
 
@@ -54,6 +54,7 @@ class PhotoNoteStore @Inject constructor(
 
     companion object {
         private const val PREFS_NAME = "photobook_private_notes"
+        private const val PREFS_FALLBACK_NAME = "photobook_private_notes_fallback"
         const val MAX_NOTE_CHARS = 1000
     }
 }

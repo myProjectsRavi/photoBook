@@ -11,6 +11,7 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.net.Uri
 import androidx.core.content.FileProvider
+import androidx.exifinterface.media.ExifInterface
 import com.photobook.app.data.model.PhotoRecord
 import java.io.File
 import java.io.FileOutputStream
@@ -94,9 +95,15 @@ class PhotoEditService @Inject constructor(
             inSampleSize = sample.coerceAtLeast(1)
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
-        return context.contentResolver.openInputStream(uri)?.use { stream ->
+        val decoded = context.contentResolver.openInputStream(uri)?.use { stream ->
             BitmapFactory.decodeStream(stream, null, options)
+        } ?: return null
+
+        val normalized = applyExifOrientation(decoded, uri)
+        if (normalized !== decoded) {
+            decoded.recycleSafely()
         }
+        return normalized
     }
 
     private fun applyRotation(source: Bitmap, quarterTurns: Int): Bitmap {
@@ -133,6 +140,59 @@ class PhotoEditService @Inject constructor(
         val left = ((source.width - cropWidth) / 2).coerceAtLeast(0)
         val top = ((source.height - cropHeight) / 2).coerceAtLeast(0)
         return Bitmap.createBitmap(source, left, top, cropWidth, cropHeight)
+    }
+
+    private fun applyExifOrientation(source: Bitmap, uri: Uri): Bitmap {
+        val orientation = readExifOrientation(uri)
+        if (
+            orientation == ExifInterface.ORIENTATION_NORMAL ||
+            orientation == ExifInterface.ORIENTATION_UNDEFINED
+        ) {
+            return source
+        }
+
+        val matrix = Matrix().apply {
+            when (orientation) {
+                ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> preScale(-1f, 1f)
+                ExifInterface.ORIENTATION_ROTATE_180 -> postRotate(180f)
+                ExifInterface.ORIENTATION_FLIP_VERTICAL -> preScale(1f, -1f)
+                ExifInterface.ORIENTATION_TRANSPOSE -> {
+                    preScale(-1f, 1f)
+                    postRotate(270f)
+                }
+
+                ExifInterface.ORIENTATION_ROTATE_90 -> postRotate(90f)
+                ExifInterface.ORIENTATION_TRANSVERSE -> {
+                    preScale(-1f, 1f)
+                    postRotate(90f)
+                }
+
+                ExifInterface.ORIENTATION_ROTATE_270 -> postRotate(270f)
+            }
+        }
+
+        return runCatching {
+            Bitmap.createBitmap(
+                source,
+                0,
+                0,
+                source.width,
+                source.height,
+                matrix,
+                true,
+            )
+        }.getOrDefault(source)
+    }
+
+    private fun readExifOrientation(uri: Uri): Int {
+        return runCatching {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                ExifInterface(stream).getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_UNDEFINED,
+                )
+            } ?: ExifInterface.ORIENTATION_UNDEFINED
+        }.getOrDefault(ExifInterface.ORIENTATION_UNDEFINED)
     }
 
     private fun applyToneAndFilter(source: Bitmap, state: PhotoEditState): Bitmap {
