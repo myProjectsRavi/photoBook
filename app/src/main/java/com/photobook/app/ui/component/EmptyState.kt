@@ -1,37 +1,28 @@
 package com.photobook.app.ui.component
 
 import android.net.Uri
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.SearchOff
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.photobook.app.R
 import com.photobook.app.feature.memories.MemoryStory
@@ -48,27 +39,20 @@ fun EmptyState(modifier: Modifier = Modifier) {
         Icon(
             imageVector = Icons.Default.SearchOff,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
+            tint = Color(0xFF4F46E5),
+            modifier = Modifier.size(64.dp)
         )
         Text(
-            text = stringResource(R.string.no_results_title),
-            style = MaterialTheme.typography.headlineSmall,
+            text = "No memories found",
+            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Black),
             textAlign = TextAlign.Center,
-            modifier = Modifier.padding(top = 12.dp),
+            modifier = Modifier.padding(top = 16.dp),
         )
         Text(
-            text = stringResource(R.string.no_results_subtitle),
-            style = MaterialTheme.typography.bodyMedium,
+            text = "Try searching for a word, place, date,\nor a moment you remember.",
+            style = MaterialTheme.typography.bodyMedium.copy(color = Color.Gray),
             textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp),
-        )
-        Text(
-            text = stringResource(R.string.private_reassurance),
-            style = MaterialTheme.typography.labelSmall,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 10.dp),
         )
     }
 }
@@ -85,64 +69,66 @@ fun WelcomeState(
     Column(
         modifier = modifier
             .then(if (compact) Modifier else Modifier.fillMaxSize())
-            .padding(24.dp),
+            .padding(horizontal = 24.dp),
         verticalArrangement = Arrangement.Top,
         horizontalAlignment = Alignment.Start,
     ) {
-        Text(
-            text = stringResource(R.string.welcome_title),
-            style = MaterialTheme.typography.headlineMedium,
-            textAlign = TextAlign.Start,
-        )
-        Text(
-            text = stringResource(R.string.welcome_subtitle),
-            style = MaterialTheme.typography.bodyMedium,
-            textAlign = TextAlign.Start,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 10.dp),
-        )
-        Text(
-            text = stringResource(R.string.welcome_search_prompt),
-            style = MaterialTheme.typography.bodySmall,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(top = 14.dp),
-        )
+        if (!compact) {
+            Text(
+                text = "Welcome back.",
+                style = MaterialTheme.typography.headlineMedium.copy(
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = (-1).sp
+                ),
+            )
+            Text(
+                text = "Your intelligent, private gallery.",
+                style = MaterialTheme.typography.bodyMedium.copy(color = Color.Gray),
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
 
         if (onThisDayStory != null) {
-            Spacer(modifier = Modifier.size(14.dp))
+            Spacer(modifier = Modifier.height(24.dp))
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
+                    .clip(RoundedCornerShape(24.dp))
                     .clickable(onClick = onOnThisDayClick),
-                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                color = Color.White.copy(alpha = 0.6f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White)
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.AutoStories,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .background(Color(0xFF4F46E5).copy(alpha = 0.1f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AutoStories,
+                            contentDescription = null,
+                            tint = Color(0xFF4F46E5),
+                        )
+                    }
                     Column(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
                         Text(
                             text = onThisDayStory.title,
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Black),
                             maxLines = 1,
                         )
                         Text(
                             text = onThisDayStory.subtitle,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall.copy(color = Color.Gray),
                             maxLines = 2,
                         )
                     }
@@ -150,44 +136,31 @@ fun WelcomeState(
             }
         }
 
-        if (memories.isEmpty()) {
-            Text(
-                text = stringResource(R.string.private_reassurance),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 22.dp),
-            )
-            return
-        }
-
-        Spacer(modifier = Modifier.size(18.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = stringResource(R.string.memories_title),
-                style = MaterialTheme.typography.titleMedium,
-            )
-            Text(
-                text = stringResource(R.string.memories_subtitle),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-
-        LazyRow(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            items(memories, key = { story -> story.id }) { story ->
-                MemoryStoryCard(
-                    story = story,
-                    onClick = { onMemoryClick(story) },
+        if (memories.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(28.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Collections",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
                 )
+            }
+
+            LazyRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                items(memories, key = { story -> story.id }) { story ->
+                    MemoryStoryCard(
+                        story = story,
+                        onClick = { onMemoryClick(story) },
+                    )
+                }
             }
         }
     }
@@ -198,48 +171,42 @@ private fun MemoryStoryCard(
     story: MemoryStory,
     onClick: () -> Unit,
 ) {
-    Card(
+    Surface(
         modifier = Modifier
-            .widthIn(min = 220.dp, max = 320.dp)
+            .widthIn(min = 200.dp, max = 280.dp)
+            .clip(RoundedCornerShape(24.dp))
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        color = Color.White.copy(alpha = 0.6f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White)
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             AsyncImage(
                 model = Uri.parse(story.coverUriString),
-                contentDescription = story.title,
+                contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(160.dp)
-                    .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)),
+                    .height(140.dp)
+                    .clip(RoundedCornerShape(24.dp)),
             )
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.surface,
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Text(
-                        text = story.title,
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 1,
-                    )
-                    Text(
-                        text = story.subtitle,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                    )
-                }
+                Text(
+                    text = story.title,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Black),
+                    maxLines = 1,
+                )
+                Text(
+                    text = story.subtitle,
+                    style = MaterialTheme.typography.labelSmall.copy(color = Color.Gray),
+                    maxLines = 1,
+                )
             }
         }
     }
