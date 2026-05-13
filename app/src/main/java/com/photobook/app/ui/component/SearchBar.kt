@@ -1,7 +1,6 @@
 package com.photobook.app.ui.component
 
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
@@ -14,10 +13,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.photobook.app.R
 
 @Composable
 fun SearchBar(
@@ -51,10 +48,10 @@ fun SearchBar(
         singleLine = true,
         placeholder = {
             Text(
-                text = "Search memories...",
+                text = "Search... try today or selfie",
                 style = MaterialTheme.typography.bodyLarge.copy(
-                    fontWeight = FontWeight.Bold,
-                    color = Color.Gray
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFF6B7280),
                 )
             )
         },
@@ -62,25 +59,33 @@ fun SearchBar(
             Icon(
                 imageVector = Icons.Default.Search, 
                 contentDescription = null,
-                tint = Color.Gray
+                tint = Color(0xFF4B5563)
             )
         },
         trailingIcon = {
             if (query.isNotBlank()) {
                 IconButton(onClick = onClear) {
-                    Icon(imageVector = Icons.Default.Clear, contentDescription = null)
+                    Icon(
+                        imageVector = Icons.Default.Clear,
+                        contentDescription = null,
+                        tint = Color(0xFF4B5563)
+                    )
                 }
             }
         },
         shape = RoundedCornerShape(24.dp),
+        textStyle = MaterialTheme.typography.bodyLarge.copy(
+            color = Color(0xFF111827),
+            fontWeight = FontWeight.Medium
+        ),
         colors = TextFieldDefaults.colors(
             focusedIndicatorColor = Color.Transparent,
             unfocusedIndicatorColor = Color.Transparent,
             disabledIndicatorColor = Color.Transparent,
             focusedContainerColor = Color.Transparent,
             unfocusedContainerColor = Color.Transparent,
-            focusedTextColor = Color.Black,
-            unfocusedTextColor = Color.Black,
+            focusedTextColor = Color(0xFF111827),
+            unfocusedTextColor = Color(0xFF111827),
             cursorColor = Color(0xFF4F46E5)
         ),
         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions.Default.copy(

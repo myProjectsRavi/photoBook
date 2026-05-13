@@ -75,7 +75,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         handleLaunchIntent(intent)
         setContent {
-            PhotoBookTheme {
+            PhotoBookTheme(dynamicColor = false) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     PhotoBookApp(viewModel = vm)
                 }

@@ -7,6 +7,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.items as lazyItems
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -22,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -46,6 +48,16 @@ import com.photobook.app.ui.component.WelcomeState
 import com.photobook.app.search.SuggestionItem
 import com.photobook.app.ui.model.HomeFeedMode
 import com.photobook.app.ui.model.TimelineMark
+
+private val MeshBase = Color(0xFFFFF0E4)
+private val MeshWarm = Color(0xFFFFD8B8)
+private val MeshRose = Color(0xFFFFD4E4)
+private val MeshMint = Color(0xFFE9F3FF)
+private val GlassSurface = Color(0xCCFFFFFF)
+private val GlassBorder = Color(0xF2FFFFFF)
+private val AccentIndigo = Color(0xFF4F46E5)
+private val AccentPink = Color(0xFFEC4899)
+private val AccentViolet = Color(0xFF8B5CF6)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -99,14 +111,31 @@ fun MainScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.radialGradient(
-                    0.0f to Color(0xFFFFF1EB),
-                    1.0f to Color(0xFFACE0F9),
-                    center = androidx.compose.ui.geometry.Offset(0.4f, 0.2f)
-                )
-            )
+            .background(Brush.verticalGradient(colors = listOf(MeshBase, MeshMint)))
     ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(MeshWarm.copy(alpha = 0.95f), Color.Transparent),
+                        center = Offset(240f, 120f),
+                        radius = 900f,
+                    )
+                )
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(MeshRose.copy(alpha = 0.85f), Color.Transparent),
+                        center = Offset(860f, 220f),
+                        radius = 900f,
+                    )
+                )
+        )
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -124,11 +153,11 @@ fun MainScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         modifier = Modifier
-                            .size(42.dp)
+                            .size(44.dp)
                             .rotate(3f)
                             .background(
                                 Brush.linearGradient(
-                                    listOf(Color(0xFF6366F1), Color(0xFFA855F7), Color(0xFFEC4899))
+                                    listOf(AccentIndigo, AccentViolet, AccentPink)
                                 ),
                                 RoundedCornerShape(12.dp)
                             )
@@ -148,15 +177,15 @@ fun MainScreen(
                 }
 
                 Surface(
-                    color = Color(0xFFEEF2FF),
-                    shape = RoundedCornerShape(full = true)
+                    color = Color(0xE6FFFFFF),
+                    shape = CircleShape
                 ) {
                     Text(
                         "PRIVACY FIRST",
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = FontWeight.Black,
-                            color = Color(0xFF4F46E5)
+                            color = AccentIndigo
                         )
                     )
                 }
@@ -168,22 +197,26 @@ fun MainScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp, vertical = 12.dp)
             ) {
-                Box(
+                Surface(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(24.dp))
-                        .background(Color.White.copy(alpha = 0.8f))
-                        .border(1.dp, Color.White, RoundedCornerShape(24.dp))
-                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(28.dp)),
+                    shape = RoundedCornerShape(28.dp),
+                    color = GlassSurface,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorder),
+                    tonalElevation = 2.dp,
+                    shadowElevation = 10.dp,
                 ) {
-                    SearchBar(
-                        query = query,
-                        onQueryChange = onQueryChange,
-                        onSearch = onSearchSubmitted,
-                        onClear = onClearQuery,
-                        onFocusChanged = onSearchFocusChanged,
-                        autoFocus = searchReady && query.isBlank(),
-                    )
+                    Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) {
+                        SearchBar(
+                            query = query,
+                            onQueryChange = onQueryChange,
+                            onSearch = onSearchSubmitted,
+                            onClear = onClearQuery,
+                            onFocusChanged = onSearchFocusChanged,
+                            autoFocus = searchReady && query.isBlank(),
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -197,21 +230,21 @@ fun MainScreen(
                         icon = Icons.Default.AutoFixHigh,
                         label = "Declutter",
                         onClick = onOpenDeclutter,
-                        color = Color(0xFF6366F1),
+                        color = AccentIndigo,
                         enabled = searchReady && !isSelectionMode
                     )
                     RefinedActionButton(
                         icon = if (favoritesOnly) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                         label = "Favorites",
                         onClick = onToggleFavoritesOnly,
-                        color = if (favoritesOnly) Color(0xFFEC4899) else Color(0xFF94A3B8),
+                        color = if (favoritesOnly) AccentPink else Color(0xFF64748B),
                         enabled = searchReady
                     )
                     RefinedActionButton(
                         icon = Icons.Default.Lock,
                         label = "Vault",
                         onClick = onOpenVault,
-                        color = Color(0xFF8B5CF6),
+                        color = AccentViolet,
                         enabled = searchReady
                     )
                 }
@@ -221,9 +254,10 @@ fun MainScreen(
                 // Video Indexing Status
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(20.dp),
-                    color = Color.White.copy(alpha = 0.4f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.6f))
+                    shape = RoundedCornerShape(18.dp),
+                    color = GlassSurface.copy(alpha = 0.82f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorder),
+                    tonalElevation = 1.dp,
                 ) {
                     Row(
                         modifier = Modifier
@@ -249,7 +283,7 @@ fun MainScreen(
                             Text(
                                 if (videoIndexingEnabled) "Disable" else "Enable",
                                 fontWeight = FontWeight.Black,
-                                color = Color(0xFF4F46E5)
+                                color = AccentIndigo
                             )
                         }
                     }
@@ -279,8 +313,9 @@ fun MainScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(Color.White.copy(alpha = 0.3f))
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(GlassSurface.copy(alpha = 0.72f))
+                            .border(1.dp, GlassBorder, RoundedCornerShape(18.dp))
                             .padding(4.dp)
                     ) {
                         RefinedTabButton(
@@ -364,8 +399,8 @@ fun MainScreen(
                     .fillMaxWidth(),
                 shape = RoundedCornerShape(24.dp),
                 tonalElevation = 8.dp,
-                color = Color.White.copy(alpha = 0.9f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White)
+                color = GlassSurface.copy(alpha = 0.94f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorder)
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -391,9 +426,9 @@ fun MainScreen(
         if (!isSelectionMode) {
             FloatingActionButton(
                 onClick = onOpenQrScanner,
-                containerColor = Color(0xFF4F46E5),
+                containerColor = AccentIndigo,
                 contentColor = Color.White,
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(18.dp),
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(24.dp)
@@ -424,13 +459,15 @@ private fun RefinedActionButton(
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.clickable(enabled = enabled) { onClick() }.alpha(if (enabled) 1f else 0.5f)
+        modifier = Modifier
+            .clickable(enabled = enabled) { onClick() }
+            .alpha(if (enabled) 1f else 0.5f)
     ) {
         Box(
             modifier = Modifier
-                .size(56.dp)
-                .background(color.copy(alpha = 0.1f), RoundedCornerShape(18.dp))
-                .border(1.dp, color.copy(alpha = 0.2f), RoundedCornerShape(18.dp)),
+                .size(54.dp)
+                .background(Color.White.copy(alpha = 0.66f), RoundedCornerShape(16.dp))
+                .border(1.dp, color.copy(alpha = 0.20f), RoundedCornerShape(16.dp)),
             contentAlignment = Alignment.Center
         ) {
             Icon(icon, contentDescription = null, tint = color)
@@ -453,9 +490,9 @@ private fun RefinedGlassChip(
 ) {
     Surface(
         onClick = onClick,
-        color = Color.White.copy(alpha = 0.6f),
+        color = Color.White.copy(alpha = 0.68f),
         shape = RoundedCornerShape(14.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White)
+        border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorder)
     ) {
         Text(
             text = label,
@@ -472,8 +509,8 @@ private fun RefinedTabButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val backgroundColor = if (selected) Color.White else Color.Transparent
-    val textColor = if (selected) Color.Black else Color.Gray
+    val backgroundColor = if (selected) Color.White.copy(alpha = 0.92f) else Color.Transparent
+    val textColor = if (selected) Color(0xFF0F172A) else Color(0xFF64748B)
 
     Surface(
         onClick = onClick,
@@ -507,8 +544,8 @@ private fun VideoMomentsCard(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
-        color = Color.White.copy(alpha = 0.4f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.6f))
+        color = Color.White.copy(alpha = 0.72f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorder)
     ) {
         Column(
             modifier = Modifier
@@ -637,7 +674,10 @@ private fun DuplicateFinderSheet(
                     androidx.compose.foundation.lazy.LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        items(groups) { group ->
+                        lazyItems(
+                            items = groups,
+                            key = { it.id },
+                        ) { group ->
                              DuplicateGroupCard(
                                 group = group,
                                 onPhotoClick = { index -> onPhotoClick(group.id, index) },
@@ -659,8 +699,8 @@ private fun DuplicateGroupCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
         tonalElevation = 1.dp,
-        color = Color.White.copy(alpha = 0.5f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White)
+        color = Color.White.copy(alpha = 0.74f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorder)
     ) {
         Column(
             modifier = Modifier.padding(16.dp),

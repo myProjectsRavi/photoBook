@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoStories
@@ -39,7 +40,7 @@ fun EmptyState(modifier: Modifier = Modifier) {
         Icon(
             imageVector = Icons.Default.SearchOff,
             contentDescription = null,
-            tint = Color(0xFF4F46E5),
+            tint = Color(0xFF6366F1),
             modifier = Modifier.size(64.dp)
         )
         Text(
@@ -50,7 +51,7 @@ fun EmptyState(modifier: Modifier = Modifier) {
         )
         Text(
             text = "Try searching for a word, place, date,\nor a moment you remember.",
-            style = MaterialTheme.typography.bodyMedium.copy(color = Color.Gray),
+            style = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFF6B7280)),
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 8.dp),
         )
@@ -95,7 +96,7 @@ fun WelcomeState(
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(24.dp))
                     .clickable(onClick = onOnThisDayClick),
-                color = Color.White.copy(alpha = 0.6f),
+                color = Color.White.copy(alpha = 0.78f),
                 border = androidx.compose.foundation.BorderStroke(1.dp, Color.White)
             ) {
                 Row(
@@ -128,7 +129,7 @@ fun WelcomeState(
                         )
                         Text(
                             text = onThisDayStory.subtitle,
-                            style = MaterialTheme.typography.bodySmall.copy(color = Color.Gray),
+                            style = MaterialTheme.typography.bodySmall.copy(color = Color(0xFF6B7280)),
                             maxLines = 2,
                         )
                     }
@@ -176,7 +177,7 @@ private fun MemoryStoryCard(
             .widthIn(min = 200.dp, max = 280.dp)
             .clip(RoundedCornerShape(24.dp))
             .clickable(onClick = onClick),
-        color = Color.White.copy(alpha = 0.6f),
+        color = Color.White.copy(alpha = 0.78f),
         border = androidx.compose.foundation.BorderStroke(1.dp, Color.White)
     ) {
         Column(
@@ -204,7 +205,7 @@ private fun MemoryStoryCard(
                 )
                 Text(
                     text = story.subtitle,
-                    style = MaterialTheme.typography.labelSmall.copy(color = Color.Gray),
+                    style = MaterialTheme.typography.labelSmall.copy(color = Color(0xFF6B7280)),
                     maxLines = 1,
                 )
             }
