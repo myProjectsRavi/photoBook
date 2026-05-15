@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <cache-path
+        name="safe_share_cache"
+        path="safe_share/" />
+    <external-files-path
+        name="pdf_exports"
+        path="Documents/PhotoBook/" />
+</paths>

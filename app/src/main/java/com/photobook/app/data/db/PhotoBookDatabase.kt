@@ -7,8 +7,10 @@ import androidx.room.RoomDatabase
     entities = [
         PhotoEntity::class,
         PhotoFtsEntity::class,
+        VideoFrameEntity::class,
+        VideoFrameFtsEntity::class,
     ],
-    version = 1,
+    version = 6,
     exportSchema = false,
 )
 abstract class PhotoBookDatabase : RoomDatabase() {

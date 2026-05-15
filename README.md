@@ -1,62 +1,59 @@
-<div align="center">
+# 📸 PhotoBook: The Smarter, Private Way to Relive Your Memories
 
-# 📸 PhotoBook
-
-**Private, Secure, and 100% Offline Photo Search**
-
-[![Android](https://img.shields.io/badge/Platform-Android-3DDC84?logo=android&logoColor=white)](#)
-[![Kotlin](https://img.shields.io/badge/Language-Kotlin-7F52FF?logo=kotlin&logoColor=white)](#)
-[![Architecture](https://img.shields.io/badge/Architecture-MVVM-blue)](#)
-[![Privacy](https://img.shields.io/badge/Privacy-Offline_First-success)](#)
-[![Database](https://img.shields.io/badge/Storage-Room_FTS4-orange)](#)
-
-*Like a phone book, but for your photos.*
-
-</div>
+**Experience the world’s fastest, 100% private photo gallery.** PhotoBook uses advanced intelligence to help you find any photo in milliseconds, clean up your clutter, and keep your private moments locked away—**all without ever using a single byte of data or the internet.**
 
 ---
 
-## 🎯 The Vision
+## 🌟 Why PhotoBook is Different
 
-In a world where our personal memories are constantly uploaded and analyzed by the cloud, **PhotoBook** offers a sanctuary. 
+### 🛡️ Absolute Privacy (No Internet Required)
+Unlike other apps, PhotoBook **never** uploads your photos to the "cloud." Everything happens directly on your phone. We don't even ask for Internet permission. Your photos stay where they belong: with you.
 
-PhotoBook provides an incredibly fast, intelligent photo search experience that happens **entirely on your device**. No cloud dependencies, no internet connection required, and zero data leaves your phone. It's your personal, secure, and minimalistic photo directory.
-
-## ✨ Key Features
-
-*   **🔒 Uncompromising Privacy:** Zero network calls. No telemetry. Your photos and metadata stay on your device.
-*   **⚡ Instant Search:** Powered by **SQLite FTS4 (Full-Text Search)** for lightning-fast querying across thousands of photos.
-*   **🧠 On-Device Intelligence:** Local ML Kit analysis for Image Labeling, Face Detection, and OCR (Text-in-Image).
-*   **🌍 Offline Geocoding:** Converts GPS coordinates into searchable locations using a local geographic database.
-*   **🔍 Hybrid Search Engine:** Combines natural language parsing (e.g., "last 2 weeks") with fuzzy text matching.
-*   **🔄 Incremental Sync:** High-performance scanning using Android's `MediaStore` generations to detect changes instantly with minimal battery impact.
-*   **🎨 Minimalistic UI:** A fluid, distraction-free experience built with Jetpack Compose.
-
-## 🏗️ Technical Architecture
-
-PhotoBook is built with a production-grade, modern Android stack:
-
-*   **Persistence:** Room Database with **FTS4 integration** for high-performance text search.
-*   **UI Toolkit:** Jetpack Compose (100% Declarative UI).
-*   **Concurrency:** Kotlin Coroutines & Reactive StateFlow.
-*   **Dependency Injection:** Dagger Hilt.
-*   **Background Tasks:** WorkManager for energy-efficient ML tagging.
-*   **Intelligence:** Google ML Kit (Vision API) for on-device analysis.
-
-## 🚀 Getting Started
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/photobook.git
-   ```
-2. Open in **Android Studio (Latest Version)**.
-3. Build and run on Android 8.0 (API 26) or higher.
-
-## 📄 License
-
-This project is licensed under the MIT License.
+### ⚡ Lightning Fast Search
+Stop scrolling for hours. Search for your photos just like you’re talking to a friend. 
+*   *"Photos of my dog from last summer"*
+*   *"Receipts from last week"*
+*   *"Selfies in Paris"*
+*   *"Screenshots with 'Order Confirmed'"*
 
 ---
-<div align="center">
-  <i>Your memories. Your privacy. Offline.</i>
-</div>
+
+## 🚀 Key Features
+
+### 🔍 Search Inside Your Life
+*   **Object Recognition:** Instantly find photos of food, sunsets, beaches, cars, and more.
+*   **Text Search:** Need that one receipt or Wi-Fi password? Just type what’s written on the photo to find it.
+*   **Map Search:** Find memories by city, state, or country—even if you were offline when you took them.
+*   **Video Moments:** Our app "watches" your videos so you can search for what happened *inside* them. Find that "birthday cake" moment in a 10-minute video instantly.
+
+### 🧹 One-Tap Gallery Cleanup
+Reclaim your storage with our intelligent "De-clutter" engine:
+*   **Find Duplicates:** Identify exact copies taking up space.
+*   **Similar Shots:** Pick the best photo from a series and delete the rest.
+*   **Blurry Photo Finder:** Automatically find and remove shots that didn't turn out right.
+*   **Burst Organizer:** Group together those rapid-fire shots into one neat folder.
+
+### 🔒 The Vault (Secret Folder)
+Keep your sensitive photos away from prying eyes. 
+*   **Biometric Lock:** Use your fingerprint or face to unlock your private album.
+*   **Invisible Storage:** Photos in the Vault don't show up in your main gallery or other apps.
+
+### 🪄 Magic QR Share
+Share high-quality photos with friends nearby without using Data, Wi-Fi, or Bluetooth. Just show a QR code, they scan it, and the photo is transferred instantly. It feels like magic.
+
+### 📖 Auto-Curated Memories
+Let PhotoBook tell your story. Our "Memory Curator" automatically finds your best trips, weekends, and holidays, and creates beautiful "Stories" for you to look back on.
+
+---
+
+## 💎 Pro Utilities
+*   **Text Copy:** Found a document? Long-press to copy the text directly from the image.
+*   **PDF Export:** Turn any photo or document into a high-quality PDF in seconds.
+*   **Smart Trash:** Accidentally deleted something? You have 30 days to get it back before it’s gone forever.
+
+---
+
+## ❤️ Free Forever. Private Forever.
+PhotoBook is built for users who want the power of modern AI without sacrificing their data. No subscriptions, no ads, and **zero tracking.**
+
+**Download PhotoBook today and see your photos in a whole new light.**

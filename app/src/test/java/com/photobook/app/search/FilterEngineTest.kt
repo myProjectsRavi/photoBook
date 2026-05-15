@@ -35,6 +35,7 @@ class FilterEngineTest {
         index.setRecords(records)
 
         val engine = FilterEngine(
+            index = index,
             queryParser = QueryParser(),
             tokenClassifier = TokenClassifier(index),
             filterFactory = FilterFactory(),
@@ -96,6 +97,7 @@ class FilterEngineTest {
         index.setRecords(records)
 
         val engine = FilterEngine(
+            index = index,
             queryParser = QueryParser(),
             tokenClassifier = TokenClassifier(index),
             filterFactory = FilterFactory(),
@@ -129,6 +131,38 @@ class FilterEngineTest {
             val second = engine.search(query, records)
             assertThat(first.results.map { it.id }).isEqualTo(second.results.map { it.id })
         }
+    }
+
+    @Test
+    fun sourceToken_filtersByKnownAppSource() = runTest {
+        val index = PhotoIndex()
+        val records = listOf(
+            samplePhoto(
+                id = 1,
+                year = 2024,
+                folderPath = "/storage/emulated/0/WhatsApp/Media/WhatsApp Images",
+                folderName = "whatsapp images",
+            ),
+            samplePhoto(
+                id = 2,
+                year = 2024,
+                folderPath = "/storage/emulated/0/DCIM/Camera",
+                folderName = "camera",
+            ),
+        )
+        index.setRecords(records)
+
+        val engine = FilterEngine(
+            index = index,
+            queryParser = QueryParser(),
+            tokenClassifier = TokenClassifier(index),
+            filterFactory = FilterFactory(),
+        )
+
+        val result = engine.search("source:whatsapp", records)
+
+        assertThat(result.results).hasSize(1)
+        assertThat(result.results.first().id).isEqualTo(1L)
     }
 
     private fun samplePhoto(

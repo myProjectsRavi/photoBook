@@ -83,6 +83,18 @@ class IndexPersistence @Inject constructor(
         }
     }
 
+    suspend fun getByIdsOrdered(ids: List<Long>): List<PhotoRecord> {
+        if (ids.isEmpty()) return emptyList()
+        return withContext(Dispatchers.IO) {
+            val entities = photoDao.getByIds(ids)
+            if (entities.isEmpty()) {
+                return@withContext emptyList()
+            }
+            val byId = entities.associateBy { entity -> entity.id }
+            ids.mapNotNull { id -> byId[id]?.toPhotoRecord() }
+        }
+    }
+
     suspend fun searchByQueryText(rawQuery: String, limit: Int = 1200): List<PhotoRecord> {
         val matchQuery = toFtsMatchQuery(rawQuery) ?: return emptyList()
         return withContext(Dispatchers.IO) {
@@ -215,6 +227,8 @@ class IndexPersistence @Inject constructor(
             isFrontCamera = optBoolean("isFrontCamera"),
             isHdr = optBoolean("isHdr"),
             isFavorite = optBoolean("isFavorite", false),
+            perceptualHash = if (isNull("perceptualHash")) null else optLong("perceptualHash"),
+            blurScore = if (isNull("blurScore")) null else optDouble("blurScore"),
             mlTags = tags,
             isMlProcessed = optBoolean("isMlProcessed", tags.isNotEmpty()),
             ocrText = optString("ocrText", ""),

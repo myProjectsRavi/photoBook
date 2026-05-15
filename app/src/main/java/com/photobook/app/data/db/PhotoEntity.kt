@@ -1,10 +1,19 @@
 package com.photobook.app.data.db
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.photobook.app.data.model.PhotoRecord
 
-@Entity(tableName = "photos")
+@Entity(
+    tableName = "photos",
+    indices = [
+        Index(value = ["dateAdded"]),
+        Index(value = ["isFavorite", "dateAdded"]),
+        Index(value = ["folderName"]),
+        Index(value = ["city", "state", "country"]),
+    ],
+)
 data class PhotoEntity(
     @PrimaryKey
     val id: Long,
@@ -32,6 +41,8 @@ data class PhotoEntity(
     val isFrontCamera: Boolean,
     val isHdr: Boolean,
     val isFavorite: Boolean,
+    val perceptualHash: Long?,
+    val blurScore: Double?,
     val mlTagsPayload: String,
     val isMlProcessed: Boolean,
     val ocrText: String,
@@ -65,6 +76,8 @@ fun PhotoEntity.toPhotoRecord(): PhotoRecord {
         isFrontCamera = isFrontCamera,
         isHdr = isHdr,
         isFavorite = isFavorite,
+        perceptualHash = perceptualHash,
+        blurScore = blurScore,
         mlTags = PhotoTagCodec.decode(mlTagsPayload),
         isMlProcessed = isMlProcessed,
         ocrText = ocrText,
@@ -99,6 +112,8 @@ fun PhotoRecord.toPhotoEntity(): PhotoEntity {
         isFrontCamera = isFrontCamera,
         isHdr = isHdr,
         isFavorite = isFavorite,
+        perceptualHash = perceptualHash,
+        blurScore = blurScore,
         mlTagsPayload = PhotoTagCodec.encode(mlTags),
         isMlProcessed = isMlProcessed,
         ocrText = ocrText,

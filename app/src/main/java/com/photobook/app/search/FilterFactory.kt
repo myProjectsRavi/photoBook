@@ -40,6 +40,7 @@ class FilterFactory @Inject constructor() {
             is PropertyToken -> propertyFilter(token.keyword)
             is LocationToken -> locationFilter(token.keyword, context)
             is MLTagToken -> mlFilter(token.keyword)
+            is SourceToken -> sourceFilter(token.source)
             is TextToken -> textFilter(token.keyword)
             is UnknownToken -> null
         }
@@ -148,6 +149,12 @@ class FilterFactory @Inject constructor() {
         }
     }
 
+    private fun sourceFilter(source: PhotoSource): PhotoFilter {
+        return { photo ->
+            photo.matchesSource(source)
+        }
+    }
+
     private fun textFilter(keyword: String): PhotoFilter {
         val normalized = keyword.lowercase().trim()
         if (normalized.isBlank()) return { true }
@@ -164,10 +171,19 @@ class FilterFactory @Inject constructor() {
         if (latitude == null || longitude == null) {
             return { false }
         }
+
+        // Bounding box for fast initial filtering
+        val latDelta = radiusKm / 111.0
+        val lonDelta = radiusKm / (111.0 * cos(Math.toRadians(latitude)))
+        val latRange = (latitude - latDelta)..(latitude + latDelta)
+        val lonRange = (longitude - lonDelta)..(longitude + lonDelta)
+
         return { photo ->
             val lat = photo.latitude
             val lon = photo.longitude
-            lat != null && lon != null && haversine(latitude, longitude, lat, lon) <= radiusKm
+            lat != null && lon != null &&
+                lat in latRange && lon in lonRange &&
+                haversine(latitude, longitude, lat, lon) <= radiusKm
         }
     }
 

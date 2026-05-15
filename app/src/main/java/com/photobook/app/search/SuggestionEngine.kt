@@ -15,6 +15,7 @@ class SuggestionEngine @Inject constructor(
     private val staticKeywords = listOf(
         "today", "yesterday", "this week", "last week", "this month", "last month",
         "camera", "screenshots", "whatsapp", "download",
+        "source:whatsapp", "source:telegram", "source:camera", "source:downloads", "source:screenshots",
         "large", "small", "portrait", "landscape", "hdr", "favorites",
         "near me", "home", "office", "abroad",
         "selfie", "food", "sunset", "document", "pet", "car", "people", "nature",

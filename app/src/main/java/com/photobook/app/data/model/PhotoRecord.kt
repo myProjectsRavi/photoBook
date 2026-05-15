@@ -1,5 +1,8 @@
 package com.photobook.app.data.model
 
+import androidx.compose.runtime.Immutable
+
+@Immutable
 data class PhotoRecord(
     val id: Long,
     val uriString: String,
@@ -26,6 +29,8 @@ data class PhotoRecord(
     val isFrontCamera: Boolean,
     val isHdr: Boolean,
     val isFavorite: Boolean = false,
+    val perceptualHash: Long? = null,
+    val blurScore: Double? = null,
     val mlTags: List<MLTag> = emptyList(),
     val isMlProcessed: Boolean = false,
     val ocrText: String = "",

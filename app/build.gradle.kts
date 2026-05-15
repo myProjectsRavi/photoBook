@@ -6,14 +6,23 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.kapt")
     id("com.google.dagger.hilt.android")
+    id("androidx.baselineprofile")
+}
+
+val injectedSigningStoreFile = gradle.startParameter.projectProperties["android.injected.signing.store.file"]
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+if (injectedSigningStoreFile != null && !File(injectedSigningStoreFile).isAbsolute) {
+    throw GradleException(
+        "Relative signing path '$injectedSigningStoreFile' is not supported by AGP externalOverride. " +
+            "Use an absolute keystore path (for example, '/Users/you/keys/photobook_keystore.jks').",
+    )
 }
 
 val releaseKeystoreProperties = Properties().apply {
     val keystorePropsFile = rootProject.file("keystore.properties")
     if (keystorePropsFile.exists()) {
         keystorePropsFile.inputStream().use(::load)
-    } else {
-        throw GradleException("Missing keystore.properties for release signing.")
     }
 }
 
@@ -25,8 +34,8 @@ android {
         applicationId = "com.photobook.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.0.4"
+        versionCode = 6
+        versionName = "1.0.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -39,22 +48,24 @@ android {
             val keystorePath = releaseKeystoreProperties.getProperty("storeFile")
                 ?.trim()
                 ?.takeIf { it.isNotEmpty() }
-                ?: throw GradleException("storeFile missing in keystore.properties")
 
-            val candidate = File(keystorePath).let { file ->
-                if (file.isAbsolute) file else rootProject.file(keystorePath)
-            }
-            if (!candidate.exists()) {
-                throw GradleException("Release keystore not found at: ${candidate.absolutePath}")
-            }
 
-            storeFile = candidate
-            storePassword = releaseKeystoreProperties.getProperty("storePassword")
-                ?: throw GradleException("storePassword missing in keystore.properties")
-            keyAlias = releaseKeystoreProperties.getProperty("keyAlias")
-                ?: throw GradleException("keyAlias missing in keystore.properties")
-            keyPassword = releaseKeystoreProperties.getProperty("keyPassword")
-                ?: throw GradleException("keyPassword missing in keystore.properties")
+            if (keystorePath != null) {
+                val candidate = File(keystorePath).let { file ->
+                    if (file.isAbsolute) file else rootProject.file(keystorePath)
+                }
+                if (!candidate.exists()) {
+                    throw GradleException("Release keystore not found at: ${candidate.absolutePath}")
+                }
+
+                storeFile = candidate
+                storePassword = releaseKeystoreProperties.getProperty("storePassword")
+                    ?: throw GradleException("storePassword missing in keystore.properties")
+                keyAlias = releaseKeystoreProperties.getProperty("keyAlias")
+                    ?: throw GradleException("keyAlias missing in keystore.properties")
+                keyPassword = releaseKeystoreProperties.getProperty("keyPassword")
+                    ?: throw GradleException("keyPassword missing in keystore.properties")
+            }
         }
     }
 
@@ -126,11 +137,19 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.navigation:navigation-compose:2.7.7")
     implementation("com.google.android.material:material:1.12.0")
+    implementation("androidx.camera:camera-core:1.3.4")
+    implementation("androidx.camera:camera-camera2:1.3.4")
+    implementation("androidx.camera:camera-lifecycle:1.3.4")
+    implementation("androidx.camera:camera-view:1.3.4")
 
     implementation("io.coil-kt:coil-compose:2.6.0")
 
     implementation("androidx.work:work-runtime-ktx:2.9.0")
+    implementation("androidx.paging:paging-runtime-ktx:3.3.2")
+    implementation("androidx.paging:paging-compose:3.3.2")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
+    implementation("androidx.biometric:biometric:1.1.0")
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     kapt("androidx.room:room-compiler:2.6.1")
@@ -144,6 +163,8 @@ dependencies {
     implementation("com.google.mlkit:image-labeling:17.0.8")
     implementation("com.google.mlkit:face-detection:16.1.6")
     implementation("com.google.mlkit:text-recognition:16.0.1")
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    implementation("com.google.zxing:core:3.5.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 
     testImplementation("junit:junit:4.13.2")
@@ -152,6 +173,7 @@ dependencies {
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    baselineProfile(project(":baselineprofile"))
 }
 
 tasks.register("verifyApkSize") {

@@ -16,4 +16,15 @@ class TokenClassifierTest {
         assertThat((classifier.classify("january") as MonthToken).month).isEqualTo(1)
         assertThat((classifier.classify("2023") as YearToken).year).isEqualTo(2023)
     }
+
+    @Test
+    fun classify_detectsSourceTokens() = runTest {
+        val index = PhotoIndex()
+        val classifier = TokenClassifier(index)
+
+        assertThat(classifier.classify("source:whatsapp"))
+            .isEqualTo(SourceToken(PhotoSource.WhatsApp))
+        assertThat(classifier.classify("downloads"))
+            .isEqualTo(SourceToken(PhotoSource.Downloads))
+    }
 }

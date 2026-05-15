@@ -10,3 +10,8 @@ captures/
 .externalNativeBuild/
 .cxx/
 app/release/
+outputs/
+keystore.properties
+*.jks
+*.keystore
+keys/
