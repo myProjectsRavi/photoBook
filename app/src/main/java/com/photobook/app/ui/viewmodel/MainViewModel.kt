@@ -25,8 +25,6 @@ import com.photobook.app.feature.duplicates.DuplicatePhotoGroup
 import com.photobook.app.feature.duplicates.DuplicateMatchKind
 import com.photobook.app.feature.memories.MemoryCurator
 import com.photobook.app.feature.memories.MemoryStory
-import com.photobook.app.feature.videoindex.VideoIndexRepository
-import com.photobook.app.feature.videoindex.VideoSearchMoment
 import com.photobook.app.ml.TaggingWorker
 import com.photobook.app.search.FilterEngine
 import com.photobook.app.search.FolderToken
@@ -48,7 +46,6 @@ import com.photobook.app.ui.model.TimelineMark
 import com.photobook.app.util.Constants
 import com.photobook.app.widget.OnThisDayWidgetProvider
 import com.photobook.app.worker.TrashPurgeWorker
-import com.photobook.app.worker.VideoIndexWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -83,7 +80,6 @@ class MainViewModel @Inject constructor(
     private val suggestionEngine: SuggestionEngine,
     private val duplicatePhotoFinder: DuplicatePhotoFinder,
     private val memoryCurator: MemoryCurator,
-    private val videoIndexRepository: VideoIndexRepository,
     private val sharedPreferences: SharedPreferences,
 ) : ViewModel() {
 
@@ -102,8 +98,6 @@ class MainViewModel @Inject constructor(
         val showSuggestions: Boolean = false,
         val onThisDayStory: MemoryStory? = null,
         val memoryStories: List<MemoryStory> = emptyList(),
-        val videoIndexingEnabled: Boolean = false,
-        val videoMoments: List<VideoSearchMoment> = emptyList(),
         val viewerStartIndex: Int? = null,
         val viewerPhotos: List<PhotoRecord> = emptyList(),
         val reelsStartIndex: Int? = null,
@@ -129,14 +123,12 @@ class MainViewModel @Inject constructor(
         queryFlow.debounce(Constants.SEARCH_DEBOUNCE_MS),
         photoIndex.records().debounce(RECORDS_UPDATE_DEBOUNCE_MS),
         uiState.map { it.favoritesOnly }.distinctUntilChanged(),
-        uiState.map { it.videoIndexingEnabled }.distinctUntilChanged(),
         uiState.map { it.feedMode }.distinctUntilChanged(),
-    ) { query, records, favoritesOnly, videoIndexingEnabled, feedMode ->
+    ) { query, records, favoritesOnly, feedMode ->
         SearchFlowInput(
             query = query,
             records = records,
             favoritesOnly = favoritesOnly,
-            videoIndexingEnabled = videoIndexingEnabled,
             feedMode = feedMode,
         )
     }.flatMapLatest { input ->
@@ -159,11 +151,6 @@ class MainViewModel @Inject constructor(
             buildTimelineMarks(filteredRecords)
         }
         val visibleIds = filteredIds.toSet()
-        val moments = if (input.videoIndexingEnabled && input.query.trim().isNotBlank()) {
-            videoIndexRepository.searchMoments(input.query)
-        } else {
-            emptyList()
-        }
 
         uiState.update { state ->
             state.copy(
@@ -171,7 +158,6 @@ class MainViewModel @Inject constructor(
                 resultCount = filteredIds.size,
                 selectedPhotoIds = clampSelectionToResultIds(state.selectedPhotoIds, visibleIds),
                 timelineMarks = timelineMarks,
-                videoMoments = moments,
                 searchReady = !state.isIndexing,
                 viewerStartIndex = normalizeViewerIndex(
                     currentIndex = state.viewerStartIndex,
@@ -210,7 +196,6 @@ class MainViewModel @Inject constructor(
         val query: String,
         val records: List<PhotoRecord>,
         val favoritesOnly: Boolean,
-        val videoIndexingEnabled: Boolean,
         val feedMode: HomeFeedMode,
     )
 
@@ -220,14 +205,6 @@ class MainViewModel @Inject constructor(
     )
 
     init {
-        uiState.update {
-            it.copy(
-                videoIndexingEnabled = sharedPreferences.getBoolean(
-                    Constants.VIDEO_INDEXING_ENABLED_KEY,
-                    false,
-                ),
-            )
-        }
         observeSuggestions()
     }
 
@@ -339,36 +316,8 @@ class MainViewModel @Inject constructor(
                 query = "",
                 selectedPhotoIds = emptySet(),
                 viewerStartIndex = null,
-                videoMoments = emptyList(),
                 showSuggestions = focusFlow.value && it.suggestions.isNotEmpty(),
             )
-        }
-    }
-
-    fun onToggleVideoIndexing() {
-        val nextEnabled = !uiState.value.videoIndexingEnabled
-        sharedPreferences.edit()
-            .putBoolean(Constants.VIDEO_INDEXING_ENABLED_KEY, nextEnabled)
-            .apply()
-
-        uiState.update { state ->
-            state.copy(
-                videoIndexingEnabled = nextEnabled,
-                videoMoments = if (nextEnabled) state.videoMoments else emptyList(),
-            )
-        }
-
-        if (nextEnabled) {
-            VideoIndexWorker.enqueueDaily(context)
-            viewModelScope.launch {
-                val query = uiState.value.query.trim()
-                if (query.isNotBlank()) {
-                    val moments = videoIndexRepository.searchMoments(query)
-                    uiState.update { state -> state.copy(videoMoments = moments) }
-                }
-            }
-        } else {
-            VideoIndexWorker.cancel(context)
         }
     }
 
@@ -716,9 +665,6 @@ class MainViewModel @Inject constructor(
 
             TaggingWorker.enqueueLibraryMaintenance(context)
             TrashPurgeWorker.enqueueDaily(context)
-            if (uiState.value.videoIndexingEnabled) {
-                VideoIndexWorker.enqueueDaily(context)
-            }
             registerMediaObserver()
         }
     }

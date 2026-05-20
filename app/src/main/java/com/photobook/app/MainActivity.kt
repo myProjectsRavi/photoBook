@@ -37,16 +37,12 @@ import androidx.paging.compose.collectAsLazyPagingItems
 import com.photobook.app.R
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.feature.metadata.ExifMetadataService
-import com.photobook.app.feature.metadata.SafeShareOptions
 import com.photobook.app.feature.metadata.SafeShareItem
-import com.photobook.app.feature.metadata.SharePrivacyScanResult
-import com.photobook.app.feature.metadata.SafeShareResult
 import com.photobook.app.feature.pdf.PdfExportResult
 import com.photobook.app.feature.pdf.PdfExportService
 import com.photobook.app.feature.qrshare.QrReceivedImageStore
 import com.photobook.app.feature.trash.TrashRequestResult
 import com.photobook.app.feature.trash.TrashService
-import com.photobook.app.feature.videoindex.VideoSearchMoment
 import com.photobook.app.feature.vault.VaultExportResult
 import com.photobook.app.feature.vault.VaultItem
 import com.photobook.app.feature.vault.VaultSaveResult
@@ -58,8 +54,6 @@ import com.photobook.app.ui.screen.MemoryStoryViewerScreen
 import com.photobook.app.ui.screen.PhotoReelsScreen
 import com.photobook.app.ui.screen.DeclutterSwipeScreen
 import com.photobook.app.ui.screen.QrReceiveScannerScreen
-import com.photobook.app.ui.screen.SharePrivacyPrepSheet
-import com.photobook.app.ui.screen.SharePrivacyPrepState
 import com.photobook.app.ui.screen.VaultBottomSheet
 import com.photobook.app.ui.theme.PhotoBookTheme
 import com.photobook.app.ui.viewmodel.MainViewModel
@@ -137,12 +131,6 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     }
     var showQrScanner by remember { mutableStateOf(false) }
     var pendingTrashPhotoIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
-    var showSharePrepSheet by remember { mutableStateOf(false) }
-    var pendingSharePhotos by remember { mutableStateOf<List<PhotoRecord>>(emptyList()) }
-    var sharePrepState by remember { mutableStateOf<SharePrivacyPrepState>(SharePrivacyPrepState.Loading) }
-    var shareStripMetadata by remember { mutableStateOf(true) }
-    var shareBlurFaces by remember { mutableStateOf(false) }
-    var isPreparingShare by remember { mutableStateOf(false) }
     var showVaultSheet by remember { mutableStateOf(false) }
     var isVaultLoading by remember { mutableStateOf(false) }
     var isVaultBusy by remember { mutableStateOf(false) }
@@ -242,21 +230,20 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         }
     }
 
-    fun startSharePrep(photos: List<PhotoRecord>) {
+    fun shareSelectedPhotos(photos: List<PhotoRecord>) {
         if (photos.isEmpty()) return
-        pendingSharePhotos = photos
-        shareStripMetadata = true
-        shareBlurFaces = false
-        isPreparingShare = false
-        sharePrepState = SharePrivacyPrepState.Loading
-        showSharePrepSheet = true
-
-        coroutineScope.launch {
-            sharePrepState = when (val scan = exifMetadataService.scanSharePrivacy(photos)) {
-                is SharePrivacyScanResult.Success -> SharePrivacyPrepState.Ready(scan.summary)
-                is SharePrivacyScanResult.Error -> SharePrivacyPrepState.Error
-            }
+        val items = photos.mapNotNull { photo ->
+            runCatching {
+                SafeShareItem(
+                    uri = Uri.parse(photo.uriString),
+                    mimeType = photo.mimeType.ifBlank { "image/*" },
+                    label = photo.fileName,
+                )
+            }.getOrNull()
         }
+        if (items.isEmpty()) return
+        sharePhotos(context, items)
+        viewModel.clearSelection()
     }
 
     fun refreshVaultItems() {
@@ -324,8 +311,6 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         showSuggestions = uiState.showSuggestions,
         onThisDayStory = uiState.onThisDayStory,
         memoryStories = uiState.memoryStories,
-        videoIndexingEnabled = uiState.videoIndexingEnabled,
-        videoMoments = uiState.videoMoments,
         duplicateGroups = uiState.duplicateGroups,
         isFindingDuplicates = uiState.isFindingDuplicates,
         showDuplicateFinder = uiState.showDuplicateFinder,
@@ -335,11 +320,10 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         onSuggestionSelected = viewModel::onSuggestionSelected,
         onClearQuery = viewModel::onClearQuery,
         onToggleFavoritesOnly = viewModel::onToggleFavoritesOnly,
-        onToggleVideoIndexing = viewModel::onToggleVideoIndexing,
         onShareSelected = { selectedIds ->
             coroutineScope.launch {
                 val selectedPhotos = viewModel.resolvePhotosByIds(selectedIds)
-                startSharePrep(selectedPhotos)
+                shareSelectedPhotos(selectedPhotos)
             }
         },
         onMoveSelectedToTrash = { selectedIds ->
@@ -458,9 +442,6 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         onDuplicatePhotoClick = viewModel::openDuplicatePhoto,
         onOpenOnThisDayStory = viewModel::onOpenOnThisDayStory,
         onMemoryStorySelected = viewModel::onMemoryStorySelected,
-        onVideoMomentClick = { moment ->
-            openVideoMoment(context, moment)
-        },
     )
 
     val viewerIndex = uiState.viewerStartIndex
@@ -497,7 +478,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             onDismiss = viewModel::closeReels,
             onToggleFavorite = viewModel::onToggleFavorite,
             onSharePhoto = { photo ->
-                startSharePrep(listOf(photo))
+                shareSelectedPhotos(listOf(photo))
             },
         )
     }
@@ -562,84 +543,6 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         QrReceiveScannerScreen(
             imageStore = qrReceivedImageStore,
             onDismiss = { showQrScanner = false },
-        )
-    }
-
-    if (showSharePrepSheet) {
-        SharePrivacyPrepSheet(
-            state = sharePrepState,
-            stripMetadata = shareStripMetadata,
-            blurFaces = shareBlurFaces,
-            isPreparingShare = isPreparingShare,
-            onToggleStripMetadata = { enabled -> shareStripMetadata = enabled },
-            onToggleBlurFaces = { enabled -> shareBlurFaces = enabled },
-            onRetryScan = {
-                val photos = pendingSharePhotos
-                if (photos.isNotEmpty()) {
-                    startSharePrep(photos)
-                }
-            },
-            onConfirmShare = {
-                val photos = pendingSharePhotos
-                if (photos.isEmpty()) return@SharePrivacyPrepSheet
-                coroutineScope.launch {
-                    isPreparingShare = true
-                    when (
-                        val safeShare = exifMetadataService.createSafeShareCopies(
-                            photos = photos,
-                            options = SafeShareOptions(
-                                stripMetadata = shareStripMetadata,
-                                blurFaces = shareBlurFaces,
-                            ),
-                        )
-                    ) {
-                        is SafeShareResult.Success -> {
-                            sharePhotos(context, safeShare.items)
-                            viewModel.clearSelection()
-                            showSharePrepSheet = false
-                            pendingSharePhotos = emptyList()
-                        }
-
-                        is SafeShareResult.Error -> {
-                            // Don't block the user — fall back to sharing the original images
-                            // so they can still complete the action; the privacy options
-                            // simply could not be applied (e.g., unsupported format).
-                            val fallbackItems = photos.mapNotNull { photo ->
-                                runCatching {
-                                    SafeShareItem(
-                                        uri = Uri.parse(photo.uriString),
-                                        mimeType = photo.mimeType.ifBlank { "image/*" },
-                                        label = photo.fileName,
-                                    )
-                                }.getOrNull()
-                            }
-                            if (fallbackItems.isNotEmpty()) {
-                                Toast.makeText(
-                                    context,
-                                    "Privacy prep skipped — sharing originals.",
-                                    Toast.LENGTH_SHORT,
-                                ).show()
-                                sharePhotos(context, fallbackItems)
-                                viewModel.clearSelection()
-                                showSharePrepSheet = false
-                                pendingSharePhotos = emptyList()
-                            } else {
-                                Toast.makeText(
-                                    context,
-                                    context.getString(R.string.safe_share_prepare_error),
-                                    Toast.LENGTH_SHORT,
-                                ).show()
-                            }
-                        }
-                    }
-                    isPreparingShare = false
-                }
-            },
-            onDismiss = {
-                showSharePrepSheet = false
-                pendingSharePhotos = emptyList()
-                isPreparingShare = false
-            },
         )
     }
 
@@ -742,28 +645,6 @@ private fun sharePdf(context: Context, uri: Uri, fileName: String) {
             context.getString(R.string.create_pdf_share),
         ),
     )
-}
-
-private fun openVideoMoment(context: Context, moment: VideoSearchMoment) {
-    val uri = runCatching { Uri.parse(moment.videoUriString) }.getOrNull() ?: return
-    val intent = Intent(Intent.ACTION_VIEW).apply {
-        setDataAndType(uri, moment.mimeType.ifBlank { "video/*" })
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        putExtra("android.intent.extra.START_PLAYBACK", true)
-        putExtra("android.intent.extra.START_TIME", moment.timestampMs.toInt())
-        putExtra("startTime", moment.timestampMs.toInt())
-        putExtra("seek_to", moment.timestampMs.toInt())
-    }
-
-    runCatching {
-        context.startActivity(Intent.createChooser(intent, context.getString(R.string.video_moments_title)))
-    }.onFailure {
-        Toast.makeText(
-            context,
-            context.getString(R.string.video_moment_open_error),
-            Toast.LENGTH_SHORT,
-        ).show()
-    }
 }
 
 private fun requestBiometricUnlock(

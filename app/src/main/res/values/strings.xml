@@ -166,13 +166,6 @@
     <string name="memories_title">Memories</string>
     <string name="memories_subtitle">Auto-curated</string>
     <string name="private_reassurance">Private, secure, and fully on-device.</string>
-    <string name="video_index_status">Video indexing: %1$s</string>
-    <string name="video_index_on">On</string>
-    <string name="video_index_off">Off</string>
-    <string name="video_index_enable">Enable</string>
-    <string name="video_index_disable">Disable</string>
-    <string name="video_moments_title">Video moments</string>
-    <string name="video_moment_open_error">Couldn\'t open this video moment.</string>
     <string name="vault_short_action">Vault</string>
     <string name="vault_add_selected">Add to Vault</string>
     <string name="vault_title">Private Vault</string>

@@ -38,7 +38,6 @@ import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.feature.duplicates.DuplicateMatchKind
 import com.photobook.app.feature.duplicates.DuplicatePhotoGroup
 import com.photobook.app.feature.memories.MemoryStory
-import com.photobook.app.feature.videoindex.VideoSearchMoment
 import com.photobook.app.search.PhotoSource
 import com.photobook.app.ui.component.EmptyState
 import com.photobook.app.ui.component.PhotoGrid
@@ -74,8 +73,6 @@ fun MainScreen(
     showSuggestions: Boolean,
     onThisDayStory: MemoryStory?,
     memoryStories: List<MemoryStory>,
-    videoIndexingEnabled: Boolean,
-    videoMoments: List<VideoSearchMoment>,
     duplicateGroups: List<DuplicatePhotoGroup>,
     isFindingDuplicates: Boolean,
     showDuplicateFinder: Boolean,
@@ -85,7 +82,6 @@ fun MainScreen(
     onSuggestionSelected: (SuggestionItem) -> Unit,
     onClearQuery: () -> Unit,
     onToggleFavoritesOnly: () -> Unit,
-    onToggleVideoIndexing: () -> Unit,
     onShareSelected: (Set<Long>) -> Unit,
     onMoveSelectedToTrash: (Set<Long>) -> Unit,
     onCreatePdfSelected: (Set<Long>) -> Unit,
@@ -107,7 +103,6 @@ fun MainScreen(
     onDuplicatePhotoClick: (String, Int) -> Unit,
     onOpenOnThisDayStory: () -> Unit,
     onMemoryStorySelected: (MemoryStory) -> Unit,
-    onVideoMomentClick: (VideoSearchMoment) -> Unit,
 ) {
     val isSelectionMode = selectedPhotoIds.isNotEmpty()
 
@@ -269,60 +264,6 @@ fun MainScreen(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                // Video Indexing Status
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    color = GlassSurface.copy(alpha = 0.82f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorder),
-                    tonalElevation = 1.dp,
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Default.Videocam,
-                                    contentDescription = null,
-                                    tint = if (videoIndexingEnabled) Color(0xFF22C55E) else Color(0xFF94A3B8),
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    "Video search: ${if (videoIndexingEnabled) "On" else "Off"}",
-                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold)
-                                )
-                            }
-                            TextButton(onClick = onToggleVideoIndexing) {
-                                Text(
-                                    if (videoIndexingEnabled) "Turn off" else "Turn on",
-                                    fontWeight = FontWeight.Black,
-                                    color = AccentIndigo
-                                )
-                            }
-                        }
-                        Text(
-                            text = if (videoIndexingEnabled) {
-                                "✅ Active! Try searching for things in your videos — e.g. \"beach\", \"birthday cake\", \"meeting\". Results appear as video moments you can tap to play."
-                            } else {
-                                "Turn on to make your videos searchable by content — fully on-device, no cloud. Slightly more battery while it scans."
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFF475569),
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
                 // Source Chips
                 Row(
                     modifier = Modifier
@@ -372,55 +313,18 @@ fun MainScreen(
                         EmptyState(modifier = Modifier.fillMaxSize())
                     }
                     else -> {
-                        Column {
-                            if (videoIndexingEnabled && videoMoments.isNotEmpty()) {
-                                VideoMomentsCard(
-                                    moments = videoMoments.take(4),
-                                    onVideoMomentClick = onVideoMomentClick,
-                                )
-                                Spacer(modifier = Modifier.height(12.dp))
-                            } else if (videoIndexingEnabled && query.isNotBlank()) {
-                                // Give clear feedback that video search is running even when
-                                // no matching moments were found yet (or videos still indexing).
-                                Surface(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(14.dp),
-                                    color = GlassSurface.copy(alpha = 0.82f),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorder),
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Videocam,
-                                            contentDescription = null,
-                                            tint = Color(0xFF94A3B8),
-                                            modifier = Modifier.size(18.dp),
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = "No video moments for \"$query\" yet. Videos index in the background — try again in a moment.",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = Color(0xFF475569),
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(12.dp))
-                            }
-                            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                                val columns = if (maxWidth >= 700.dp) 5 else if (maxWidth >= 520.dp) 4 else 3
-                                PhotoGrid(
-                                    photos = results,
-                                    columns = columns,
-                                    timelineMarks = timelineMarks,
-                                    selectedPhotoIds = selectedPhotoIds,
-                                    isSelectionMode = isSelectionMode,
-                                    onPhotoClick = onPhotoClick,
-                                    onPhotoLongClick = onPhotoLongClick,
-                                    modifier = Modifier.fillMaxSize(),
-                                )
-                            }
+                        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                            val columns = if (maxWidth >= 700.dp) 5 else if (maxWidth >= 520.dp) 4 else 3
+                            PhotoGrid(
+                                photos = results,
+                                columns = columns,
+                                timelineMarks = timelineMarks,
+                                selectedPhotoIds = selectedPhotoIds,
+                                isSelectionMode = isSelectionMode,
+                                onPhotoClick = onPhotoClick,
+                                onPhotoLongClick = onPhotoLongClick,
+                                modifier = Modifier.fillMaxSize(),
+                            )
                         }
                     }
                 }
@@ -572,86 +476,6 @@ private fun RefinedTabButton(
             )
         }
     }
-}
-
-@Composable
-private fun VideoMomentsCard(
-    moments: List<VideoSearchMoment>,
-    onVideoMomentClick: (VideoSearchMoment) -> Unit,
-) {
-    if (moments.isEmpty()) return
-
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        color = Color.White.copy(alpha = 0.72f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorder)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Videocam,
-                    contentDescription = null,
-                    tint = Color(0xFF4F46E5),
-                    modifier = Modifier.size(16.dp),
-                )
-                Text(
-                    text = stringResource(R.string.video_moments_title),
-                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Black),
-                )
-            }
-
-            moments.forEach { moment ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable { onVideoMomentClick(moment) }
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        Text(
-                            text = moment.displayName,
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                            maxLines = 1,
-                        )
-                        Text(
-                            text = moment.previewText,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.Gray,
-                            maxLines = 1,
-                        )
-                    }
-                    Text(
-                        text = formatVideoTimestamp(moment.timestampMs),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF4F46E5),
-                        modifier = Modifier.padding(start = 8.dp),
-                    )
-                }
-            }
-        }
-    }
-}
-
-private fun formatVideoTimestamp(timestampMs: Long): String {
-    val totalSeconds = (timestampMs / 1000L).coerceAtLeast(0L)
-    val minutes = totalSeconds / 60L
-    val seconds = totalSeconds % 60L
-    return "%d:%02d".format(minutes, seconds)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

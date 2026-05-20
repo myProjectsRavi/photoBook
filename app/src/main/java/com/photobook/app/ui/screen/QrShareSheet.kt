@@ -8,20 +8,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
@@ -33,7 +27,6 @@ import com.photobook.app.feature.qrshare.QrBitmapEncoder
 import com.photobook.app.feature.qrshare.QrShareEncoder
 import com.photobook.app.feature.qrshare.QrShareGenerationResult
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -45,25 +38,25 @@ fun QrShareSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    // Generate full multi-frame QR sequence (animated cycling). Works for any photo size.
-    val qrResult by produceState<QrAnimResult>(
-        initialValue = QrAnimResult.Loading,
+    // Instant single-frame QR — generate one tiny QR (≤2KB JPEG) that scans in <1s.
+    val qrResult by produceState<QrSingleResult>(
+        initialValue = QrSingleResult.Loading,
         key1 = photo.id,
     ) {
-        value = when (val gen = encoder.generateForPhoto(photo)) {
+        value = when (val gen = encoder.generateSingleFrameQr(photo)) {
             is QrShareGenerationResult.Success -> {
-                val frames = gen.packet.frames
-                val bitmaps = withContext(Dispatchers.Default) {
-                    frames.map { payload -> QrBitmapEncoder.encode(payload, sizePx = 720) }
+                val payload = gen.packet.frames.firstOrNull()
+                if (payload.isNullOrEmpty()) {
+                    QrSingleResult.Error
+                } else {
+                    val bitmap = withContext(Dispatchers.Default) {
+                        QrBitmapEncoder.encode(payload, sizePx = 600)
+                    }
+                    QrSingleResult.Ready(bitmap = bitmap, fileName = gen.packet.fileName)
                 }
-                QrAnimResult.Ready(
-                    bitmaps = bitmaps,
-                    totalChunks = gen.packet.totalChunks,
-                    fileName = gen.packet.fileName,
-                )
             }
-            is QrShareGenerationResult.TooLarge -> QrAnimResult.Error
-            is QrShareGenerationResult.Error -> QrAnimResult.Error
+            is QrShareGenerationResult.TooLarge -> QrSingleResult.Error
+            is QrShareGenerationResult.Error -> QrSingleResult.Error
         }
     }
 
@@ -85,48 +78,30 @@ fun QrShareSheet(
             )
 
             when (val result = qrResult) {
-                QrAnimResult.Loading -> {
+                QrSingleResult.Loading -> {
                     CircularProgressIndicator(modifier = Modifier.size(32.dp))
                 }
-                QrAnimResult.Error -> {
+                QrSingleResult.Error -> {
                     Text(
                         text = stringResource(R.string.viewer_qr_error),
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
-                is QrAnimResult.Ready -> {
-                    val bitmaps = result.bitmaps
-                    var frameIndex by remember(result) { mutableIntStateOf(0) }
-
-                    LaunchedEffect(result) {
-                        if (bitmaps.size <= 1) return@LaunchedEffect
-                        while (true) {
-                            delay(220L)
-                            frameIndex = (frameIndex + 1) % bitmaps.size
-                        }
-                    }
-
+                is QrSingleResult.Ready -> {
                     DisposableEffect(result) {
                         onDispose {
-                            bitmaps.forEach { bmp ->
-                                runCatching { if (!bmp.isRecycled) bmp.recycle() }
-                            }
+                            runCatching { if (!result.bitmap.isRecycled) result.bitmap.recycle() }
                         }
                     }
-
                     Image(
-                        bitmap = bitmaps[frameIndex.coerceIn(0, bitmaps.lastIndex)].asImageBitmap(),
+                        bitmap = result.bitmap.asImageBitmap(),
                         contentDescription = stringResource(R.string.viewer_qr_frame),
                         modifier = Modifier
                             .size(320.dp)
                             .padding(8.dp),
                     )
-                    LinearProgressIndicator(
-                        progress = { (frameIndex + 1f) / bitmaps.size.toFloat() },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
                     Text(
-                        text = "Frame ${frameIndex + 1} of ${bitmaps.size} — hold steady, the scanner picks up frames automatically.",
+                        text = "Scan to receive ${result.fileName}",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -136,12 +111,11 @@ fun QrShareSheet(
     }
 }
 
-private sealed interface QrAnimResult {
-    data object Loading : QrAnimResult
-    data object Error : QrAnimResult
+private sealed interface QrSingleResult {
+    data object Loading : QrSingleResult
+    data object Error : QrSingleResult
     data class Ready(
-        val bitmaps: List<android.graphics.Bitmap>,
-        val totalChunks: Int,
+        val bitmap: android.graphics.Bitmap,
         val fileName: String,
-    ) : QrAnimResult
+    ) : QrSingleResult
 }

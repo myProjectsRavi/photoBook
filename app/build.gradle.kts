@@ -121,7 +121,7 @@ android {
             include("arm64-v8a", "armeabi-v7a")
             // No universal APK — keeps per-ABI APKs lean (arm64-v8a ~48MB instead of ~140MB).
             // Use Play Store AAB for automatic per-device delivery.
-            isUniversalApk = false
+            isUniversalApk = true
         }
     }
 

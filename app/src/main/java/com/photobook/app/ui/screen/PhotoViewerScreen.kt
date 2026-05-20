@@ -12,7 +12,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -26,7 +26,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -110,9 +110,6 @@ import com.photobook.app.feature.metadata.ExifDetails
 import com.photobook.app.feature.metadata.ExifDetailsResult
 import com.photobook.app.feature.metadata.ExifMetadataService
 import com.photobook.app.feature.metadata.MetadataCleanResult
-import com.photobook.app.feature.metadata.SafeShareOptions
-import com.photobook.app.feature.metadata.SafeShareResult
-import com.photobook.app.feature.metadata.SharePrivacyScanResult
 import com.photobook.app.feature.notes.PhotoNoteStore
 import com.photobook.app.feature.qrshare.QrShareEncoder
 import java.util.Locale
@@ -172,11 +169,6 @@ fun PhotoViewerScreen(
     var isCleaningMetadata by remember { mutableStateOf(false) }
     var showQrShareSheet by remember { mutableStateOf(false) }
     var qrSharePhotoId by remember { mutableStateOf<Long?>(null) }
-    var showSharePrepSheet by remember { mutableStateOf(false) }
-    var sharePrepState by remember { mutableStateOf<SharePrivacyPrepState>(SharePrivacyPrepState.Loading) }
-    var shareStripMetadata by remember { mutableStateOf(true) }
-    var shareBlurFaces by remember { mutableStateOf(false) }
-    var isPreparingShare by remember { mutableStateOf(false) }
     var viewerZoomScale by remember { mutableStateOf(MIN_VIEWER_ZOOM) }
     var viewerZoomOffset by remember { mutableStateOf(Offset.Zero) }
     var viewerImageSize by remember { mutableStateOf(IntSize.Zero) }
@@ -217,12 +209,6 @@ fun PhotoViewerScreen(
     fun dismissQrShareSheet() {
         showQrShareSheet = false
         qrSharePhotoId = null
-    }
-
-    fun dismissSharePrepSheet() {
-        showSharePrepSheet = false
-        sharePrepState = SharePrivacyPrepState.Loading
-        isPreparingShare = false
     }
 
     fun dismissExifSheet() {
@@ -454,17 +440,19 @@ fun PhotoViewerScreen(
         }
     }
 
-    fun startSharePrepForActivePhoto() {
+    fun shareActivePhoto() {
         val active = photos[pagerState.currentPage]
-        showSharePrepSheet = true
-        sharePrepState = SharePrivacyPrepState.Loading
-        shareStripMetadata = true
-        shareBlurFaces = false
-        coroutineScope.launch {
-            sharePrepState = when (val scan = exifMetadataService.scanSharePrivacy(listOf(active))) {
-                is SharePrivacyScanResult.Success -> SharePrivacyPrepState.Ready(scan.summary)
-                is SharePrivacyScanResult.Error -> SharePrivacyPrepState.Error
-            }
+        val uri = runCatching { Uri.parse(active.uriString) }.getOrNull() ?: return
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = active.mimeType.ifBlank { "image/*" }
+            putExtra(Intent.EXTRA_STREAM, uri)
+            clipData = ClipData.newUri(context.contentResolver, active.fileName, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        runCatching {
+            context.startActivity(
+                Intent.createChooser(shareIntent, context.getString(R.string.viewer_share)),
+            )
         }
     }
 
@@ -484,9 +472,6 @@ fun PhotoViewerScreen(
         showTextRegionSelector = false
         if (qrSharePhotoId != null && qrSharePhotoId != activeId) {
             dismissQrShareSheet()
-        }
-        if (showSharePrepSheet) {
-            dismissSharePrepSheet()
         }
         if (showNotesSheet && notePhotoId != activeId) {
             showNotesSheet = false
@@ -511,7 +496,6 @@ fun PhotoViewerScreen(
             dismissCopySheet()
             dismissExifSheet()
             dismissQrShareSheet()
-            dismissSharePrepSheet()
             onDismiss()
         },
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -557,7 +541,7 @@ fun PhotoViewerScreen(
                     ) {
                         IconButton(
                             modifier = Modifier.size(42.dp),
-                            onClick = { startSharePrepForActivePhoto() },
+                            onClick = { shareActivePhoto() },
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Share,
@@ -623,7 +607,7 @@ fun PhotoViewerScreen(
                     }
                 }
 
-                HorizontalPager(
+                VerticalPager(
                     state = pagerState,
                     userScrollEnabled = viewerZoomScale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON,
                     modifier = Modifier
@@ -674,7 +658,7 @@ fun PhotoViewerScreen(
                                 }
                                 .then(
                                     // Only attach pinch-to-zoom/pan when zoomed in to avoid
-                                    // consuming horizontal swipes that the HorizontalPager needs.
+                                    // consuming swipes that the VerticalPager needs.
                                     if (viewerZoomScale > MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) {
                                         Modifier.pointerInput(photo.id, viewerImageSize) {
                                             detectTransformGestures { centroid, pan, zoom, _ ->
@@ -708,8 +692,8 @@ fun PhotoViewerScreen(
                                             }
                                         }
                                     } else {
-                                        // At 1x: pinch gesture + vertical swipe to switch photo
-                                        // (Reels-style up/down). Horizontal swipe stays for pager.
+                                        // At 1x: pinch gesture + horizontal swipe to switch photo.
+                                        // Vertical swipes are handled by VerticalPager (reels-style).
                                         Modifier
                                             .pointerInput(photo.id, viewerImageSize) {
                                                 detectTransformGestures { centroid, _, zoom, _ ->
@@ -735,13 +719,13 @@ fun PhotoViewerScreen(
                                                 }
                                             }
                                             .pointerInput(photo.id, photos.size) {
-                                                var totalDy = 0f
-                                                detectVerticalDragGestures(
-                                                    onDragStart = { totalDy = 0f },
+                                                var totalDx = 0f
+                                                detectHorizontalDragGestures(
+                                                    onDragStart = { totalDx = 0f },
                                                     onDragEnd = {
-                                                        val threshold = size.height * 0.12f
-                                                        if (totalDy <= -threshold) {
-                                                            // Swipe up = next photo
+                                                        val threshold = size.width * 0.18f
+                                                        if (totalDx <= -threshold) {
+                                                            // Swipe left = next photo
                                                             val next = (pagerState.currentPage + 1)
                                                                 .coerceAtMost(photos.size - 1)
                                                             if (next != pagerState.currentPage) {
@@ -749,8 +733,8 @@ fun PhotoViewerScreen(
                                                                     pagerState.animateScrollToPage(next)
                                                                 }
                                                             }
-                                                        } else if (totalDy >= threshold) {
-                                                            // Swipe down = previous photo
+                                                        } else if (totalDx >= threshold) {
+                                                            // Swipe right = previous photo
                                                             val prev = (pagerState.currentPage - 1).coerceAtLeast(0)
                                                             if (prev != pagerState.currentPage) {
                                                                 coroutineScope.launch {
@@ -758,14 +742,12 @@ fun PhotoViewerScreen(
                                                                 }
                                                             }
                                                         }
-                                                        totalDy = 0f
+                                                        totalDx = 0f
                                                     },
-                                                    onDragCancel = { totalDy = 0f },
-                                                    onVerticalDrag = { change, dragAmount ->
-                                                        totalDy += dragAmount
-                                                        // Consume only when drag is dominantly vertical
-                                                        // to keep horizontal pager swipe usable.
-                                                        if (kotlin.math.abs(totalDy) > 16f) {
+                                                    onDragCancel = { totalDx = 0f },
+                                                    onHorizontalDrag = { change, dragAmount ->
+                                                        totalDx += dragAmount
+                                                        if (kotlin.math.abs(totalDx) > 12f) {
                                                             change.consume()
                                                         }
                                                     },
@@ -904,90 +886,6 @@ fun PhotoViewerScreen(
                 photo = photos[pagerState.currentPage],
                 encoder = qrShareEncoder,
                 onDismiss = ::dismissQrShareSheet,
-            )
-        }
-        if (showSharePrepSheet) {
-            SharePrivacyPrepSheet(
-                state = sharePrepState,
-                stripMetadata = shareStripMetadata,
-                blurFaces = shareBlurFaces,
-                isPreparingShare = isPreparingShare,
-                onToggleStripMetadata = { enabled -> shareStripMetadata = enabled },
-                onToggleBlurFaces = { enabled -> shareBlurFaces = enabled },
-                onRetryScan = ::startSharePrepForActivePhoto,
-                onConfirmShare = {
-                    val activePhoto = photos[pagerState.currentPage]
-                    coroutineScope.launch {
-                        isPreparingShare = true
-                        when (
-                            val safeShare = exifMetadataService.createSafeShareCopies(
-                                photos = listOf(activePhoto),
-                                options = SafeShareOptions(
-                                    stripMetadata = shareStripMetadata,
-                                    blurFaces = shareBlurFaces,
-                                ),
-                            )
-                        ) {
-                            is SafeShareResult.Success -> {
-                                val item = safeShare.items.firstOrNull()
-                                if (item != null) {
-                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                        type = item.mimeType.ifBlank { "image/*" }
-                                        putExtra(Intent.EXTRA_STREAM, item.uri)
-                                        clipData = android.content.ClipData.newUri(
-                                            context.contentResolver,
-                                            item.label,
-                                            item.uri,
-                                        )
-                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                    }
-                                    context.startActivity(
-                                        Intent.createChooser(
-                                            shareIntent,
-                                            context.getString(R.string.viewer_share),
-                                        ),
-                                    )
-                                    dismissSharePrepSheet()
-                                } else {
-                                    Toast.makeText(
-                                        context,
-                                        context.getString(R.string.safe_share_prepare_error),
-                                        Toast.LENGTH_SHORT,
-                                    ).show()
-                                }
-                            }
-
-                            is SafeShareResult.Error -> {
-                                // Fall back to sharing the original (no privacy prep) so the user
-                                // can still complete their action.
-                                val fallbackIntent = Intent(Intent.ACTION_SEND).apply {
-                                    type = activePhoto.mimeType.ifBlank { "image/*" }
-                                    putExtra(Intent.EXTRA_STREAM, Uri.parse(activePhoto.uriString))
-                                    clipData = android.content.ClipData.newUri(
-                                        context.contentResolver,
-                                        activePhoto.fileName,
-                                        Uri.parse(activePhoto.uriString),
-                                    )
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                                Toast.makeText(
-                                    context,
-                                    "Privacy prep skipped — sharing original.",
-                                    Toast.LENGTH_SHORT,
-                                ).show()
-                                context.startActivity(
-                                    Intent.createChooser(
-                                        fallbackIntent,
-                                        context.getString(R.string.viewer_share),
-                                    ),
-                                )
-                                dismissSharePrepSheet()
-                            }
-                        }
-                        isPreparingShare = false
-                    }
-                },
-                onDismiss = ::dismissSharePrepSheet,
             )
         }
         if (showEditorSheet) {
