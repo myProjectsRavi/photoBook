@@ -267,75 +267,72 @@ class ExifMetadataService @Inject constructor(
 
             val createdFiles = mutableListOf<File>()
             val prepared = mutableListOf<SafeShareItem>()
+            var firstError: Throwable? = null
 
-            try {
-                val chunked = photos.chunked(4)
-                for (chunk in chunked) {
-                    val results = coroutineScope {
-                        chunk.map { photo ->
-                            async {
-                                val sourceUri = runCatching { Uri.parse(photo.uriString) }.getOrNull()
-                                    ?: throw IllegalStateException("Invalid photo uri for safe share")
-                                val mimeType = normalizeImageMime(photo.mimeType)
-                                val extension = extensionForMime(mimeType)
-                                val targetFile = File(
-                                    safeShareDir,
-                                    safeShareFileName(photo.fileName, extension),
-                                )
+            // Process photos sequentially to keep memory bounded on low-RAM devices and to
+            // ensure a single bad photo doesn't tank the whole batch.
+            for (photo in photos) {
+                val resultPair = runCatching {
+                    val sourceUri = Uri.parse(photo.uriString)
+                    val mimeType = normalizeImageMime(photo.mimeType)
+                    val extension = extensionForMime(mimeType)
+                    val targetFile = File(
+                        safeShareDir,
+                        safeShareFileName(photo.fileName, extension),
+                    )
 
-                                val copied = copyImageBytesToFile(sourceUri, targetFile)
-                                if (!copied) {
-                                    throw IllegalStateException("Failed to copy image to safe share cache")
-                                }
+                    val copied = copyImageBytesToFile(sourceUri, targetFile)
+                    if (!copied) error("Failed to copy image to cache")
 
-                                if (options.blurFaces) {
-                                    val blurred = blurFacesInSafeShareCopy(
-                                        sourceUri = sourceUri,
-                                        targetFile = targetFile,
-                                        mimeType = mimeType,
-                                    )
-                                    if (!blurred) {
-                                        throw IllegalStateException("Failed to apply face blur")
-                                    }
-                                }
+                    if (options.blurFaces) {
+                        // If face blur fails, log and continue with the unblurred copy.
+                        runCatching {
+                            blurFacesInSafeShareCopy(
+                                sourceUri = sourceUri,
+                                targetFile = targetFile,
+                                mimeType = mimeType,
+                            )
+                        }
+                    }
 
-                                if (options.stripMetadata) {
-                                    val stripped = stripSensitiveExif(targetFile)
-                                    if (!stripped) {
-                                        val rewritten = rewriteImageWithoutMetadataFromFile(
-                                            sourceFile = targetFile,
-                                            mimeType = mimeType,
-                                        )
-                                        if (!rewritten) {
-                                            throw IllegalStateException("Failed to sanitize image metadata")
-                                        }
-                                    }
-                                }
-
-                                val shareUri = FileProvider.getUriForFile(
-                                    context,
-                                    "${context.packageName}.fileprovider",
-                                    targetFile,
-                                )
-                                SafeShareItem(
-                                    uri = shareUri,
+                    if (options.stripMetadata) {
+                        // Try Exif strip first; if unsupported (PNG/WEBP) fall back to bitmap rewrite.
+                        val stripped = stripSensitiveExif(targetFile)
+                        if (!stripped) {
+                            runCatching {
+                                rewriteImageWithoutMetadataFromFile(
+                                    sourceFile = targetFile,
                                     mimeType = mimeType,
-                                    label = photo.fileName.ifBlank { targetFile.name },
-                                ) to targetFile
+                                )
                             }
-                        }.awaitAll()
+                        }
                     }
 
-                    results.forEach { (item, file) ->
-                        prepared += item
-                        createdFiles += file
-                    }
+                    val shareUri = FileProvider.getUriForFile(
+                        context,
+                        "${context.packageName}.fileprovider",
+                        targetFile,
+                    )
+                    SafeShareItem(
+                        uri = shareUri,
+                        mimeType = mimeType,
+                        label = photo.fileName.ifBlank { targetFile.name },
+                    ) to targetFile
                 }
 
+                resultPair.onSuccess { (item, file) ->
+                    prepared += item
+                    createdFiles += file
+                }.onFailure { err ->
+                    if (firstError == null) firstError = err
+                }
+            }
+
+            if (prepared.isNotEmpty()) {
                 SafeShareResult.Success(prepared)
-            } catch (t: Throwable) {
+            } else {
                 cleanupSafeShareFiles(createdFiles)
-                SafeShareResult.Error(t)
+                SafeShareResult.Error(firstError)
             }
         }
     }
@@ -394,10 +391,22 @@ class ExifMetadataService @Inject constructor(
     }
 
     private fun rewriteImageWithoutMetadataFromFile(sourceFile: File, mimeType: String): Boolean {
-        val uri = Uri.fromFile(sourceFile)
-        val bitmap = decodeSampledBitmap(uri, MAX_BITMAP_DIMENSION) ?: return false
+        // Decode directly from disk to avoid contentResolver gating on file:// URIs.
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        runCatching { BitmapFactory.decodeFile(sourceFile.absolutePath, bounds) }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return false
+        var sample = 1
+        while (bounds.outWidth / sample > MAX_BITMAP_DIMENSION || bounds.outHeight / sample > MAX_BITMAP_DIMENSION) {
+            sample *= 2
+        }
+        val opts = BitmapFactory.Options().apply {
+            inSampleSize = sample.coerceAtLeast(1)
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        val bitmap = runCatching {
+            BitmapFactory.decodeFile(sourceFile.absolutePath, opts)
+        }.getOrNull() ?: return false
         val format = compressFormatForMime(mimeType)
-
         return runCatching {
             FileOutputStream(sourceFile, false).use { stream ->
                 bitmap.compress(format, JPEG_QUALITY, stream)

@@ -41,6 +41,8 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+        // Strip locales we don't translate; cuts AndroidX/MLKit translations significantly.
+        resourceConfigurations += listOf("en")
     }
 
     signingConfigs {
@@ -117,8 +119,16 @@ android {
             isEnable = true
             reset()
             include("arm64-v8a", "armeabi-v7a")
-            isUniversalApk = true
+            // No universal APK — keeps per-ABI APKs lean (arm64-v8a ~48MB instead of ~140MB).
+            // Use Play Store AAB for automatic per-device delivery.
+            isUniversalApk = false
         }
+    }
+
+    bundle {
+        language { enableSplit = true }
+        density { enableSplit = true }
+        abi { enableSplit = true }
     }
 }
 

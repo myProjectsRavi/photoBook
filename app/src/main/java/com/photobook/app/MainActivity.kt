@@ -148,6 +148,11 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     var isVaultBusy by remember { mutableStateOf(false) }
     var vaultItems by remember { mutableStateOf<List<VaultItem>>(emptyList()) }
 
+    // Trash bin state
+    var showTrashScreen by remember { mutableStateOf(false) }
+    var trashedPhotos by remember { mutableStateOf<List<com.photobook.app.feature.trash.TrashedPhoto>>(emptyList()) }
+    var isLoadingTrash by remember { mutableStateOf(false) }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
@@ -186,6 +191,27 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                 context.getString(R.string.trash_request_cancelled),
                 Toast.LENGTH_SHORT,
             ).show()
+        }
+    }
+
+    // Launcher used for both Restore and Delete-Forever flows in the Trash screen.
+    val trashActionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult(),
+    ) { _ ->
+        // After any system action, re-query trash list.
+        coroutineScope.launch {
+            isLoadingTrash = true
+            trashedPhotos = trashService.listTrashed()
+            isLoadingTrash = false
+        }
+    }
+
+    fun openTrashBin() {
+        showTrashScreen = true
+        coroutineScope.launch {
+            isLoadingTrash = true
+            trashedPhotos = trashService.listTrashed()
+            isLoadingTrash = false
         }
     }
 
@@ -422,7 +448,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                 refreshVaultItems()
             }
         },
-        onOpenReels = { viewModel.openReels() },
+        onOpenReels = { openTrashBin() },
         onSelectFeedMode = viewModel::onSelectFeedMode,
         onSourceSelected = viewModel::onSourceSelected,
         onOpenDeclutter = viewModel::openDeclutterSwipe,
@@ -472,6 +498,40 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             onToggleFavorite = viewModel::onToggleFavorite,
             onSharePhoto = { photo ->
                 startSharePrep(listOf(photo))
+            },
+        )
+    }
+
+    if (showTrashScreen) {
+        com.photobook.app.ui.screen.TrashScreen(
+            photos = trashedPhotos,
+            isLoading = isLoadingTrash,
+            onDismiss = { showTrashScreen = false },
+            onRestore = { item ->
+                when (val req = trashService.createRestoreRequest(listOf(item.uri))) {
+                    is TrashRequestResult.Ready -> {
+                        trashActionLauncher.launch(IntentSenderRequest.Builder(req.intentSender).build())
+                    }
+                    TrashRequestResult.UnsupportedAndroid -> Toast.makeText(
+                        context, context.getString(R.string.trash_not_supported), Toast.LENGTH_SHORT
+                    ).show()
+                    is TrashRequestResult.Error -> Toast.makeText(
+                        context, context.getString(R.string.trash_request_error), Toast.LENGTH_SHORT
+                    ).show()
+                }
+            },
+            onDeleteForever = { item ->
+                when (val req = trashService.createDeleteRequest(listOf(item.uri))) {
+                    is TrashRequestResult.Ready -> {
+                        trashActionLauncher.launch(IntentSenderRequest.Builder(req.intentSender).build())
+                    }
+                    TrashRequestResult.UnsupportedAndroid -> Toast.makeText(
+                        context, context.getString(R.string.trash_not_supported), Toast.LENGTH_SHORT
+                    ).show()
+                    is TrashRequestResult.Error -> Toast.makeText(
+                        context, context.getString(R.string.trash_request_error), Toast.LENGTH_SHORT
+                    ).show()
+                }
             },
         )
     }
@@ -541,11 +601,35 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                         }
 
                         is SafeShareResult.Error -> {
-                            Toast.makeText(
-                                context,
-                                context.getString(R.string.safe_share_prepare_error),
-                                Toast.LENGTH_SHORT,
-                            ).show()
+                            // Don't block the user — fall back to sharing the original images
+                            // so they can still complete the action; the privacy options
+                            // simply could not be applied (e.g., unsupported format).
+                            val fallbackItems = photos.mapNotNull { photo ->
+                                runCatching {
+                                    SafeShareItem(
+                                        uri = Uri.parse(photo.uriString),
+                                        mimeType = photo.mimeType.ifBlank { "image/*" },
+                                        label = photo.fileName,
+                                    )
+                                }.getOrNull()
+                            }
+                            if (fallbackItems.isNotEmpty()) {
+                                Toast.makeText(
+                                    context,
+                                    "Privacy prep skipped — sharing originals.",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                                sharePhotos(context, fallbackItems)
+                                viewModel.clearSelection()
+                                showSharePrepSheet = false
+                                pendingSharePhotos = emptyList()
+                            } else {
+                                Toast.makeText(
+                                    context,
+                                    context.getString(R.string.safe_share_prepare_error),
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
                         }
                     }
                     isPreparingShare = false

@@ -956,12 +956,9 @@ class MainViewModel @Inject constructor(
     ): FilterEngine.SearchResult {
         val normalizedQuery = query.trim()
         if (normalizedQuery.isBlank()) {
-            val feedRecords = when (feedMode) {
-                HomeFeedMode.Timeline -> records.filterNot { photo -> photo.isUtilityPhoto() }
-                HomeFeedMode.Utilities -> records.filter { photo -> photo.isUtilityPhoto() }
-            }
+            // Timeline is the single feed mode now — shows all photos (incl. screenshots) chronologically.
             return FilterEngine.SearchResult(
-                results = feedRecords,
+                results = records,
                 tokens = emptyList(),
             )
         }

@@ -12,6 +12,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -73,6 +74,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
@@ -705,30 +708,69 @@ fun PhotoViewerScreen(
                                             }
                                         }
                                     } else {
-                                        // At 1x: only pinch gesture (no pan) so pager swipe works
-                                        Modifier.pointerInput(photo.id, viewerImageSize) {
-                                            detectTransformGestures { centroid, _, zoom, _ ->
-                                                if (viewerImageSize.width == 0 || viewerImageSize.height == 0) {
-                                                    return@detectTransformGestures
-                                                }
-                                                val newScale = (viewerZoomScale * zoom).coerceIn(MIN_VIEWER_ZOOM, MAX_VIEWER_ZOOM)
-                                                if (newScale > MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) {
-                                                    val center = viewerImageSize.centerOffset()
-                                                    val centroidDelta = centroid - center
-                                                    val scaleFactor = newScale / viewerZoomScale
-                                                    val targetOffset = Offset(
-                                                        x = centroidDelta.x * (1f - scaleFactor),
-                                                        y = centroidDelta.y * (1f - scaleFactor),
-                                                    )
-                                                    viewerZoomScale = newScale
-                                                    viewerZoomOffset = clampViewerOffset(
-                                                        offset = targetOffset,
-                                                        scale = newScale,
-                                                        containerSize = viewerImageSize,
-                                                    )
+                                        // At 1x: pinch gesture + vertical swipe to switch photo
+                                        // (Reels-style up/down). Horizontal swipe stays for pager.
+                                        Modifier
+                                            .pointerInput(photo.id, viewerImageSize) {
+                                                detectTransformGestures { centroid, _, zoom, _ ->
+                                                    if (viewerImageSize.width == 0 || viewerImageSize.height == 0) {
+                                                        return@detectTransformGestures
+                                                    }
+                                                    val newScale = (viewerZoomScale * zoom).coerceIn(MIN_VIEWER_ZOOM, MAX_VIEWER_ZOOM)
+                                                    if (newScale > MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) {
+                                                        val center = viewerImageSize.centerOffset()
+                                                        val centroidDelta = centroid - center
+                                                        val scaleFactor = newScale / viewerZoomScale
+                                                        val targetOffset = Offset(
+                                                            x = centroidDelta.x * (1f - scaleFactor),
+                                                            y = centroidDelta.y * (1f - scaleFactor),
+                                                        )
+                                                        viewerZoomScale = newScale
+                                                        viewerZoomOffset = clampViewerOffset(
+                                                            offset = targetOffset,
+                                                            scale = newScale,
+                                                            containerSize = viewerImageSize,
+                                                        )
+                                                    }
                                                 }
                                             }
-                                        }
+                                            .pointerInput(photo.id, photos.size) {
+                                                var totalDy = 0f
+                                                detectVerticalDragGestures(
+                                                    onDragStart = { totalDy = 0f },
+                                                    onDragEnd = {
+                                                        val threshold = size.height * 0.12f
+                                                        if (totalDy <= -threshold) {
+                                                            // Swipe up = next photo
+                                                            val next = (pagerState.currentPage + 1)
+                                                                .coerceAtMost(photos.size - 1)
+                                                            if (next != pagerState.currentPage) {
+                                                                coroutineScope.launch {
+                                                                    pagerState.animateScrollToPage(next)
+                                                                }
+                                                            }
+                                                        } else if (totalDy >= threshold) {
+                                                            // Swipe down = previous photo
+                                                            val prev = (pagerState.currentPage - 1).coerceAtLeast(0)
+                                                            if (prev != pagerState.currentPage) {
+                                                                coroutineScope.launch {
+                                                                    pagerState.animateScrollToPage(prev)
+                                                                }
+                                                            }
+                                                        }
+                                                        totalDy = 0f
+                                                    },
+                                                    onDragCancel = { totalDy = 0f },
+                                                    onVerticalDrag = { change, dragAmount ->
+                                                        totalDy += dragAmount
+                                                        // Consume only when drag is dominantly vertical
+                                                        // to keep horizontal pager swipe usable.
+                                                        if (kotlin.math.abs(totalDy) > 16f) {
+                                                            change.consume()
+                                                        }
+                                                    },
+                                                )
+                                            }
                                     }
                                 )
                                 .graphicsLayer {
@@ -916,11 +958,30 @@ fun PhotoViewerScreen(
                             }
 
                             is SafeShareResult.Error -> {
+                                // Fall back to sharing the original (no privacy prep) so the user
+                                // can still complete their action.
+                                val fallbackIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = activePhoto.mimeType.ifBlank { "image/*" }
+                                    putExtra(Intent.EXTRA_STREAM, Uri.parse(activePhoto.uriString))
+                                    clipData = android.content.ClipData.newUri(
+                                        context.contentResolver,
+                                        activePhoto.fileName,
+                                        Uri.parse(activePhoto.uriString),
+                                    )
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
                                 Toast.makeText(
                                     context,
-                                    context.getString(R.string.safe_share_prepare_error),
+                                    "Privacy prep skipped — sharing original.",
                                     Toast.LENGTH_SHORT,
                                 ).show()
+                                context.startActivity(
+                                    Intent.createChooser(
+                                        fallbackIntent,
+                                        context.getString(R.string.viewer_share),
+                                    ),
+                                )
+                                dismissSharePrepSheet()
                             }
                         }
                         isPreparingShare = false
@@ -1455,10 +1516,20 @@ private fun QuickEditorBottomSheet(
                     .background(Color.Black, RoundedCornerShape(14.dp)),
                 contentAlignment = Alignment.Center,
             ) {
+                val previewColorFilter = remember(state.exposure, state.contrast, state.filter) {
+                    ColorFilter.colorMatrix(
+                        buildEditorPreviewMatrix(
+                            exposure = state.exposure,
+                            contrast = state.contrast,
+                            filter = state.filter,
+                        )
+                    )
+                }
                 AsyncImage(
                     model = Uri.parse(photo.uriString),
                     contentDescription = photo.fileName,
                     contentScale = ContentScale.Crop,
+                    colorFilter = previewColorFilter,
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer {
@@ -1844,3 +1915,86 @@ private const val MIN_VIEWER_ZOOM = 1f
 private const val MAX_VIEWER_ZOOM = 6f
 private const val DOUBLE_TAP_VIEWER_ZOOM = 3f
 private const val VIEWER_ZOOM_EPSILON = 0.01f
+
+/**
+ * Builds a Compose ColorMatrix mirroring [PhotoEditService]'s contrast → exposure → filter pipeline
+ * so the live preview matches the rendered result.
+ */
+private fun buildEditorPreviewMatrix(
+    exposure: Float,
+    contrast: Float,
+    filter: com.photobook.app.feature.editor.QuickFilter,
+): ColorMatrix {
+    val c = contrast.coerceIn(0.6f, 1.6f)
+    val translate = 128f * (1f - c)
+    val contrastValues = floatArrayOf(
+        c, 0f, 0f, 0f, translate,
+        0f, c, 0f, 0f, translate,
+        0f, 0f, c, 0f, translate,
+        0f, 0f, 0f, 1f, 0f,
+    )
+
+    val offset = exposure.coerceIn(-1f, 1f) * 62f
+    val exposureValues = floatArrayOf(
+        1f, 0f, 0f, 0f, offset,
+        0f, 1f, 0f, 0f, offset,
+        0f, 0f, 1f, 0f, offset,
+        0f, 0f, 0f, 1f, 0f,
+    )
+
+    val filterValues = when (filter) {
+        com.photobook.app.feature.editor.QuickFilter.Original -> floatArrayOf(
+            1f, 0f, 0f, 0f, 0f,
+            0f, 1f, 0f, 0f, 0f,
+            0f, 0f, 1f, 0f, 0f,
+            0f, 0f, 0f, 1f, 0f,
+        )
+        com.photobook.app.feature.editor.QuickFilter.Mono -> floatArrayOf(
+            0.299f, 0.587f, 0.114f, 0f, 0f,
+            0.299f, 0.587f, 0.114f, 0f, 0f,
+            0.299f, 0.587f, 0.114f, 0f, 0f,
+            0f, 0f, 0f, 1f, 0f,
+        )
+        com.photobook.app.feature.editor.QuickFilter.Vivid -> floatArrayOf(
+            1.343f, -0.168f, -0.033f, 0f, 6f,
+            -0.078f, 1.434f, -0.114f, 0f, 6f,
+            -0.078f, -0.168f, 1.388f, 0f, 6f,
+            0f, 0f, 0f, 1f, 0f,
+        )
+        com.photobook.app.feature.editor.QuickFilter.Warm -> floatArrayOf(
+            1.08f, 0f, 0f, 0f, 8f,
+            0f, 1.0f, 0f, 0f, 2f,
+            0f, 0f, 0.92f, 0f, -6f,
+            0f, 0f, 0f, 1f, 0f,
+        )
+        com.photobook.app.feature.editor.QuickFilter.Cool -> floatArrayOf(
+            0.94f, 0f, 0f, 0f, -4f,
+            0f, 1.0f, 0f, 0f, 0f,
+            0f, 0f, 1.08f, 0f, 8f,
+            0f, 0f, 0f, 1f, 0f,
+        )
+    }
+
+    return ColorMatrix(multiplyColorMatrices(multiplyColorMatrices(contrastValues, exposureValues), filterValues))
+}
+
+/** Compose a × b for 4×5 ColorMatrix arrays (rows of mat-A applied after mat-B logically). */
+private fun multiplyColorMatrices(a: FloatArray, b: FloatArray): FloatArray {
+    val out = FloatArray(20)
+    for (row in 0..3) {
+        for (col in 0..3) {
+            var sum = 0f
+            for (k in 0..3) {
+                sum += a[row * 5 + k] * b[k * 5 + col]
+            }
+            out[row * 5 + col] = sum
+        }
+        // Translation column (index 4) combines the row of A applied to B's translation, plus A's own translation.
+        var translation = a[row * 5 + 4]
+        for (k in 0..3) {
+            translation += a[row * 5 + k] * b[k * 5 + 4]
+        }
+        out[row * 5 + 4] = translation
+    }
+    return out
+}

@@ -259,9 +259,9 @@ fun MainScreen(
                         enabled = searchReady
                     )
                     RefinedActionButton(
-                        icon = Icons.Default.ViewDay,
-                        label = "Reels",
-                        onClick = onOpenReels,
+                        icon = Icons.Default.Delete,
+                        label = "Trash",
+                        onClick = onOpenReels, // wired to Trash via MainActivity
                         color = AccentViolet,
                         enabled = searchReady && !isSelectionMode
                     )
@@ -340,30 +340,7 @@ fun MainScreen(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // Timeline / Utilities
-                if (searchReady && query.isBlank() && !isSelectionMode) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(GlassSurface.copy(alpha = 0.72f))
-                            .border(1.dp, GlassBorder, RoundedCornerShape(18.dp))
-                            .padding(4.dp)
-                    ) {
-                        RefinedTabButton(
-                            label = "Timeline",
-                            selected = feedMode == HomeFeedMode.Timeline,
-                            onClick = { onSelectFeedMode(HomeFeedMode.Timeline) },
-                            modifier = Modifier.weight(1f)
-                        )
-                        RefinedTabButton(
-                            label = "Screenshots",
-                            selected = feedMode == HomeFeedMode.Utilities,
-                            onClick = { onSelectFeedMode(HomeFeedMode.Utilities) },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
+                // (Removed Timeline/Screenshots tab row — Timeline is the only feed.)
             }
 
             // Suggestions
@@ -401,6 +378,34 @@ fun MainScreen(
                                     moments = videoMoments.take(4),
                                     onVideoMomentClick = onVideoMomentClick,
                                 )
+                                Spacer(modifier = Modifier.height(12.dp))
+                            } else if (videoIndexingEnabled && query.isNotBlank()) {
+                                // Give clear feedback that video search is running even when
+                                // no matching moments were found yet (or videos still indexing).
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = GlassSurface.copy(alpha = 0.82f),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorder),
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Videocam,
+                                            contentDescription = null,
+                                            tint = Color(0xFF94A3B8),
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "No video moments for \"$query\" yet. Videos index in the background — try again in a moment.",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color(0xFF475569),
+                                        )
+                                    }
+                                }
                                 Spacer(modifier = Modifier.height(12.dp))
                             }
                             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {

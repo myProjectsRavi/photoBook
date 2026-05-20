@@ -21,12 +21,16 @@ Your goal is to help maintain and expand PhotoBook as the premier offline photo 
 ## 🧩 Recent Architecture Notes
 
 *   **Vault UI removed** — biometric infrastructure still exists but vault buttons/screens have been removed from the UI.
-*   **"Utilities" tab renamed to "Screenshots"** in the UI (enum name unchanged).
-*   **Photo Reels** — `PhotoReelsScreen.kt` provides Instagram-style vertical pager browsing.
-*   **Photo Viewer** — supports 6x max zoom, conditional gestures (pan only when zoomed >1x, pager swipes at 1x), prominent share button top-right.
-*   **QR Sharing** — single-frame compressed QR (`PB1|transferId|fileName|base64`, ≤2KB payload). No animation frames.
+*   **Timeline is the only feed** — Timeline/Screenshots tab row removed; Timeline shows all photos chronologically.
+*   **Photo Reels removed from UI** — vertical-swipe reels behavior is now built into `PhotoViewerScreen` (swipe up = next, swipe down = previous, horizontal swipe still works).
+*   **Trash/Bin screen** — `TrashScreen.kt` lists MediaStore trashed photos with Restore / Delete-forever actions (Android 11+).
+*   **Photo Viewer** — supports 6x max zoom, conditional gestures (pan only when zoomed >1x; pager horizontal swipe + vertical swipe at 1x), prominent share button top-right.
+*   **QR Sharing** — multi-frame animated QR (`QrTransferProtocol`); UI cycles frames at ~220ms each. Receiver re-assembles via `QrTransferAssembler`.
 *   **Private Notes** — searchable via `PhotoNoteStore.noteContains()` with in-memory cache for O(1) lookups.
-*   **PRO badge** — gold gradient badge in top bar (replaces old "OFFLINE GALLERY" text).
+*   **Editor preview** — `QuickEditorBottomSheet` applies a Compose `ColorMatrix` `ColorFilter` so exposure/contrast/filter are reflected live before saving.
+*   **Safe Share** — `ExifMetadataService.createSafeShareCopies` processes photos sequentially with per-photo `runCatching` so a single bad asset doesn't fail the whole batch. `MainActivity` & `PhotoViewerScreen` fall back to sharing the original if privacy prep fails.
+*   **APK Size** — `splits.abi.isUniversalApk = false` keeps per-ABI APKs lean (arm64-v8a ~47MB). Ship the AAB to Play Store for automatic delivery.
+*   **PRO badge** — gold gradient badge in top bar.
 
 ## 🧪 Testing Mandate
 
