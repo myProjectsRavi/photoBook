@@ -246,5 +246,88 @@ class QrShareEncoder @Inject constructor(
         private const val MAX_SCALE_ATTEMPTS = 4
         private const val MIN_DIMENSION_RATIO = 0.40
         private const val MAX_DIMENSION_RATIO = 0.92
+
+        // Single-frame QR constraints
+        private const val SINGLE_QR_MAX_BYTES = 2000  // ~2KB fits in one dense QR
+        private const val SINGLE_QR_MAX_DIMENSION = 240
+        private const val SINGLE_QR_MIN_QUALITY = 30
+        private const val SINGLE_QR_MAX_QUALITY = 65
+    }
+
+    /**
+     * Generate a single-frame QR code that can be scanned instantly.
+     * Compresses the photo aggressively to a tiny JPEG that fits in one QR payload.
+     */
+    suspend fun generateSingleFrameQr(photo: PhotoRecord): QrShareGenerationResult {
+        return withContext(Dispatchers.IO) {
+            val uri = runCatching { Uri.parse(photo.uriString) }.getOrNull()
+                ?: return@withContext QrShareGenerationResult.Error()
+
+            val bitmap = decodeSampledBitmap(uri, SINGLE_QR_MAX_DIMENSION)
+                ?: return@withContext QrShareGenerationResult.Error()
+
+            try {
+                // Scale down to max 240px
+                val scaled = scaleBitmapToMaxDimension(bitmap, SINGLE_QR_MAX_DIMENSION)
+                val imageBytes = findBestQualityForSingleQr(scaled)
+                if (scaled !== bitmap) scaled.recycleSafely()
+
+                if (imageBytes == null || imageBytes.isEmpty()) {
+                    return@withContext QrShareGenerationResult.TooLarge(
+                        byteSize = 0,
+                        maxSupportedBytes = SINGLE_QR_MAX_BYTES,
+                    )
+                }
+
+                val transferId = UUID.randomUUID().toString().replace("-", "").take(8)
+                val fileName = photo.fileName.ifBlank { "PhotoBook_${photo.id}.jpg" }
+                val base64Payload = Base64.getUrlEncoder().withoutPadding().encodeToString(imageBytes)
+
+                // Single payload: PB1|transferId|fileName|base64ImageData
+                val singlePayload = "PB1|$transferId|$fileName|$base64Payload"
+
+                QrShareGenerationResult.Success(
+                    packet = QrSharePacket(
+                        transferId = transferId,
+                        fileName = fileName,
+                        mimeType = "image/jpeg",
+                        byteSize = imageBytes.size,
+                        totalChunks = 1,
+                        frames = listOf(singlePayload),
+                    ),
+                )
+            } finally {
+                bitmap.recycleSafely()
+            }
+        }
+    }
+
+    private fun findBestQualityForSingleQr(bitmap: Bitmap): ByteArray? {
+        var low = SINGLE_QR_MIN_QUALITY
+        var high = SINGLE_QR_MAX_QUALITY
+        var best: ByteArray? = null
+
+        while (low <= high) {
+            val quality = (low + high) / 2
+            val encoded = encodeJpeg(bitmap, quality)
+            if (encoded.size <= SINGLE_QR_MAX_BYTES) {
+                best = encoded
+                low = quality + 1
+            } else {
+                high = quality - 1
+            }
+        }
+
+        // If even minimum quality doesn't fit, try tiny scale
+        if (best == null) {
+            val tiny = scaleBitmapToMaxDimension(bitmap, 120)
+            val encoded = encodeJpeg(tiny, SINGLE_QR_MIN_QUALITY)
+            if (tiny !== bitmap) tiny.recycleSafely()
+            if (encoded.size <= SINGLE_QR_MAX_BYTES) {
+                best = encoded
+            }
+        }
+
+        return best
     }
 }

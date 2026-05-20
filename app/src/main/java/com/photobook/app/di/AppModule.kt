@@ -58,10 +58,14 @@ object AppModule {
     fun provideImageLoader(
         @ApplicationContext context: Context,
     ): ImageLoader {
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        // Use a smaller memory cache on low-RAM devices (2 GB or less) to avoid
+        // triggering system OOM kills while remaining responsive.
+        val cachePercent = if (am.isLowRamDevice) 0.08 else 0.15
         return ImageLoader.Builder(context)
             .memoryCache {
                 MemoryCache.Builder(context)
-                    .maxSizePercent(0.15)
+                    .maxSizePercent(cachePercent)
                     .build()
             }
             .allowHardware(true)

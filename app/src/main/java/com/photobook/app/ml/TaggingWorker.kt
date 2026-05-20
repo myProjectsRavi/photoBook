@@ -149,9 +149,13 @@ class TaggingWorker @AssistedInject constructor(
         fun enqueueFocusedPhoto(context: Context, photoId: Long) {
             if (photoId <= 0L) return
 
+            // Expedited WorkRequests are NOT allowed to set requiresBatteryNotLow / requiresCharging
+            // / requiresDeviceIdle / requiresStorageNotLow. Doing so throws IllegalArgumentException
+            // from WorkRequest.Builder.build(), which previously crashed the app every time the
+            // user tapped a photo. Keep this request constraint-light; the worker itself bails out
+            // when the battery is critically low (see isBatteryTooLow()).
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
-                .setRequiresBatteryNotLow(true)
                 .build()
 
             val input: Data = workDataOf(
@@ -164,11 +168,15 @@ class TaggingWorker @AssistedInject constructor(
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .build()
 
-            WorkManager.getInstance(context).enqueueUniqueWork(
-                "$PRIORITY_WORK_NAME_PREFIX-$photoId",
-                ExistingWorkPolicy.REPLACE,
-                request,
-            )
+            runCatching {
+                WorkManager.getInstance(context).enqueueUniqueWork(
+                    "$PRIORITY_WORK_NAME_PREFIX-$photoId",
+                    ExistingWorkPolicy.REPLACE,
+                    request,
+                )
+            }
+            // Silently swallow any enqueue failure: the viewer must never crash because of an
+            // optional background tagging request.
         }
     }
 }

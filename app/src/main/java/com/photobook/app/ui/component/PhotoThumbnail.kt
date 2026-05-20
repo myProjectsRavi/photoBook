@@ -50,13 +50,17 @@ fun PhotoThumbnail(
         label = "selected_overlay_alpha",
     )
     val context = LocalContext.current
-    val imageRequest = remember(photo.uriString) {
+    val thumbSize = remember {
+        val am = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        if (am.isLowRamDevice) THUMBNAIL_REQUEST_SIZE_LOW_RAM else THUMBNAIL_REQUEST_SIZE_PX
+    }
+    val imageRequest = remember(photo.uriString, thumbSize) {
         ImageRequest.Builder(context)
             .data(photo.uriString)
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
             .allowHardware(true)
-            .size(THUMBNAIL_REQUEST_SIZE_PX)
+            .size(thumbSize)
             .precision(Precision.EXACT)
             .build()
     }
@@ -107,3 +111,4 @@ fun PhotoThumbnail(
 }
 
 private const val THUMBNAIL_REQUEST_SIZE_PX = 512
+private const val THUMBNAIL_REQUEST_SIZE_LOW_RAM = 256

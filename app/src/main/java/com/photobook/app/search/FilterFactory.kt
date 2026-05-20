@@ -1,6 +1,7 @@
 package com.photobook.app.search
 
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.feature.notes.PhotoNoteStore
 import com.photobook.app.ml.LabelMapping
 import com.photobook.app.util.Constants
 import com.photobook.app.util.DateUtils
@@ -26,7 +27,9 @@ data class SearchContext(
     val homeCountry: String? = null,
 )
 
-class FilterFactory @Inject constructor() {
+class FilterFactory @Inject constructor(
+    private val photoNoteStore: PhotoNoteStore,
+) {
 
     fun create(token: QueryToken, context: SearchContext): PhotoFilter? {
         return when (token) {
@@ -163,7 +166,8 @@ class FilterFactory @Inject constructor() {
             photo.hasOcrToken(normalized) ||
                 photo.fileName.contains(normalized, ignoreCase = true) ||
                 photo.folderName.contains(normalized, ignoreCase = true) ||
-                photo.folderPath.contains(normalized, ignoreCase = true)
+                photo.folderPath.contains(normalized, ignoreCase = true) ||
+                photoNoteStore.noteContains(photo.id, normalized)
         }
     }
 

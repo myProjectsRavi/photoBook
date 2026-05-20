@@ -65,7 +65,15 @@ fun MemoryStoryViewerScreen(
         if (current >= photos.lastIndex) {
             onDismiss()
         } else {
-            pagerState.animateScrollToPage(current + 1)
+            // IMPORTANT: launch the scroll on `coroutineScope` (not on the LaunchedEffect's
+            // own scope). `animateScrollToPage` updates `pagerState.currentPage` as soon as the
+            // animation crosses the 50 % threshold, which re-keys this LaunchedEffect and
+            // cancels its coroutine — leaving the pager visually "stuck" between two pages
+            // (the half / half story bug). `rememberCoroutineScope` survives that re-key so
+            // the snap animation always finishes cleanly.
+            coroutineScope.launch {
+                pagerState.animateScrollToPage(current + 1)
+            }
         }
     }
 

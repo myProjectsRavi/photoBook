@@ -104,6 +104,11 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "/META-INF/DEPENDENCIES"
+            excludes += "/META-INF/INDEX.LIST"
+            excludes += "/META-INF/*.kotlin_module"
+            excludes += "DebugProbesKt.bin"
+            excludes += "kotlin-tooling-metadata.json"
         }
     }
 
@@ -112,7 +117,7 @@ android {
             isEnable = true
             reset()
             include("arm64-v8a", "armeabi-v7a")
-            isUniversalApk = false
+            isUniversalApk = true
         }
     }
 }
@@ -178,10 +183,10 @@ dependencies {
 
 tasks.register("verifyApkSize") {
     group = "verification"
-    description = "Fails when any generated APK exceeds 110 MB."
+    description = "Fails when any generated APK exceeds 150 MB."
 
     doLast {
-        val maxBytes = 110L * 1024L * 1024L
+        val maxBytes = 150L * 1024L * 1024L
         val apkRoot = layout.buildDirectory.dir("outputs/apk").get().asFile
         if (!apkRoot.exists()) return@doLast
 

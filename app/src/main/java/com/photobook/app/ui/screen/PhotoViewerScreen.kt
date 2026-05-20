@@ -137,6 +137,7 @@ fun PhotoViewerScreen(
     val coroutineScope = rememberCoroutineScope()
     val safeStart = startIndex.coerceIn(0, photos.lastIndex)
     val pagerState = rememberPagerState(initialPage = safeStart, pageCount = { photos.size })
+
     val copyTextCoordinator = remember(context.applicationContext) {
         PhotoTextCopyCoordinator(
             extractor = OnDevicePhotoTextExtractor(context.applicationContext),
@@ -546,21 +547,40 @@ fun PhotoViewerScreen(
                         text = stringResource(R.string.viewer_index, pagerState.currentPage + 1, photos.size),
                         color = Color.White,
                     )
-                    val active = photos[pagerState.currentPage]
+                    // Prominent share button - top right
+                    Surface(
+                        color = Color(0x44FFFFFF),
+                        shape = RoundedCornerShape(28.dp),
+                    ) {
+                        IconButton(
+                            modifier = Modifier.size(42.dp),
+                            onClick = { startSharePrepForActivePhoto() },
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Share,
+                                contentDescription = stringResource(R.string.viewer_share),
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp),
+                            )
+                        }
+                    }
+                }
+
+                // Action buttons bar (scrollable)
+                run {
+                    val active = photos.getOrNull(pagerState.currentPage) ?: return@run
                     val bestIndex = bestShotRecommendation?.bestIndex
                     val isCurrentBestShot = bestIndex == pagerState.currentPage
                     Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        Surface(
-                            color = Color(0x22FFFFFF),
-                            shape = RoundedCornerShape(28.dp),
-                        ) {
-                            IconButton(
-                                modifier = Modifier.size(42.dp),
-                                onClick = { onToggleFavorite(active.id) },
-                            ) {
+                        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
+                            IconButton(modifier = Modifier.size(42.dp), onClick = { onToggleFavorite(active.id) }) {
                                 Icon(
                                     imageVector = if (active.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                                     contentDescription = stringResource(R.string.viewer_favorite),
@@ -569,165 +589,32 @@ fun PhotoViewerScreen(
                                 )
                             }
                         }
-                        if (bestIndex != null) {
-                            Surface(
-                                color = Color(0x22FFFFFF),
-                                shape = RoundedCornerShape(28.dp),
-                            ) {
-                                IconButton(
-                                    modifier = Modifier.size(42.dp),
-                                    onClick = {
-                                        if (!isCurrentBestShot) {
-                                            coroutineScope.launch {
-                                                pagerState.animateScrollToPage(bestIndex)
-                                            }
-                                        }
-                                    },
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Star,
-                                        contentDescription = stringResource(R.string.viewer_best_shot),
-                                        tint = if (isCurrentBestShot) Color(0xFFFFD54F) else Color.White,
-                                        modifier = Modifier.size(22.dp),
-                                    )
-                                }
+                        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
+                            IconButton(modifier = Modifier.size(42.dp), onClick = ::openExifSheet) {
+                                Icon(Icons.Default.Info, contentDescription = stringResource(R.string.viewer_metadata), tint = Color.White, modifier = Modifier.size(22.dp))
                             }
                         }
-                        Surface(
-                            color = Color(0x22FFFFFF),
-                            shape = RoundedCornerShape(28.dp),
-                        ) {
-                            IconButton(
-                                modifier = Modifier.size(42.dp),
-                                onClick = ::openExifSheet,
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Info,
-                                    contentDescription = stringResource(R.string.viewer_metadata),
-                                    tint = Color.White,
-                                    modifier = Modifier.size(22.dp),
-                                )
+                        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
+                            IconButton(modifier = Modifier.size(42.dp), onClick = ::openEditorSheet) {
+                                Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.viewer_edit_photo), tint = Color.White, modifier = Modifier.size(22.dp))
                             }
                         }
-                        Surface(
-                            color = Color(0x22FFFFFF),
-                            shape = RoundedCornerShape(28.dp),
-                        ) {
-                            IconButton(
-                                modifier = Modifier.size(42.dp),
-                                onClick = ::openEditorSheet,
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Edit,
-                                    contentDescription = stringResource(R.string.viewer_edit_photo),
-                                    tint = Color.White,
-                                    modifier = Modifier.size(22.dp),
-                                )
+                        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
+                            IconButton(modifier = Modifier.size(42.dp), onClick = ::startCopyAllTextFlow) {
+                                Icon(Icons.Default.ContentCopy, contentDescription = stringResource(R.string.viewer_copy_all_text), tint = Color.White, modifier = Modifier.size(22.dp))
                             }
                         }
-                        Surface(
-                            color = Color(0x22FFFFFF),
-                            shape = RoundedCornerShape(28.dp),
-                        ) {
-                            IconButton(
-                                modifier = Modifier.size(42.dp),
-                                onClick = ::openNotesSheet,
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.Notes,
-                                    contentDescription = stringResource(R.string.viewer_private_note),
-                                    tint = if (hasNoteForCurrent) Color(0xFF9FA8FF) else Color.White,
-                                    modifier = Modifier.size(22.dp),
-                                )
+                        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
+                            IconButton(modifier = Modifier.size(42.dp), onClick = {
+                                qrSharePhotoId = active.id
+                                showQrShareSheet = true
+                            }) {
+                                Icon(Icons.Default.QrCode2, contentDescription = stringResource(R.string.viewer_generate_qr), tint = Color.White, modifier = Modifier.size(22.dp))
                             }
                         }
-                        Surface(
-                            color = Color(0x22FFFFFF),
-                            shape = RoundedCornerShape(28.dp),
-                        ) {
-                            IconButton(
-                                modifier = Modifier.size(42.dp),
-                                onClick = ::startCopyAllTextFlow,
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ContentCopy,
-                                    contentDescription = stringResource(R.string.viewer_copy_all_text),
-                                    tint = Color.White,
-                                    modifier = Modifier.size(22.dp),
-                                )
-                            }
-                        }
-                        Surface(
-                            color = Color(0x22FFFFFF),
-                            shape = RoundedCornerShape(28.dp),
-                        ) {
-                            IconButton(
-                                modifier = Modifier.size(42.dp),
-                                onClick = {
-                                    copyTextCoordinator.cancelActiveRequest()
-                                    showTextRegionSelector = true
-                                },
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.CropFree,
-                                    contentDescription = stringResource(R.string.viewer_select_text_area),
-                                    tint = Color.White,
-                                    modifier = Modifier.size(22.dp),
-                                )
-                            }
-                        }
-                        Surface(
-                            color = Color(0x22FFFFFF),
-                            shape = RoundedCornerShape(28.dp),
-                        ) {
-                            IconButton(
-                                modifier = Modifier.size(42.dp),
-                                onClick = {
-                                    val activePhoto = photos[pagerState.currentPage]
-                                    qrSharePhotoId = activePhoto.id
-                                    showQrShareSheet = true
-                                },
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.QrCode2,
-                                    contentDescription = stringResource(R.string.viewer_generate_qr),
-                                    tint = Color.White,
-                                    modifier = Modifier.size(22.dp),
-                                )
-                            }
-                        }
-                        Surface(
-                            color = Color(0x22FFFFFF),
-                            shape = RoundedCornerShape(28.dp),
-                        ) {
-                            IconButton(
-                                modifier = Modifier.size(42.dp),
-                                onClick = { onMoveToTrash(active) },
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Delete,
-                                    contentDescription = stringResource(R.string.viewer_move_to_trash),
-                                    tint = Color.White,
-                                    modifier = Modifier.size(22.dp),
-                                )
-                            }
-                        }
-                        Surface(
-                            color = Color(0x22FFFFFF),
-                            shape = RoundedCornerShape(28.dp),
-                        ) {
-                            IconButton(
-                                modifier = Modifier.size(42.dp),
-                                onClick = {
-                                    startSharePrepForActivePhoto()
-                                },
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Share,
-                                    contentDescription = stringResource(R.string.viewer_share),
-                                    tint = Color.White,
-                                    modifier = Modifier.size(22.dp),
-                                )
+                        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
+                            IconButton(modifier = Modifier.size(42.dp), onClick = { onMoveToTrash(active) }) {
+                                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.viewer_move_to_trash), tint = Color.White, modifier = Modifier.size(22.dp))
                             }
                         }
                     }
@@ -782,37 +669,68 @@ fun PhotoViewerScreen(
                                         },
                                     )
                                 }
-                                .pointerInput(photo.id, viewerImageSize) {
-                                    detectTransformGestures { centroid, pan, zoom, _ ->
-                                        if (viewerImageSize.width == 0 || viewerImageSize.height == 0) {
-                                            return@detectTransformGestures
+                                .then(
+                                    // Only attach pinch-to-zoom/pan when zoomed in to avoid
+                                    // consuming horizontal swipes that the HorizontalPager needs.
+                                    if (viewerZoomScale > MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) {
+                                        Modifier.pointerInput(photo.id, viewerImageSize) {
+                                            detectTransformGestures { centroid, pan, zoom, _ ->
+                                                if (viewerImageSize.width == 0 || viewerImageSize.height == 0) {
+                                                    return@detectTransformGestures
+                                                }
+
+                                                val oldScale = viewerZoomScale
+                                                val newScale = (oldScale * zoom).coerceIn(MIN_VIEWER_ZOOM, MAX_VIEWER_ZOOM)
+
+                                                if (newScale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) {
+                                                    resetViewerZoom()
+                                                    return@detectTransformGestures
+                                                }
+
+                                                val center = viewerImageSize.centerOffset()
+                                                val centroidDelta = centroid - center
+                                                val scaleFactor = newScale / oldScale
+                                                val scaledOffset = Offset(
+                                                    x = (viewerZoomOffset.x + centroidDelta.x) * scaleFactor - centroidDelta.x,
+                                                    y = (viewerZoomOffset.y + centroidDelta.y) * scaleFactor - centroidDelta.y,
+                                                )
+                                                val nextOffset = scaledOffset + pan
+
+                                                viewerZoomScale = newScale
+                                                viewerZoomOffset = clampViewerOffset(
+                                                    offset = nextOffset,
+                                                    scale = newScale,
+                                                    containerSize = viewerImageSize,
+                                                )
+                                            }
                                         }
-
-                                        val oldScale = viewerZoomScale
-                                        val newScale = (oldScale * zoom).coerceIn(MIN_VIEWER_ZOOM, MAX_VIEWER_ZOOM)
-
-                                        if (newScale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) {
-                                            resetViewerZoom()
-                                            return@detectTransformGestures
+                                    } else {
+                                        // At 1x: only pinch gesture (no pan) so pager swipe works
+                                        Modifier.pointerInput(photo.id, viewerImageSize) {
+                                            detectTransformGestures { centroid, _, zoom, _ ->
+                                                if (viewerImageSize.width == 0 || viewerImageSize.height == 0) {
+                                                    return@detectTransformGestures
+                                                }
+                                                val newScale = (viewerZoomScale * zoom).coerceIn(MIN_VIEWER_ZOOM, MAX_VIEWER_ZOOM)
+                                                if (newScale > MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) {
+                                                    val center = viewerImageSize.centerOffset()
+                                                    val centroidDelta = centroid - center
+                                                    val scaleFactor = newScale / viewerZoomScale
+                                                    val targetOffset = Offset(
+                                                        x = centroidDelta.x * (1f - scaleFactor),
+                                                        y = centroidDelta.y * (1f - scaleFactor),
+                                                    )
+                                                    viewerZoomScale = newScale
+                                                    viewerZoomOffset = clampViewerOffset(
+                                                        offset = targetOffset,
+                                                        scale = newScale,
+                                                        containerSize = viewerImageSize,
+                                                    )
+                                                }
+                                            }
                                         }
-
-                                        val center = viewerImageSize.centerOffset()
-                                        val centroidDelta = centroid - center
-                                        val scaleFactor = newScale / oldScale
-                                        val scaledOffset = Offset(
-                                            x = (viewerZoomOffset.x + centroidDelta.x) * scaleFactor - centroidDelta.x,
-                                            y = (viewerZoomOffset.y + centroidDelta.y) * scaleFactor - centroidDelta.y,
-                                        )
-                                        val nextOffset = scaledOffset + pan
-
-                                        viewerZoomScale = newScale
-                                        viewerZoomOffset = clampViewerOffset(
-                                            offset = nextOffset,
-                                            scale = newScale,
-                                            containerSize = viewerImageSize,
-                                        )
                                     }
-                                }
+                                )
                                 .graphicsLayer {
                                     scaleX = viewerZoomScale
                                     scaleY = viewerZoomScale
@@ -823,7 +741,11 @@ fun PhotoViewerScreen(
                     }
                 }
 
-                val active = photos[pagerState.currentPage]
+                val active = photos.getOrNull(pagerState.currentPage) ?: run {
+                    // Photo list has been emptied or index is stale — dismiss viewer.
+                    onDismiss()
+                    return@Column
+                }
                 val noLocation = stringResource(R.string.no_location)
                 Column(
                     modifier = Modifier
@@ -934,16 +856,7 @@ fun PhotoViewerScreen(
                 onCleanCopy = ::cleanMetadataCopy,
             )
         }
-        if (showTextRegionSelector) {
-            TextRegionSelectionDialog(
-                photo = photos[pagerState.currentPage],
-                onDismiss = { showTextRegionSelector = false },
-                onRegionSelected = { region ->
-                    showTextRegionSelector = false
-                    startSelectedTextFlow(region)
-                },
-            )
-        }
+
         if (showQrShareSheet) {
             QrShareSheet(
                 photo = photos[pagerState.currentPage],
@@ -1928,6 +1841,6 @@ private fun clampViewerOffset(
 }
 
 private const val MIN_VIEWER_ZOOM = 1f
-private const val MAX_VIEWER_ZOOM = 4f
-private const val DOUBLE_TAP_VIEWER_ZOOM = 2.5f
+private const val MAX_VIEWER_ZOOM = 6f
+private const val DOUBLE_TAP_VIEWER_ZOOM = 3f
 private const val VIEWER_ZOOM_EPSILON = 0.01f

@@ -189,7 +189,7 @@
     <string name="vault_delete_error">Couldn\'t delete this vault item.</string>
     <string name="vault_biometric_title">Unlock PhotoBook Vault</string>
     <string name="vault_biometric_subtitle">Authenticate to view or add private vault photos.</string>
-    <string name="vault_biometric_failed">Vault authentication failed or unavailable.</string>
+    <string name="vault_biometric_failed">Vault needs a screen lock (fingerprint, face, PIN or pattern). Please set one up to unlock the Vault.</string>
     <string name="widget_on_this_day_label">On This Day</string>
     <string name="widget_on_this_day_title">On This Day</string>
     <string name="widget_on_this_day_subtitle">Tap to relive your memories privately.</string>

@@ -4,25 +4,20 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
@@ -34,8 +29,6 @@ import com.photobook.app.feature.qrshare.QrBitmapEncoder
 import com.photobook.app.feature.qrshare.QrShareEncoder
 import com.photobook.app.feature.qrshare.QrShareGenerationResult
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -46,12 +39,24 @@ fun QrShareSheet(
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val generationResult by produceState<QrShareGenerationResult?>(
-        initialValue = null,
+
+    // Generate a single compact QR payload for this photo
+    val qrResult by produceState<QrSingleResult>(
+        initialValue = QrSingleResult.Loading,
         key1 = photo.id,
-        key2 = photo.uriString,
     ) {
-        value = encoder.generateForPhoto(photo)
+        val genResult = encoder.generateSingleFrameQr(photo)
+        value = when (genResult) {
+            is QrShareGenerationResult.Success -> {
+                val payload = genResult.packet.frames.first()
+                val bitmap = withContext(Dispatchers.Default) {
+                    QrBitmapEncoder.encode(payload, sizePx = 800)
+                }
+                QrSingleResult.Ready(bitmap)
+            }
+            is QrShareGenerationResult.TooLarge -> QrSingleResult.TooLarge
+            is QrShareGenerationResult.Error -> QrSingleResult.Error
+        }
     }
 
     ModalBottomSheet(
@@ -71,106 +76,33 @@ fun QrShareSheet(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            when (val result = generationResult) {
-                null -> {
-                    CircularProgressIndicator()
-                    Text(
-                        text = stringResource(R.string.viewer_qr_preparing),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
+            when (val result = qrResult) {
+                QrSingleResult.Loading -> {
+                    CircularProgressIndicator(modifier = Modifier.size(32.dp))
                 }
-
-                is QrShareGenerationResult.Error -> {
+                QrSingleResult.Error, QrSingleResult.TooLarge -> {
                     Text(
                         text = stringResource(R.string.viewer_qr_error),
                         style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
-
-                is QrShareGenerationResult.TooLarge -> {
-                    Text(
-                        text = stringResource(
-                            R.string.viewer_qr_too_large,
-                            result.byteSize / 1024,
-                            result.maxSupportedBytes / 1024,
-                        ),
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-
-                is QrShareGenerationResult.Success -> {
-                    var frameIndex by remember(result.packet.transferId) {
-                        mutableIntStateOf(0)
-                    }
-                    var frameBitmap by remember(result.packet.transferId) {
-                        mutableStateOf<android.graphics.Bitmap?>(null)
-                    }
-                    LaunchedEffect(result.packet.transferId) {
-                        frameIndex = 0
-                        while (isActive) {
-                            delay(FRAME_INTERVAL_MS)
-                            frameIndex = (frameIndex + 1) % result.packet.frames.size
-                        }
-                    }
-                    LaunchedEffect(result.packet.transferId, frameIndex) {
-                        val payload = result.packet.frames[frameIndex]
-                        val nextBitmap = withContext(Dispatchers.Default) {
-                            QrBitmapEncoder.encode(payload)
-                        }
-                        val previousBitmap = frameBitmap
-                        frameBitmap = nextBitmap
-                        previousBitmap.recycleSafely()
-                    }
-                    DisposableEffect(result.packet.transferId) {
+                is QrSingleResult.Ready -> {
+                    DisposableEffect(result.bitmap) {
                         onDispose {
-                            frameBitmap.recycleSafely()
-                        }
-                    }
-
-                    Surface(
-                        tonalElevation = 2.dp,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 260.dp),
-                    ) {
-                        if (frameBitmap == null) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(24.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-                                Text(text = stringResource(R.string.viewer_qr_generating_frame))
+                            runCatching {
+                                if (!result.bitmap.isRecycled) result.bitmap.recycle()
                             }
-                        } else {
-                            Image(
-                                bitmap = frameBitmap!!.asImageBitmap(),
-                                contentDescription = stringResource(R.string.viewer_qr_frame),
-                                modifier = Modifier
-                                    .size(320.dp)
-                                    .padding(8.dp),
-                            )
                         }
                     }
-
-                    Text(
-                        text = stringResource(
-                            R.string.viewer_qr_frame_progress,
-                            frameIndex + 1,
-                            result.packet.frames.size,
-                        ),
-                        style = MaterialTheme.typography.labelMedium,
+                    Image(
+                        bitmap = result.bitmap.asImageBitmap(),
+                        contentDescription = stringResource(R.string.viewer_qr_frame),
+                        modifier = Modifier
+                            .size(320.dp)
+                            .padding(8.dp),
                     )
                     Text(
-                        text = stringResource(
-                            R.string.viewer_qr_scan_hint,
-                            result.packet.byteSize / 1024,
-                            result.packet.totalChunks,
-                        ),
+                        text = "Ask the other person to open PhotoBook → QR Scanner to receive this photo instantly.",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -180,13 +112,9 @@ fun QrShareSheet(
     }
 }
 
-private const val FRAME_INTERVAL_MS = 450L
-
-private fun android.graphics.Bitmap?.recycleSafely() {
-    val bitmap = this ?: return
-    runCatching {
-        if (!bitmap.isRecycled) {
-            bitmap.recycle()
-        }
-    }
+private sealed interface QrSingleResult {
+    data object Loading : QrSingleResult
+    data object Error : QrSingleResult
+    data object TooLarge : QrSingleResult
+    data class Ready(val bitmap: android.graphics.Bitmap) : QrSingleResult
 }

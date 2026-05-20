@@ -55,6 +55,7 @@ import com.photobook.app.ui.screen.MainScreen
 import com.photobook.app.ui.screen.OnboardingScreen
 import com.photobook.app.ui.screen.PhotoViewerScreen
 import com.photobook.app.ui.screen.MemoryStoryViewerScreen
+import com.photobook.app.ui.screen.PhotoReelsScreen
 import com.photobook.app.ui.screen.DeclutterSwipeScreen
 import com.photobook.app.ui.screen.QrReceiveScannerScreen
 import com.photobook.app.ui.screen.SharePrivacyPrepSheet
@@ -250,8 +251,14 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                 Toast.makeText(
                     context,
                     context.getString(R.string.vault_biometric_failed),
-                    Toast.LENGTH_SHORT,
+                    Toast.LENGTH_LONG,
                 ).show()
+                // Help the user set up a screen lock so the vault becomes usable next time.
+                runCatching {
+                    val settingsIntent = Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(settingsIntent)
+                }
             },
         )
     }
@@ -387,6 +394,14 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                 }
             }
         },
+        onCopyTextFromPhoto = { photoId ->
+            // Open the viewer on this photo so the user can access Copy Text from there
+            viewModel.openPhotoById(photoId)
+        },
+        onGenerateQrForPhoto = { photoId ->
+            // Open the viewer on this photo so the user can access QR generation from there
+            viewModel.openPhotoById(photoId)
+        },
         onClearSelection = viewModel::clearSelection,
         onPhotoClick = viewModel::onPhotoClicked,
         onPhotoLongClick = viewModel::onPhotoLongPressed,
@@ -407,6 +422,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                 refreshVaultItems()
             }
         },
+        onOpenReels = { viewModel.openReels() },
         onSelectFeedMode = viewModel::onSelectFeedMode,
         onSourceSelected = viewModel::onSourceSelected,
         onOpenDeclutter = viewModel::openDeclutterSwipe,
@@ -443,6 +459,20 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             photos = storyViewerPhotos,
             onDismiss = viewModel::closeStoryViewer,
             onOpenPhoto = viewModel::openStoryPhoto,
+        )
+    }
+
+    val reelsPhotos = uiState.reelsPhotos
+    val reelsStartIndex = uiState.reelsStartIndex
+    if (reelsStartIndex != null && reelsPhotos.isNotEmpty()) {
+        PhotoReelsScreen(
+            photos = reelsPhotos,
+            startIndex = reelsStartIndex,
+            onDismiss = viewModel::closeReels,
+            onToggleFavorite = viewModel::onToggleFavorite,
+            onSharePhoto = { photo ->
+                startSharePrep(listOf(photo))
+            },
         )
     }
 
@@ -664,19 +694,50 @@ private fun requestBiometricUnlock(
         onFailure()
         return
     }
-    val authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG or
-        BiometricManager.Authenticators.DEVICE_CREDENTIAL
+
     val biometricManager = BiometricManager.from(activity)
-    if (biometricManager.canAuthenticate(authenticators) != BiometricManager.BIOMETRIC_SUCCESS) {
+
+    // Try, in order of strength: STRONG+PIN, WEAK+PIN, STRONG-only, WEAK-only, PIN-only.
+    // On API 28/29 the combined BIOMETRIC_*|DEVICE_CREDENTIAL flag is not supported, so we
+    // gracefully fall back. We only treat the prompt as unavailable when nothing works.
+    val candidates = buildList {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            add(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+            add(BiometricManager.Authenticators.BIOMETRIC_WEAK or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+            add(BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+        }
+        add(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+        add(BiometricManager.Authenticators.BIOMETRIC_WEAK)
+    }
+
+    val supported = candidates.firstOrNull { auth ->
+        runCatching {
+            biometricManager.canAuthenticate(auth) == BiometricManager.BIOMETRIC_SUCCESS
+        }.getOrDefault(false)
+    }
+
+    if (supported == null) {
         onFailure()
         return
     }
 
-    val promptInfo = BiometricPrompt.PromptInfo.Builder()
-        .setTitle(title)
-        .setSubtitle(subtitle)
-        .setAllowedAuthenticators(authenticators)
-        .build()
+    val promptInfo = runCatching {
+        val builder = BiometricPrompt.PromptInfo.Builder()
+            .setTitle(title)
+            .setSubtitle(subtitle)
+            .setAllowedAuthenticators(supported)
+        // setNegativeButtonText is required when DEVICE_CREDENTIAL is not part of the allowed set.
+        val hasDeviceCredential =
+            (supported and BiometricManager.Authenticators.DEVICE_CREDENTIAL) != 0
+        if (!hasDeviceCredential) {
+            builder.setNegativeButtonText(context.getString(android.R.string.cancel))
+        }
+        builder.build()
+    }.getOrElse {
+        onFailure()
+        return
+    }
+
     val prompt = BiometricPrompt(
         activity,
         ContextCompat.getMainExecutor(activity),
@@ -687,6 +748,7 @@ private fun requestBiometricUnlock(
 
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                 if (errorCode != BiometricPrompt.ERROR_USER_CANCELED &&
+                    errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON &&
                     errorCode != BiometricPrompt.ERROR_CANCELED
                 ) {
                     onFailure()
@@ -694,7 +756,7 @@ private fun requestBiometricUnlock(
             }
         },
     )
-    prompt.authenticate(promptInfo)
+    runCatching { prompt.authenticate(promptInfo) }.onFailure { onFailure() }
 }
 
 private tailrec fun Context.findFragmentActivity(): FragmentActivity? {

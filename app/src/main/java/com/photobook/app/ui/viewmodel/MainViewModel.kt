@@ -106,6 +106,8 @@ class MainViewModel @Inject constructor(
         val videoMoments: List<VideoSearchMoment> = emptyList(),
         val viewerStartIndex: Int? = null,
         val viewerPhotos: List<PhotoRecord> = emptyList(),
+        val reelsStartIndex: Int? = null,
+        val reelsPhotos: List<PhotoRecord> = emptyList(),
         val storyViewerTitle: String = "",
         val storyViewerPhotos: List<PhotoRecord> = emptyList(),
         val timelineMarks: List<TimelineMark> = emptyList(),
@@ -398,8 +400,16 @@ class MainViewModel @Inject constructor(
             }
 
             if (openedViewer) {
-                TaggingWorker.enqueueFocusedPhoto(context, photo.id)
+                runCatching { TaggingWorker.enqueueFocusedPhoto(context, photo.id) }
             }
+        }
+    }
+
+    fun openPhotoById(photoId: Long) {
+        viewModelScope.launch {
+            val photo = photoIndex.snapshot().firstOrNull { it.id == photoId } ?: return@launch
+            clearSelection()
+            onPhotoClicked(photo)
         }
     }
 
@@ -488,7 +498,7 @@ class MainViewModel @Inject constructor(
     fun onViewerPageChanged(index: Int) {
         val focusedPhotoId = uiState.value.viewerPhotos.getOrNull(index)?.id
         if (focusedPhotoId != null) {
-            TaggingWorker.enqueueFocusedPhoto(context, focusedPhotoId)
+            runCatching { TaggingWorker.enqueueFocusedPhoto(context, focusedPhotoId) }
         }
         uiState.update { it.copy(viewerStartIndex = index) }
     }
@@ -498,6 +508,28 @@ class MainViewModel @Inject constructor(
             it.copy(
                 viewerStartIndex = null,
                 viewerPhotos = emptyList(),
+            )
+        }
+    }
+
+    fun openReels(startIndex: Int = 0) {
+        viewModelScope.launch {
+            val photos = withContext(Dispatchers.Default) { resolveVisiblePhotos() }
+            if (photos.isEmpty()) return@launch
+            uiState.update {
+                it.copy(
+                    reelsStartIndex = startIndex.coerceIn(0, photos.lastIndex),
+                    reelsPhotos = photos,
+                )
+            }
+        }
+    }
+
+    fun closeReels() {
+        uiState.update {
+            it.copy(
+                reelsStartIndex = null,
+                reelsPhotos = emptyList(),
             )
         }
     }

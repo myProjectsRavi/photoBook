@@ -90,11 +90,14 @@ fun MainScreen(
     onMoveSelectedToTrash: (Set<Long>) -> Unit,
     onCreatePdfSelected: (Set<Long>) -> Unit,
     onAddSelectedToVault: (Set<Long>) -> Unit,
+    onCopyTextFromPhoto: (Long) -> Unit,
+    onGenerateQrForPhoto: (Long) -> Unit,
     onClearSelection: () -> Unit,
     onPhotoClick: (PhotoRecord) -> Unit,
     onPhotoLongClick: (PhotoRecord) -> Unit,
     onOpenQrScanner: () -> Unit,
     onOpenVault: () -> Unit,
+    onOpenReels: () -> Unit,
     onSelectFeedMode: (HomeFeedMode) -> Unit,
     onSourceSelected: (PhotoSource) -> Unit,
     onOpenDeclutter: () -> Unit,
@@ -177,17 +180,32 @@ fun MainScreen(
                 }
 
                 Surface(
-                    color = Color(0xE6FFFFFF),
-                    shape = CircleShape
+                    color = Color.Transparent,
+                    shape = RoundedCornerShape(20.dp),
                 ) {
-                    Text(
-                        "PRIVACY FIRST",
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontWeight = FontWeight.Black,
-                            color = AccentIndigo
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                Brush.horizontalGradient(
+                                    colors = listOf(
+                                        Color(0xFFFFD700),
+                                        Color(0xFFFFA500),
+                                        Color(0xFFFF8C00),
+                                    )
+                                ),
+                                shape = RoundedCornerShape(20.dp)
+                            )
+                            .padding(horizontal = 14.dp, vertical = 5.dp),
+                    ) {
+                        Text(
+                            "✦ PRO",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Black,
+                                color = Color.White,
+                                letterSpacing = 1.5.sp
+                            )
                         )
-                    )
+                    }
                 }
             }
 
@@ -241,11 +259,11 @@ fun MainScreen(
                         enabled = searchReady
                     )
                     RefinedActionButton(
-                        icon = Icons.Default.Lock,
-                        label = "Vault",
-                        onClick = onOpenVault,
+                        icon = Icons.Default.ViewDay,
+                        label = "Reels",
+                        onClick = onOpenReels,
                         color = AccentViolet,
-                        enabled = searchReady
+                        enabled = searchReady && !isSelectionMode
                     )
                 }
 
@@ -259,33 +277,47 @@ fun MainScreen(
                     border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorder),
                     tonalElevation = 1.dp,
                 ) {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Default.Videocam,
-                                contentDescription = null,
-                                tint = if (videoIndexingEnabled) Color(0xFF22C55E) else Color(0xFF94A3B8),
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                "Video indexing: ${if (videoIndexingEnabled) "On" else "Off"}",
-                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold)
-                            )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.Videocam,
+                                    contentDescription = null,
+                                    tint = if (videoIndexingEnabled) Color(0xFF22C55E) else Color(0xFF94A3B8),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    "Video search: ${if (videoIndexingEnabled) "On" else "Off"}",
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold)
+                                )
+                            }
+                            TextButton(onClick = onToggleVideoIndexing) {
+                                Text(
+                                    if (videoIndexingEnabled) "Turn off" else "Turn on",
+                                    fontWeight = FontWeight.Black,
+                                    color = AccentIndigo
+                                )
+                            }
                         }
-                        TextButton(onClick = onToggleVideoIndexing) {
-                            Text(
-                                if (videoIndexingEnabled) "Disable" else "Enable",
-                                fontWeight = FontWeight.Black,
-                                color = AccentIndigo
-                            )
-                        }
+                        Text(
+                            text = if (videoIndexingEnabled) {
+                                "✅ Active! Try searching for things in your videos — e.g. \"beach\", \"birthday cake\", \"meeting\". Results appear as video moments you can tap to play."
+                            } else {
+                                "Turn on to make your videos searchable by content — fully on-device, no cloud. Slightly more battery while it scans."
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF475569),
+                        )
                     }
                 }
 
@@ -325,7 +357,7 @@ fun MainScreen(
                             modifier = Modifier.weight(1f)
                         )
                         RefinedTabButton(
-                            label = "Utilities",
+                            label = "Screenshots",
                             selected = feedMode == HomeFeedMode.Utilities,
                             onClick = { onSelectFeedMode(HomeFeedMode.Utilities) },
                             modifier = Modifier.weight(1f)
@@ -413,9 +445,12 @@ fun MainScreen(
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         IconButton(onClick = onClearSelection) { Icon(Icons.Default.Close, null) }
+                        if (selectedPhotoIds.size == 1) {
+                            IconButton(onClick = { onCopyTextFromPhoto(selectedPhotoIds.first()) }) { Icon(Icons.Default.ContentCopy, contentDescription = "Copy text from photo") }
+                            IconButton(onClick = { onGenerateQrForPhoto(selectedPhotoIds.first()) }) { Icon(Icons.Default.QrCode2, contentDescription = "Generate QR") }
+                        }
                         IconButton(onClick = { onCreatePdfSelected(selectedPhotoIds) }) { Icon(Icons.Default.PictureAsPdf, null) }
                         IconButton(onClick = { onShareSelected(selectedPhotoIds) }) { Icon(Icons.Default.Share, null) }
-                        IconButton(onClick = { onAddSelectedToVault(selectedPhotoIds) }) { Icon(Icons.Default.Lock, null) }
                         IconButton(onClick = { onMoveSelectedToTrash(selectedPhotoIds) }, colors = IconButtonDefaults.iconButtonColors(contentColor = Color.Red)) { Icon(Icons.Default.Delete, null) }
                     }
                 }

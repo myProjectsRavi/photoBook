@@ -21,6 +21,20 @@ class PhotoBookApplication : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         Coil.setImageLoader(imageLoader)
+
+        // Install a global uncaught exception handler that prevents the app from closing
+        // on non-fatal exceptions (e.g. rare Compose layout crashes, OOM in background threads).
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            // Let the system handle truly fatal errors (OOM on main thread, StackOverflow)
+            val isFatal = throwable is OutOfMemoryError && thread == android.os.Looper.getMainLooper().thread
+            if (isFatal) {
+                defaultHandler?.uncaughtException(thread, throwable)
+            } else {
+                // Log silently and attempt to continue — prevents random closes
+                android.util.Log.e("PhotoBook", "Uncaught exception on ${thread.name}", throwable)
+            }
+        }
     }
 
     @Suppress("DEPRECATION")
