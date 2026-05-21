@@ -7,6 +7,9 @@ import android.os.Build
 import android.net.Uri
 import android.provider.MediaStore
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -26,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -45,6 +49,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -60,6 +65,8 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -118,6 +125,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.min
+import androidx.exifinterface.media.ExifInterface
+import androidx.core.content.FileProvider
+import java.io.File
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -180,6 +190,8 @@ fun PhotoViewerScreen(
     var notePhotoId by remember { mutableStateOf<Long?>(null) }
     var noteDraft by remember { mutableStateOf("") }
     var hasNoteForCurrent by remember { mutableStateOf(false) }
+    var showControls by remember { mutableStateOf(true) }
+    var reelsMode by remember { mutableStateOf(false) }
 
     fun resetViewerZoom() {
         viewerZoomScale = MIN_VIEWER_ZOOM
@@ -443,16 +455,22 @@ fun PhotoViewerScreen(
     fun shareActivePhoto() {
         val active = photos[pagerState.currentPage]
         val uri = runCatching { Uri.parse(active.uriString) }.getOrNull() ?: return
-        val shareIntent = Intent(Intent.ACTION_SEND).apply {
-            type = active.mimeType.ifBlank { "image/*" }
-            putExtra(Intent.EXTRA_STREAM, uri)
-            clipData = ClipData.newUri(context.contentResolver, active.fileName, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        runCatching {
-            context.startActivity(
-                Intent.createChooser(shareIntent, context.getString(R.string.viewer_share)),
-            )
+        // Create a temp copy stripped of date/time metadata so receivers can't see when it was taken
+        coroutineScope.launch {
+            val cleanUri = withContext(Dispatchers.IO) {
+                stripDateTimeAndShare(context, uri, active.mimeType, active.fileName)
+            } ?: uri // fallback to original if stripping fails
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = active.mimeType.ifBlank { "image/*" }
+                putExtra(Intent.EXTRA_STREAM, cleanUri)
+                clipData = ClipData.newUri(context.contentResolver, active.fileName, cleanUri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            runCatching {
+                context.startActivity(
+                    Intent.createChooser(shareIntent, context.getString(R.string.viewer_share)),
+                )
+            }
         }
     }
 
@@ -504,358 +522,220 @@ fun PhotoViewerScreen(
             modifier = Modifier.fillMaxSize(),
             color = Color.Black,
         ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
+            Box(modifier = Modifier.fillMaxSize()) {
+                // ===== Main Pager (fills entire screen) =====
+                if (reelsMode) {
+                    VerticalPager(
+                        state = pagerState,
+                        userScrollEnabled = viewerZoomScale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON,
+                        modifier = Modifier.fillMaxSize(),
+                    ) { page ->
+                        PhotoPage(
+                            photo = photos[page],
+                            viewerZoomScale = viewerZoomScale,
+                            viewerZoomOffset = viewerZoomOffset,
+                            viewerImageSize = viewerImageSize,
+                            onZoomScaleChange = { viewerZoomScale = it },
+                            onZoomOffsetChange = { viewerZoomOffset = it },
+                            onImageSizeChange = { viewerImageSize = it },
+                            onResetZoom = ::resetViewerZoom,
+                            onSingleTap = { showControls = !showControls },
+                        )
+                    }
+                } else {
+                    HorizontalPager(
+                        state = pagerState,
+                        userScrollEnabled = viewerZoomScale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON,
+                        modifier = Modifier.fillMaxSize(),
+                    ) { page ->
+                        PhotoPage(
+                            photo = photos[page],
+                            viewerZoomScale = viewerZoomScale,
+                            viewerZoomOffset = viewerZoomOffset,
+                            viewerImageSize = viewerImageSize,
+                            onZoomScaleChange = { viewerZoomScale = it },
+                            onZoomOffsetChange = { viewerZoomOffset = it },
+                            onImageSizeChange = { viewerImageSize = it },
+                            onResetZoom = ::resetViewerZoom,
+                            onSingleTap = { showControls = !showControls },
+                        )
+                    }
+                }
+
+                // ===== Controls overlay (tap to show/hide) =====
+                AnimatedVisibility(
+                    visible = showControls,
+                    enter = fadeIn(),
+                    exit = fadeOut(),
+                    modifier = Modifier.fillMaxSize(),
                 ) {
-                    Surface(
-                        color = Color(0x22FFFFFF),
-                        shape = RoundedCornerShape(28.dp),
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        IconButton(
-                            modifier = Modifier.size(42.dp),
-                            onClick = {
-                                dismissCopySheet()
-                                onDismiss()
-                            },
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = stringResource(R.string.viewer_close),
-                                tint = Color.White,
-                            )
-                        }
-                    }
-                    Text(
-                        text = stringResource(R.string.viewer_index, pagerState.currentPage + 1, photos.size),
-                        color = Color.White,
-                    )
-                    // Prominent share button - top right
-                    Surface(
-                        color = Color(0x44FFFFFF),
-                        shape = RoundedCornerShape(28.dp),
-                    ) {
-                        IconButton(
-                            modifier = Modifier.size(42.dp),
-                            onClick = { shareActivePhoto() },
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Share,
-                                contentDescription = stringResource(R.string.viewer_share),
-                                tint = Color.White,
-                                modifier = Modifier.size(24.dp),
-                            )
-                        }
-                    }
-                }
-
-                // Action buttons bar (scrollable)
-                run {
-                    val active = photos.getOrNull(pagerState.currentPage) ?: return@run
-                    val bestIndex = bestShotRecommendation?.bestIndex
-                    val isCurrentBestShot = bestIndex == pagerState.currentPage
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState())
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
-                            IconButton(modifier = Modifier.size(42.dp), onClick = { onToggleFavorite(active.id) }) {
-                                Icon(
-                                    imageVector = if (active.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                    contentDescription = stringResource(R.string.viewer_favorite),
-                                    tint = if (active.isFavorite) Color(0xFFFF6B6B) else Color.White,
-                                    modifier = Modifier.size(22.dp),
-                                )
-                            }
-                        }
-                        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
-                            IconButton(modifier = Modifier.size(42.dp), onClick = ::openExifSheet) {
-                                Icon(Icons.Default.Info, contentDescription = stringResource(R.string.viewer_metadata), tint = Color.White, modifier = Modifier.size(22.dp))
-                            }
-                        }
-                        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
-                            IconButton(modifier = Modifier.size(42.dp), onClick = ::openEditorSheet) {
-                                Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.viewer_edit_photo), tint = Color.White, modifier = Modifier.size(22.dp))
-                            }
-                        }
-                        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
-                            IconButton(modifier = Modifier.size(42.dp), onClick = ::startCopyAllTextFlow) {
-                                Icon(Icons.Default.ContentCopy, contentDescription = stringResource(R.string.viewer_copy_all_text), tint = Color.White, modifier = Modifier.size(22.dp))
-                            }
-                        }
-                        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
-                            IconButton(modifier = Modifier.size(42.dp), onClick = {
-                                qrSharePhotoId = active.id
-                                showQrShareSheet = true
-                            }) {
-                                Icon(Icons.Default.QrCode2, contentDescription = stringResource(R.string.viewer_generate_qr), tint = Color.White, modifier = Modifier.size(22.dp))
-                            }
-                        }
-                        Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
-                            IconButton(modifier = Modifier.size(42.dp), onClick = { onMoveToTrash(active) }) {
-                                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.viewer_move_to_trash), tint = Color.White, modifier = Modifier.size(22.dp))
-                            }
-                        }
-                    }
-                }
-
-                VerticalPager(
-                    state = pagerState,
-                    userScrollEnabled = viewerZoomScale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                ) { page ->
-                    val photo = photos[page]
-
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        AsyncImage(
-                            model = Uri.parse(photo.uriString),
-                            contentDescription = photo.fileName,
-                            contentScale = ContentScale.Fit,
+                        // Top bar
+                        Row(
                             modifier = Modifier
-                                .fillMaxSize()
-                                .onSizeChanged { size ->
-                                    viewerImageSize = size
-                                }
-                                .pointerInput(photo.id, viewerImageSize) {
-                                    detectTapGestures(
-                                        onDoubleTap = { tapOffset ->
-                                            if (viewerImageSize.width == 0 || viewerImageSize.height == 0) {
-                                                return@detectTapGestures
-                                            }
-                                            if (viewerZoomScale > MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) {
-                                                resetViewerZoom()
-                                            } else {
-                                                val targetScale = DOUBLE_TAP_VIEWER_ZOOM
-                                                val targetOffset = calculateDoubleTapZoomOffset(
-                                                    tapOffset = tapOffset,
-                                                    containerSize = viewerImageSize,
-                                                    targetScale = targetScale,
-                                                )
-                                                viewerZoomScale = targetScale
-                                                viewerZoomOffset = clampViewerOffset(
-                                                    offset = targetOffset,
-                                                    scale = targetScale,
-                                                    containerSize = viewerImageSize,
-                                                )
-                                            }
-                                        },
+                                .fillMaxWidth()
+                                .background(Color(0x88000000))
+                                .padding(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Surface(
+                                color = Color(0x22FFFFFF),
+                                shape = RoundedCornerShape(28.dp),
+                            ) {
+                                IconButton(
+                                    modifier = Modifier.size(42.dp),
+                                    onClick = {
+                                        dismissCopySheet()
+                                        onDismiss()
+                                    },
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = stringResource(R.string.viewer_close),
+                                        tint = Color.White,
                                     )
                                 }
-                                .then(
-                                    // Only attach pinch-to-zoom/pan when zoomed in to avoid
-                                    // consuming swipes that the VerticalPager needs.
-                                    if (viewerZoomScale > MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) {
-                                        Modifier.pointerInput(photo.id, viewerImageSize) {
-                                            detectTransformGestures { centroid, pan, zoom, _ ->
-                                                if (viewerImageSize.width == 0 || viewerImageSize.height == 0) {
-                                                    return@detectTransformGestures
-                                                }
-
-                                                val oldScale = viewerZoomScale
-                                                val newScale = (oldScale * zoom).coerceIn(MIN_VIEWER_ZOOM, MAX_VIEWER_ZOOM)
-
-                                                if (newScale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) {
-                                                    resetViewerZoom()
-                                                    return@detectTransformGestures
-                                                }
-
-                                                val center = viewerImageSize.centerOffset()
-                                                val centroidDelta = centroid - center
-                                                val scaleFactor = newScale / oldScale
-                                                val scaledOffset = Offset(
-                                                    x = (viewerZoomOffset.x + centroidDelta.x) * scaleFactor - centroidDelta.x,
-                                                    y = (viewerZoomOffset.y + centroidDelta.y) * scaleFactor - centroidDelta.y,
-                                                )
-                                                val nextOffset = scaledOffset + pan
-
-                                                viewerZoomScale = newScale
-                                                viewerZoomOffset = clampViewerOffset(
-                                                    offset = nextOffset,
-                                                    scale = newScale,
-                                                    containerSize = viewerImageSize,
-                                                )
-                                            }
-                                        }
-                                    } else {
-                                        // At 1x: pinch gesture + horizontal swipe to switch photo.
-                                        // Vertical swipes are handled by VerticalPager (reels-style).
-                                        Modifier
-                                            .pointerInput(photo.id, viewerImageSize) {
-                                                detectTransformGestures { centroid, _, zoom, _ ->
-                                                    if (viewerImageSize.width == 0 || viewerImageSize.height == 0) {
-                                                        return@detectTransformGestures
-                                                    }
-                                                    val newScale = (viewerZoomScale * zoom).coerceIn(MIN_VIEWER_ZOOM, MAX_VIEWER_ZOOM)
-                                                    if (newScale > MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) {
-                                                        val center = viewerImageSize.centerOffset()
-                                                        val centroidDelta = centroid - center
-                                                        val scaleFactor = newScale / viewerZoomScale
-                                                        val targetOffset = Offset(
-                                                            x = centroidDelta.x * (1f - scaleFactor),
-                                                            y = centroidDelta.y * (1f - scaleFactor),
-                                                        )
-                                                        viewerZoomScale = newScale
-                                                        viewerZoomOffset = clampViewerOffset(
-                                                            offset = targetOffset,
-                                                            scale = newScale,
-                                                            containerSize = viewerImageSize,
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                            .pointerInput(photo.id, photos.size) {
-                                                var totalDx = 0f
-                                                detectHorizontalDragGestures(
-                                                    onDragStart = { totalDx = 0f },
-                                                    onDragEnd = {
-                                                        val threshold = size.width * 0.18f
-                                                        if (totalDx <= -threshold) {
-                                                            // Swipe left = next photo
-                                                            val next = (pagerState.currentPage + 1)
-                                                                .coerceAtMost(photos.size - 1)
-                                                            if (next != pagerState.currentPage) {
-                                                                coroutineScope.launch {
-                                                                    pagerState.animateScrollToPage(next)
-                                                                }
-                                                            }
-                                                        } else if (totalDx >= threshold) {
-                                                            // Swipe right = previous photo
-                                                            val prev = (pagerState.currentPage - 1).coerceAtLeast(0)
-                                                            if (prev != pagerState.currentPage) {
-                                                                coroutineScope.launch {
-                                                                    pagerState.animateScrollToPage(prev)
-                                                                }
-                                                            }
-                                                        }
-                                                        totalDx = 0f
-                                                    },
-                                                    onDragCancel = { totalDx = 0f },
-                                                    onHorizontalDrag = { change, dragAmount ->
-                                                        totalDx += dragAmount
-                                                        if (kotlin.math.abs(totalDx) > 12f) {
-                                                            change.consume()
-                                                        }
-                                                    },
-                                                )
-                                            }
-                                    }
-                                )
-                                .graphicsLayer {
-                                    scaleX = viewerZoomScale
-                                    scaleY = viewerZoomScale
-                                    translationX = viewerZoomOffset.x
-                                    translationY = viewerZoomOffset.y
-                                },
-                        )
-                    }
-                }
-
-                val active = photos.getOrNull(pagerState.currentPage) ?: run {
-                    // Photo list has been emptied or index is stale — dismiss viewer.
-                    onDismiss()
-                    return@Column
-                }
-                val noLocation = stringResource(R.string.no_location)
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color(0xCC111111))
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    if (photos.size > 1) {
-                        Text(
-                            text = stringResource(R.string.viewer_swipe_hint),
-                            color = Color.LightGray,
-                            style = MaterialTheme.typography.labelSmall,
-                        )
-                    }
-                    Text(
-                        text = active.fileName,
-                        color = Color.White,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Text(
-                        text = stringResource(
-                            R.string.viewer_meta,
-                            active.width,
-                            active.height,
-                            (active.fileSize / 1024).toInt(),
-                            active.folderName,
-                        ),
-                        color = Color.LightGray,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    val location = listOfNotNull(active.city, active.state, active.country)
-                        .joinToString()
-                        .ifBlank { noLocation }
-                    Text(
-                        text = location,
-                        color = Color.LightGray,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-
-                    val bestIndex = bestShotRecommendation?.bestIndex
-                    if (bestIndex != null) {
-                        val isBest = bestIndex == pagerState.currentPage
-                        AssistChip(
-                            onClick = {
-                                if (!isBest) {
-                                    coroutineScope.launch { pagerState.animateScrollToPage(bestIndex) }
-                                }
-                            },
-                            label = {
-                                Text(
-                                    text = if (isBest) {
-                                        stringResource(R.string.viewer_best_shot_selected)
-                                    } else {
-                                        stringResource(R.string.viewer_best_shot_jump)
-                                    },
-                                )
-                            },
-                            shape = RoundedCornerShape(16.dp),
-                            colors = AssistChipDefaults.assistChipColors(
-                                containerColor = if (isBest) {
-                                    Color(0x33FFD54F)
-                                } else {
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
-                                },
-                                labelColor = Color.White,
-                            ),
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        active.mlTags.forEach { tag ->
-                            AssistChip(
-                                onClick = {},
-                                label = { Text(text = tag.label) },
-                                shape = RoundedCornerShape(16.dp),
-                                colors = AssistChipDefaults.assistChipColors(
-                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
-                                    labelColor = Color.White,
-                                ),
+                            }
+                            Text(
+                                text = stringResource(R.string.viewer_index, pagerState.currentPage + 1, photos.size),
+                                color = Color.White,
                             )
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                // Reels toggle
+                                Surface(
+                                    color = if (reelsMode) Color(0x66FFFFFF) else Color(0x22FFFFFF),
+                                    shape = RoundedCornerShape(28.dp),
+                                ) {
+                                    IconButton(
+                                        modifier = Modifier.size(42.dp),
+                                        onClick = { reelsMode = !reelsMode },
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.SwapVert,
+                                            contentDescription = "Toggle Reels",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(22.dp),
+                                        )
+                                    }
+                                }
+                                // Share button
+                                Surface(
+                                    color = Color(0x44FFFFFF),
+                                    shape = RoundedCornerShape(28.dp),
+                                ) {
+                                    IconButton(
+                                        modifier = Modifier.size(42.dp),
+                                        onClick = { shareActivePhoto() },
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Share,
+                                            contentDescription = stringResource(R.string.viewer_share),
+                                            tint = Color.White,
+                                            modifier = Modifier.size(24.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Bottom section: action buttons + info
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Color(0x88000000)),
+                        ) {
+                            // Action buttons bar (scrollable)
+                            run {
+                                val active = photos.getOrNull(pagerState.currentPage) ?: return@run
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState())
+                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
+                                        IconButton(modifier = Modifier.size(42.dp), onClick = { onToggleFavorite(active.id) }) {
+                                            Icon(
+                                                imageVector = if (active.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                                contentDescription = stringResource(R.string.viewer_favorite),
+                                                tint = if (active.isFavorite) Color(0xFFFF6B6B) else Color.White,
+                                                modifier = Modifier.size(22.dp),
+                                            )
+                                        }
+                                    }
+                                    Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
+                                        IconButton(modifier = Modifier.size(42.dp), onClick = ::openExifSheet) {
+                                            Icon(Icons.Default.Info, contentDescription = stringResource(R.string.viewer_metadata), tint = Color.White, modifier = Modifier.size(22.dp))
+                                        }
+                                    }
+                                    Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
+                                        IconButton(modifier = Modifier.size(42.dp), onClick = ::openEditorSheet) {
+                                            Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.viewer_edit_photo), tint = Color.White, modifier = Modifier.size(22.dp))
+                                        }
+                                    }
+                                    Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
+                                        IconButton(modifier = Modifier.size(42.dp), onClick = ::startCopyAllTextFlow) {
+                                            Icon(Icons.Default.ContentCopy, contentDescription = stringResource(R.string.viewer_copy_all_text), tint = Color.White, modifier = Modifier.size(22.dp))
+                                        }
+                                    }
+                                    Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
+                                        IconButton(modifier = Modifier.size(42.dp), onClick = {
+                                            qrSharePhotoId = active.id
+                                            showQrShareSheet = true
+                                        }) {
+                                            Icon(Icons.Default.QrCode2, contentDescription = stringResource(R.string.viewer_generate_qr), tint = Color.White, modifier = Modifier.size(22.dp))
+                                        }
+                                    }
+                                    Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
+                                        IconButton(modifier = Modifier.size(42.dp), onClick = { onMoveToTrash(active) }) {
+                                            Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.viewer_move_to_trash), tint = Color.White, modifier = Modifier.size(22.dp))
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Photo info
+                            run {
+                                val active = photos.getOrNull(pagerState.currentPage) ?: return@run
+                                val noLocation = stringResource(R.string.no_location)
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Text(
+                                        text = active.fileName,
+                                        color = Color.White,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                    Text(
+                                        text = stringResource(
+                                            R.string.viewer_meta,
+                                            active.width,
+                                            active.height,
+                                            (active.fileSize / 1024).toInt(),
+                                            active.folderName,
+                                        ),
+                                        color = Color.LightGray,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    val location = listOfNotNull(active.city, active.state, active.country)
+                                        .joinToString()
+                                        .ifBlank { noLocation }
+                                    Text(
+                                        text = location,
+                                        color = Color.LightGray,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -1776,6 +1656,113 @@ private fun IntSize.centerOffset(): Offset {
     return Offset(width / 2f, height / 2f)
 }
 
+/**
+ * Individual photo page composable used inside both HorizontalPager and VerticalPager.
+ * Handles pinch-to-zoom (Google Photos quality), double-tap zoom on exact point, pan when zoomed,
+ * and single-tap to toggle controls.
+ */
+@Composable
+private fun PhotoPage(
+    photo: PhotoRecord,
+    viewerZoomScale: Float,
+    viewerZoomOffset: Offset,
+    viewerImageSize: IntSize,
+    onZoomScaleChange: (Float) -> Unit,
+    onZoomOffsetChange: (Offset) -> Unit,
+    onImageSizeChange: (IntSize) -> Unit,
+    onResetZoom: () -> Unit,
+    onSingleTap: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black),
+        contentAlignment = Alignment.Center,
+    ) {
+        AsyncImage(
+            model = Uri.parse(photo.uriString),
+            contentDescription = photo.fileName,
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .fillMaxSize()
+                .onSizeChanged { size -> onImageSizeChange(size) }
+                .pointerInput(photo.id, viewerImageSize) {
+                    detectTapGestures(
+                        onTap = { onSingleTap() },
+                        onDoubleTap = { tapOffset ->
+                            if (viewerImageSize.width == 0 || viewerImageSize.height == 0) {
+                                return@detectTapGestures
+                            }
+                            if (viewerZoomScale > MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) {
+                                onResetZoom()
+                            } else {
+                                // Zoom to 3x centered on the exact tap point (Google Photos style)
+                                val targetScale = DOUBLE_TAP_VIEWER_ZOOM
+                                val targetOffset = calculateDoubleTapZoomOffset(
+                                    tapOffset = tapOffset,
+                                    containerSize = viewerImageSize,
+                                    targetScale = targetScale,
+                                )
+                                onZoomScaleChange(targetScale)
+                                onZoomOffsetChange(
+                                    clampViewerOffset(
+                                        offset = targetOffset,
+                                        scale = targetScale,
+                                        containerSize = viewerImageSize,
+                                    )
+                                )
+                            }
+                        },
+                    )
+                }
+                .pointerInput(photo.id, viewerImageSize, viewerZoomScale) {
+                    detectTransformGestures { centroid, pan, zoom, _ ->
+                        if (viewerImageSize.width == 0 || viewerImageSize.height == 0) {
+                            return@detectTransformGestures
+                        }
+                        val oldScale = viewerZoomScale
+                        val newScale = (oldScale * zoom).coerceIn(MIN_VIEWER_ZOOM, MAX_VIEWER_ZOOM)
+
+                        if (newScale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON && oldScale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON && pan == Offset.Zero) {
+                            // No zoom change at 1x, let pager handle the gesture
+                            return@detectTransformGestures
+                        }
+
+                        if (newScale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) {
+                            onResetZoom()
+                            return@detectTransformGestures
+                        }
+
+                        // Zoom anchored on pinch centroid (Google Photos quality)
+                        val center = viewerImageSize.centerOffset()
+                        val centroidDelta = centroid - center
+                        val scaleFactor = newScale / oldScale
+                        val scaledOffset = Offset(
+                            x = (viewerZoomOffset.x + centroidDelta.x) * scaleFactor - centroidDelta.x,
+                            y = (viewerZoomOffset.y + centroidDelta.y) * scaleFactor - centroidDelta.y,
+                        )
+                        val nextOffset = scaledOffset + pan
+
+                        onZoomScaleChange(newScale)
+                        onZoomOffsetChange(
+                            clampViewerOffset(
+                                offset = nextOffset,
+                                scale = newScale,
+                                containerSize = viewerImageSize,
+                            )
+                        )
+                    }
+                }
+                .graphicsLayer {
+                    scaleX = viewerZoomScale
+                    scaleY = viewerZoomScale
+                    translationX = viewerZoomOffset.x
+                    translationY = viewerZoomOffset.y
+                },
+        )
+    }
+}
+
 private fun calculateDoubleTapZoomOffset(
     tapOffset: Offset,
     containerSize: IntSize,
@@ -1810,7 +1797,7 @@ private fun clampViewerOffset(
 }
 
 private const val MIN_VIEWER_ZOOM = 1f
-private const val MAX_VIEWER_ZOOM = 6f
+private const val MAX_VIEWER_ZOOM = 10f
 private const val DOUBLE_TAP_VIEWER_ZOOM = 3f
 private const val VIEWER_ZOOM_EPSILON = 0.01f
 
@@ -1896,3 +1883,57 @@ private fun multiplyColorMatrices(a: FloatArray, b: FloatArray): FloatArray {
     }
     return out
 }
+
+/**
+ * Creates a temporary copy of an image with all date/time EXIF metadata stripped.
+ * Returns a FileProvider URI for sharing, or null if the operation fails.
+ */
+private fun stripDateTimeAndShare(
+    context: android.content.Context,
+    sourceUri: Uri,
+    mimeType: String,
+    fileName: String,
+): Uri? = runCatching {
+    val shareDir = File(context.cacheDir, "share_clean")
+    shareDir.mkdirs()
+    // Clean old share files (older than 5 min) to avoid cache bloat
+    shareDir.listFiles()?.forEach { old ->
+        if (System.currentTimeMillis() - old.lastModified() > 300_000L) {
+            old.delete()
+        }
+    }
+    val ext = when {
+        mimeType.contains("png") -> ".png"
+        mimeType.contains("webp") -> ".webp"
+        else -> ".jpg"
+    }
+    val outFile = File(shareDir, "PB_share_${System.currentTimeMillis()}$ext")
+    // Copy bytes
+    context.contentResolver.openInputStream(sourceUri)?.use { input ->
+        outFile.outputStream().use { output -> input.copyTo(output) }
+    } ?: return@runCatching null
+
+    // Strip date/time EXIF tags
+    try {
+        val exif = ExifInterface(outFile.absolutePath)
+        exif.setAttribute(ExifInterface.TAG_DATETIME, null)
+        exif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, null)
+        exif.setAttribute(ExifInterface.TAG_DATETIME_DIGITIZED, null)
+        exif.setAttribute(ExifInterface.TAG_GPS_DATESTAMP, null)
+        exif.setAttribute(ExifInterface.TAG_GPS_TIMESTAMP, null)
+        // Also strip GPS location for extra privacy
+        exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE, null)
+        exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE_REF, null)
+        exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE, null)
+        exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE_REF, null)
+        exif.saveAttributes()
+    } catch (_: Exception) {
+        // If EXIF stripping fails (e.g. PNG), still share the copy — at least no location
+    }
+
+    FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        outFile,
+    )
+}.getOrNull()

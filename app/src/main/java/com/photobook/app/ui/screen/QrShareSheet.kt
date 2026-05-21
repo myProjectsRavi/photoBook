@@ -49,10 +49,16 @@ fun QrShareSheet(
                 if (payload.isNullOrEmpty()) {
                     QrSingleResult.Error
                 } else {
-                    val bitmap = withContext(Dispatchers.Default) {
-                        QrBitmapEncoder.encode(payload, sizePx = 600)
+                    val bitmap = runCatching {
+                        withContext(Dispatchers.Default) {
+                            QrBitmapEncoder.encode(payload, sizePx = 600)
+                        }
+                    }.getOrNull()
+                    if (bitmap != null) {
+                        QrSingleResult.Ready(bitmap = bitmap, fileName = gen.packet.fileName)
+                    } else {
+                        QrSingleResult.Error
                     }
-                    QrSingleResult.Ready(bitmap = bitmap, fileName = gen.packet.fileName)
                 }
             }
             is QrShareGenerationResult.TooLarge -> QrSingleResult.Error

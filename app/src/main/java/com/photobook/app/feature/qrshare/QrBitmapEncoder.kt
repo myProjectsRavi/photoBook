@@ -10,8 +10,9 @@ import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 object QrBitmapEncoder {
     fun encode(payload: String, sizePx: Int = 760): Bitmap {
         val hints = mapOf(
-            EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M,
+            EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.L,
             EncodeHintType.MARGIN to 1,
+            EncodeHintType.CHARACTER_SET to "ISO-8859-1",
         )
         val matrix = MultiFormatWriter().encode(
             payload,

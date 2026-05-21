@@ -248,10 +248,10 @@ class QrShareEncoder @Inject constructor(
         private const val MAX_DIMENSION_RATIO = 0.92
 
         // Single-frame QR constraints
-        private const val SINGLE_QR_MAX_BYTES = 2000  // ~2KB fits in one dense QR
-        private const val SINGLE_QR_MAX_DIMENSION = 240
-        private const val SINGLE_QR_MIN_QUALITY = 30
-        private const val SINGLE_QR_MAX_QUALITY = 65
+        private const val SINGLE_QR_MAX_BYTES = 1600  // ~2.1KB base64 fits safely in one QR
+        private const val SINGLE_QR_MAX_DIMENSION = 200
+        private const val SINGLE_QR_MIN_QUALITY = 20
+        private const val SINGLE_QR_MAX_QUALITY = 55
     }
 
     /**
@@ -320,7 +320,7 @@ class QrShareEncoder @Inject constructor(
 
         // If even minimum quality doesn't fit, try tiny scale
         if (best == null) {
-            val tiny = scaleBitmapToMaxDimension(bitmap, 120)
+            val tiny = scaleBitmapToMaxDimension(bitmap, 80)
             val encoded = encodeJpeg(tiny, SINGLE_QR_MIN_QUALITY)
             if (tiny !== bitmap) tiny.recycleSafely()
             if (encoded.size <= SINGLE_QR_MAX_BYTES) {
