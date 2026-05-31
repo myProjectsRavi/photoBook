@@ -14,8 +14,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
@@ -26,6 +31,7 @@ import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.feature.qrshare.QrBitmapEncoder
 import com.photobook.app.feature.qrshare.QrShareEncoder
 import com.photobook.app.feature.qrshare.QrShareGenerationResult
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -38,31 +44,59 @@ fun QrShareSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    // Instant single-frame QR — generate one tiny QR (≤2KB JPEG) that scans in <1s.
-    val qrResult by produceState<QrSingleResult>(
-        initialValue = QrSingleResult.Loading,
+    val qrResult by produceState<QrPacketResult>(
+        initialValue = QrPacketResult.Loading,
         key1 = photo.id,
     ) {
-        value = when (val gen = encoder.generateSingleFrameQr(photo)) {
-            is QrShareGenerationResult.Success -> {
-                val payload = gen.packet.frames.firstOrNull()
-                if (payload.isNullOrEmpty()) {
-                    QrSingleResult.Error
-                } else {
-                    val bitmap = runCatching {
-                        withContext(Dispatchers.Default) {
-                            QrBitmapEncoder.encode(payload, sizePx = 600)
-                        }
-                    }.getOrNull()
-                    if (bitmap != null) {
-                        QrSingleResult.Ready(bitmap = bitmap, fileName = gen.packet.fileName)
-                    } else {
-                        QrSingleResult.Error
-                    }
+        val singleFrame = encoder.generateSingleFrameQr(photo)
+        value = when (singleFrame) {
+            is QrShareGenerationResult.Success -> QrPacketResult.Ready(singleFrame.packet)
+            is QrShareGenerationResult.TooLarge -> {
+                when (val multiFrame = encoder.generateForPhoto(photo)) {
+                    is QrShareGenerationResult.Success -> QrPacketResult.Ready(multiFrame.packet)
+                    is QrShareGenerationResult.TooLarge -> QrPacketResult.TooLarge(
+                        byteSize = multiFrame.byteSize,
+                        maxSupportedBytes = multiFrame.maxSupportedBytes,
+                    )
+                    is QrShareGenerationResult.Error -> QrPacketResult.Error
                 }
             }
-            is QrShareGenerationResult.TooLarge -> QrSingleResult.Error
-            is QrShareGenerationResult.Error -> QrSingleResult.Error
+            is QrShareGenerationResult.Error -> QrPacketResult.Error
+        }
+    }
+
+    var frameIndex by remember(photo.id) { mutableIntStateOf(0) }
+    var currentBitmap by remember(photo.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
+
+    LaunchedEffect(qrResult) {
+        if (qrResult !is QrPacketResult.Ready) return@LaunchedEffect
+        frameIndex = 0
+    }
+
+    LaunchedEffect(qrResult, frameIndex) {
+        val ready = qrResult as? QrPacketResult.Ready ?: return@LaunchedEffect
+        val payload = ready.packet.frames.getOrNull(frameIndex) ?: return@LaunchedEffect
+        val nextBitmap = runCatching {
+            withContext(Dispatchers.Default) {
+                QrBitmapEncoder.encode(
+                    payload,
+                    sizePx = if (ready.packet.frames.size == 1) 600 else 720,
+                )
+            }
+        }.getOrNull()
+        val oldBitmap = currentBitmap
+        currentBitmap = nextBitmap
+        if (oldBitmap != null && oldBitmap !== nextBitmap && !oldBitmap.isRecycled) {
+            oldBitmap.recycle()
+        }
+    }
+
+    LaunchedEffect(qrResult) {
+        val ready = qrResult as? QrPacketResult.Ready ?: return@LaunchedEffect
+        if (ready.packet.frames.size <= 1) return@LaunchedEffect
+        while (true) {
+            delay(220)
+            frameIndex = (frameIndex + 1) % ready.packet.frames.size
         }
     }
 
@@ -84,30 +118,61 @@ fun QrShareSheet(
             )
 
             when (val result = qrResult) {
-                QrSingleResult.Loading -> {
+                QrPacketResult.Loading -> {
                     CircularProgressIndicator(modifier = Modifier.size(32.dp))
                 }
-                QrSingleResult.Error -> {
+                QrPacketResult.Error -> {
                     Text(
                         text = stringResource(R.string.viewer_qr_error),
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
-                is QrSingleResult.Ready -> {
-                    DisposableEffect(result) {
+                is QrPacketResult.TooLarge -> {
+                    Text(
+                        text = stringResource(
+                            R.string.viewer_qr_too_large,
+                            result.byteSize / 1024,
+                            result.maxSupportedBytes / 1024,
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                is QrPacketResult.Ready -> {
+                    DisposableEffect(result.packet.transferId) {
                         onDispose {
-                            runCatching { if (!result.bitmap.isRecycled) result.bitmap.recycle() }
+                            runCatching { if (currentBitmap != null && !currentBitmap!!.isRecycled) currentBitmap!!.recycle() }
+                            currentBitmap = null
                         }
                     }
-                    Image(
-                        bitmap = result.bitmap.asImageBitmap(),
-                        contentDescription = stringResource(R.string.viewer_qr_frame),
-                        modifier = Modifier
-                            .size(320.dp)
-                            .padding(8.dp),
-                    )
+                    val bitmap = currentBitmap
+                    if (bitmap != null) {
+                        Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = stringResource(R.string.viewer_qr_frame),
+                            modifier = Modifier
+                                .size(320.dp)
+                                .padding(8.dp),
+                        )
+                    } else {
+                        CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                    }
+                    if (result.packet.frames.size > 1) {
+                        Text(
+                            text = stringResource(
+                                R.string.viewer_qr_frame_progress,
+                                frameIndex + 1,
+                                result.packet.frames.size,
+                            ),
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                     Text(
-                        text = "Scan to receive ${result.fileName}",
+                        text = stringResource(
+                            R.string.viewer_qr_scan_hint,
+                            result.packet.byteSize / 1024,
+                            result.packet.totalChunks,
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -117,11 +182,14 @@ fun QrShareSheet(
     }
 }
 
-private sealed interface QrSingleResult {
-    data object Loading : QrSingleResult
-    data object Error : QrSingleResult
+private sealed interface QrPacketResult {
+    data object Loading : QrPacketResult
+    data object Error : QrPacketResult
+    data class TooLarge(
+        val byteSize: Int,
+        val maxSupportedBytes: Int,
+    ) : QrPacketResult
     data class Ready(
-        val bitmap: android.graphics.Bitmap,
-        val fileName: String,
-    ) : QrSingleResult
+        val packet: com.photobook.app.feature.qrshare.QrSharePacket,
+    ) : QrPacketResult
 }

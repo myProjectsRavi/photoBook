@@ -27,9 +27,14 @@ data class SearchContext(
     val homeCountry: String? = null,
 )
 
-class FilterFactory @Inject constructor(
-    private val photoNoteStore: PhotoNoteStore,
+class FilterFactory private constructor(
+    private val noteContains: (Long, String) -> Boolean,
 ) {
+
+    @Inject
+    constructor(photoNoteStore: PhotoNoteStore) : this(photoNoteStore::noteContains)
+
+    constructor() : this({ _, _ -> false })
 
     fun create(token: QueryToken, context: SearchContext): PhotoFilter? {
         return when (token) {
@@ -167,7 +172,7 @@ class FilterFactory @Inject constructor(
                 photo.fileName.contains(normalized, ignoreCase = true) ||
                 photo.folderName.contains(normalized, ignoreCase = true) ||
                 photo.folderPath.contains(normalized, ignoreCase = true) ||
-                photoNoteStore.noteContains(photo.id, normalized)
+                noteContains(photo.id, normalized)
         }
     }
 

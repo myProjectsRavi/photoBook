@@ -59,7 +59,7 @@ class QrShareEncoder @Inject constructor(
 
             val transferId = UUID.randomUUID().toString().replace("-", "").take(12)
             val fileName = photo.fileName.ifBlank { "PhotoBook_${photo.id}.jpg" }
-            val mimeType = "image/jpeg"
+            val mimeType = "image/webp"
             val sha256 = QrPayloadHash.sha256(imageBytes)
             val base64Payload = Base64.getUrlEncoder()
                 .withoutPadding()
@@ -213,7 +213,7 @@ class QrShareEncoder @Inject constructor(
 
     private fun encodeJpeg(bitmap: Bitmap, quality: Int): ByteArray {
         return ByteArrayOutputStream().use { out ->
-            bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
+            @Suppress("DEPRECATION") bitmap.compress(Bitmap.CompressFormat.WEBP, quality, out)
             out.toByteArray()
         }
     }
@@ -248,8 +248,8 @@ class QrShareEncoder @Inject constructor(
         private const val MAX_DIMENSION_RATIO = 0.92
 
         // Single-frame QR constraints
-        private const val SINGLE_QR_MAX_BYTES = 1600  // ~2.1KB base64 fits safely in one QR
-        private const val SINGLE_QR_MAX_DIMENSION = 200
+        private const val SINGLE_QR_MAX_BYTES = 2050  // ~2.1KB base64 fits safely in one QR
+        private const val SINGLE_QR_MAX_DIMENSION = 320
         private const val SINGLE_QR_MIN_QUALITY = 20
         private const val SINGLE_QR_MAX_QUALITY = 55
     }
@@ -281,16 +281,24 @@ class QrShareEncoder @Inject constructor(
 
                 val transferId = UUID.randomUUID().toString().replace("-", "").take(8)
                 val fileName = photo.fileName.ifBlank { "PhotoBook_${photo.id}.jpg" }
+                val mimeType = "image/webp"
                 val base64Payload = Base64.getUrlEncoder().withoutPadding().encodeToString(imageBytes)
-
-                // Single payload: PB1|transferId|fileName|base64ImageData
-                val singlePayload = "PB1|$transferId|$fileName|$base64Payload"
+                val singlePayload = QrTransferProtocol.encodeSingle(
+                    QrTransferFrame.Single(
+                        transferId = transferId,
+                        fileName = fileName,
+                        mimeType = mimeType,
+                        sha256 = QrPayloadHash.sha256(imageBytes),
+                        byteSize = imageBytes.size,
+                        payload = base64Payload,
+                    )
+                )
 
                 QrShareGenerationResult.Success(
                     packet = QrSharePacket(
                         transferId = transferId,
                         fileName = fileName,
-                        mimeType = "image/jpeg",
+                        mimeType = mimeType,
                         byteSize = imageBytes.size,
                         totalChunks = 1,
                         frames = listOf(singlePayload),

@@ -3,6 +3,15 @@ package com.photobook.app.feature.qrshare
 import java.util.Base64
 
 sealed interface QrTransferFrame {
+    data class Single(
+        val transferId: String,
+        val fileName: String,
+        val mimeType: String,
+        val sha256: String,
+        val byteSize: Int,
+        val payload: String,
+    ) : QrTransferFrame
+
     data class Metadata(
         val transferId: String,
         val totalChunks: Int,
@@ -21,9 +30,26 @@ sealed interface QrTransferFrame {
 
 object QrTransferProtocol {
     private const val PREFIX = "PB1"
+    private const val SINGLE_TYPE = "S"
     private const val META_TYPE = "M"
     private const val DATA_TYPE = "D"
     private const val DELIMITER = "|"
+
+    fun encodeSingle(frame: QrTransferFrame.Single): String {
+        val namePayload = Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(frame.fileName.toByteArray(Charsets.UTF_8))
+        return listOf(
+            PREFIX,
+            SINGLE_TYPE,
+            frame.transferId,
+            namePayload,
+            frame.mimeType,
+            frame.sha256,
+            frame.byteSize.toString(),
+            frame.payload,
+        ).joinToString(DELIMITER)
+    }
 
     fun encodeMetadata(frame: QrTransferFrame.Metadata): String {
         val namePayload = Base64.getUrlEncoder()
@@ -56,10 +82,34 @@ object QrTransferProtocol {
         if (parts.size < 5 || parts[0] != PREFIX) return null
 
         return when (parts[1]) {
+            SINGLE_TYPE -> parseSingle(parts)
             META_TYPE -> parseMetadata(parts)
             DATA_TYPE -> parseData(parts)
             else -> null
         }
+    }
+
+    private fun parseSingle(parts: List<String>): QrTransferFrame.Single? {
+        if (parts.size != 8) return null
+
+        val transferId = parts[2].trim()
+        val fileName = runCatching {
+            String(Base64.getUrlDecoder().decode(parts[3]), Charsets.UTF_8)
+        }.getOrNull() ?: return null
+        val mimeType = parts[4].trim().ifBlank { "image/webp" }
+        val sha256 = parts[5].trim().lowercase()
+        val byteSize = parts[6].toIntOrNull() ?: return null
+        val payload = parts[7].trim()
+        if (transferId.isBlank() || fileName.isBlank() || payload.isBlank() || byteSize <= 0) return null
+
+        return QrTransferFrame.Single(
+            transferId = transferId,
+            fileName = fileName,
+            mimeType = mimeType,
+            sha256 = sha256,
+            byteSize = byteSize,
+            payload = payload,
+        )
     }
 
     private fun parseMetadata(parts: List<String>): QrTransferFrame.Metadata? {

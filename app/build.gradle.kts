@@ -121,7 +121,7 @@ android {
             include("arm64-v8a", "armeabi-v7a")
             // No universal APK — keeps per-ABI APKs lean (arm64-v8a ~48MB instead of ~140MB).
             // Use Play Store AAB for automatic per-device delivery.
-            isUniversalApk = true
+            isUniversalApk = false
         }
     }
 
@@ -193,10 +193,10 @@ dependencies {
 
 tasks.register("verifyApkSize") {
     group = "verification"
-    description = "Fails when any generated APK exceeds 150 MB."
+    description = "Fails when any generated APK exceeds 60 MB."
 
     doLast {
-        val maxBytes = 150L * 1024L * 1024L
+        val maxBytes = 60L * 1024L * 1024L
         val apkRoot = layout.buildDirectory.dir("outputs/apk").get().asFile
         if (!apkRoot.exists()) return@doLast
 
@@ -208,7 +208,7 @@ tasks.register("verifyApkSize") {
         apks.forEach { apk ->
             val sizeBytes = apk.length()
             check(sizeBytes <= maxBytes) {
-                "APK size gate failed for ${apk.path}: ${sizeBytes / (1024 * 1024)} MB > 110 MB"
+                "APK size gate failed for ${apk.path}: ${sizeBytes / (1024 * 1024)} MB > 60 MB"
             }
         }
     }

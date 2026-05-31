@@ -94,6 +94,7 @@ class MainViewModel @Inject constructor(
         val favoritesOnly: Boolean = false,
         val selectedPhotoIds: Set<Long> = emptySet(),
         val feedMode: HomeFeedMode = HomeFeedMode.Timeline,
+        val reelsEnabled: Boolean = false,
         val suggestions: List<SuggestionItem> = emptyList(),
         val showSuggestions: Boolean = false,
         val onThisDayStory: MemoryStory? = null,
@@ -205,6 +206,9 @@ class MainViewModel @Inject constructor(
     )
 
     init {
+        uiState.update {
+            it.copy(reelsEnabled = sharedPreferences.getBoolean(REELS_ENABLED_KEY, false))
+        }
         observeSuggestions()
     }
 
@@ -397,6 +401,36 @@ class MainViewModel @Inject constructor(
 
     fun onToggleFavoritesOnly() {
         uiState.update { it.copy(favoritesOnly = !it.favoritesOnly) }
+    }
+
+    /** Enables/disables Instagram Reels-style vertical photo browsing in the viewer. */
+    fun onToggleReelsEnabled() {
+        val next = !uiState.value.reelsEnabled
+        uiState.update { it.copy(reelsEnabled = next) }
+        runCatching {
+            sharedPreferences.edit().putBoolean(REELS_ENABLED_KEY, next).apply()
+        }
+    }
+
+    /**
+     * Returns the home feed to its pristine default: timeline view, no query,
+     * no favorites filter, no selection. Wired to the PhotoBook logo for instant
+     * "take me home" navigation.
+     */
+    fun resetToDefaultView() {
+        queryFlow.value = ""
+        uiState.update {
+            it.copy(
+                query = "",
+                favoritesOnly = false,
+                feedMode = HomeFeedMode.Timeline,
+                selectedPhotoIds = emptySet(),
+                viewerStartIndex = null,
+                viewerPhotos = emptyList(),
+                showSuggestions = false,
+                showDuplicateFinder = false,
+            )
+        }
     }
 
     fun clearSelection() {
@@ -1099,5 +1133,6 @@ class MainViewModel @Inject constructor(
         private const val SEARCH_PREFETCH_DISTANCE = 20
         private const val RECORDS_UPDATE_DEBOUNCE_MS = 250L
         private const val MAX_DECLUTTER_CANDIDATES = 300
+        private const val REELS_ENABLED_KEY = "reels_enabled_v1"
     }
 }

@@ -38,6 +38,7 @@ import com.photobook.app.R
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.feature.metadata.ExifMetadataService
 import com.photobook.app.feature.metadata.SafeShareItem
+import com.photobook.app.feature.metadata.SafeShareResult
 import com.photobook.app.feature.pdf.PdfExportResult
 import com.photobook.app.feature.pdf.PdfExportService
 import com.photobook.app.feature.qrshare.QrReceivedImageStore
@@ -232,18 +233,24 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
 
     fun shareSelectedPhotos(photos: List<PhotoRecord>) {
         if (photos.isEmpty()) return
-        val items = photos.mapNotNull { photo ->
-            runCatching {
-                SafeShareItem(
-                    uri = Uri.parse(photo.uriString),
-                    mimeType = photo.mimeType.ifBlank { "image/*" },
-                    label = photo.fileName,
-                )
-            }.getOrNull()
+        coroutineScope.launch {
+            when (val result = exifMetadataService.createSafeShareCopies(photos)) {
+                is SafeShareResult.Success -> {
+                    if (result.items.isNotEmpty()) {
+                        sharePhotos(context, result.items)
+                        viewModel.clearSelection()
+                    }
+                }
+
+                is SafeShareResult.Error -> {
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.safe_share_prepare_error),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
         }
-        if (items.isEmpty()) return
-        sharePhotos(context, items)
-        viewModel.clearSelection()
     }
 
     fun refreshVaultItems() {
@@ -305,6 +312,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         searchReady = uiState.searchReady,
         favoritesOnly = uiState.favoritesOnly,
         feedMode = uiState.feedMode,
+        reelsEnabled = uiState.reelsEnabled,
         selectedPhotoIds = uiState.selectedPhotoIds,
         timelineMarks = uiState.timelineMarks,
         suggestions = uiState.suggestions,
@@ -320,6 +328,8 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         onSuggestionSelected = viewModel::onSuggestionSelected,
         onClearQuery = viewModel::onClearQuery,
         onToggleFavoritesOnly = viewModel::onToggleFavoritesOnly,
+        onToggleReels = viewModel::onToggleReelsEnabled,
+        onLogoClick = viewModel::resetToDefaultView,
         onShareSelected = { selectedIds ->
             coroutineScope.launch {
                 val selectedPhotos = viewModel.resolvePhotosByIds(selectedIds)
@@ -456,6 +466,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             onMoveToTrash = { photo ->
                 requestMoveToTrash(listOf(photo))
             },
+            reelsEnabled = uiState.reelsEnabled,
         )
     }
 

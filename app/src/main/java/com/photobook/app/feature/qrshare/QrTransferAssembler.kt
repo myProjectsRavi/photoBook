@@ -32,12 +32,45 @@ class QrTransferAssembler {
     fun consume(rawValue: String): QrAssemblyResult? {
         val frame = QrTransferProtocol.parse(rawValue) ?: return null
         val transferId = when (frame) {
+            is QrTransferFrame.Single -> frame.transferId
             is QrTransferFrame.Metadata -> frame.transferId
             is QrTransferFrame.Data -> frame.transferId
         }
+
+        if (frame is QrTransferFrame.Single) {
+            val bytes = runCatching {
+                Base64.getUrlDecoder().decode(frame.payload)
+            }.getOrElse {
+                return QrAssemblyResult.Error(
+                    transferId = frame.transferId,
+                    reason = "Corrupted transfer payload.",
+                )
+            }
+            if (bytes.size != frame.byteSize) {
+                return QrAssemblyResult.Error(
+                    transferId = frame.transferId,
+                    reason = "Transfer size verification failed.",
+                )
+            }
+            val digest = QrPayloadHash.sha256(bytes)
+            if (digest != frame.sha256.lowercase()) {
+                return QrAssemblyResult.Error(
+                    transferId = frame.transferId,
+                    reason = "Transfer integrity check failed.",
+                )
+            }
+            return QrAssemblyResult.Completed(
+                transferId = frame.transferId,
+                fileName = frame.fileName,
+                mimeType = frame.mimeType,
+                bytes = bytes,
+            )
+        }
+
         val session = sessions.getOrPut(transferId) { Session() }
 
         when (frame) {
+            is QrTransferFrame.Single -> Unit
             is QrTransferFrame.Metadata -> {
                 session.metadata = frame
             }

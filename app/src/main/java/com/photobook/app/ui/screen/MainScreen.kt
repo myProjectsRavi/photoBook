@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.items as lazyItems
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -67,6 +68,7 @@ fun MainScreen(
     searchReady: Boolean,
     favoritesOnly: Boolean,
     feedMode: HomeFeedMode,
+    reelsEnabled: Boolean,
     selectedPhotoIds: Set<Long>,
     timelineMarks: List<TimelineMark>,
     suggestions: List<SuggestionItem>,
@@ -82,6 +84,8 @@ fun MainScreen(
     onSuggestionSelected: (SuggestionItem) -> Unit,
     onClearQuery: () -> Unit,
     onToggleFavoritesOnly: () -> Unit,
+    onToggleReels: () -> Unit,
+    onLogoClick: () -> Unit,
     onShareSelected: (Set<Long>) -> Unit,
     onMoveSelectedToTrash: (Set<Long>) -> Unit,
     onCreatePdfSelected: (Set<Long>) -> Unit,
@@ -148,7 +152,13 @@ fun MainScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                    ) { onLogoClick() },
+                ) {
                     Box(
                         modifier = Modifier
                             .size(44.dp)
@@ -175,29 +185,40 @@ fun MainScreen(
                 }
 
                 Surface(
-                    color = Color.Transparent,
-                    shape = RoundedCornerShape(20.dp),
+                    color = Color.White.copy(alpha = 0.18f),
+                    shape = RoundedCornerShape(18.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)),
                 ) {
-                    Box(
+                    Row(
                         modifier = Modifier
                             .background(
                                 Brush.horizontalGradient(
                                     colors = listOf(
-                                        Color(0xFFFFD700),
-                                        Color(0xFFFFA500),
-                                        Color(0xFFFF8C00),
+                                        AccentIndigo,
+                                        AccentViolet,
+                                        AccentPink,
                                     )
                                 ),
-                                shape = RoundedCornerShape(20.dp)
+                                shape = RoundedCornerShape(18.dp)
                             )
-                            .padding(horizontal = 14.dp, vertical = 5.dp),
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
+                        Box(
+                            modifier = Modifier
+                                .size(18.dp)
+                                .background(Color.White.copy(alpha = 0.16f), CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text("✦", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Black)
+                        }
                         Text(
-                            "✦ PRO",
+                            "PRO",
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontWeight = FontWeight.Black,
                                 color = Color.White,
-                                letterSpacing = 1.5.sp
+                                letterSpacing = 1.2.sp
                             )
                         )
                     }
@@ -251,6 +272,13 @@ fun MainScreen(
                         label = "Favorites",
                         onClick = onToggleFavoritesOnly,
                         color = if (favoritesOnly) AccentPink else Color(0xFF64748B),
+                        enabled = searchReady
+                    )
+                    RefinedActionButton(
+                        icon = Icons.Default.Slideshow,
+                        label = "Reels",
+                        onClick = onToggleReels,
+                        color = if (reelsEnabled) AccentIndigo else Color(0xFF64748B),
                         enabled = searchReady
                     )
                     RefinedActionButton(
@@ -356,7 +384,6 @@ fun MainScreen(
                         IconButton(onClick = onClearSelection) { Icon(Icons.Default.Close, null) }
                         if (selectedPhotoIds.size == 1) {
                             IconButton(onClick = { onCopyTextFromPhoto(selectedPhotoIds.first()) }) { Icon(Icons.Default.ContentCopy, contentDescription = "Copy text from photo") }
-                            IconButton(onClick = { onGenerateQrForPhoto(selectedPhotoIds.first()) }) { Icon(Icons.Default.QrCode2, contentDescription = "Generate QR") }
                         }
                         IconButton(onClick = { onCreatePdfSelected(selectedPhotoIds) }) { Icon(Icons.Default.PictureAsPdf, null) }
                         IconButton(onClick = { onShareSelected(selectedPhotoIds) }) { Icon(Icons.Default.Share, null) }
@@ -366,20 +393,7 @@ fun MainScreen(
             }
         }
 
-        // FAB
-        if (!isSelectionMode) {
-            FloatingActionButton(
-                onClick = onOpenQrScanner,
-                containerColor = AccentIndigo,
-                contentColor = Color.White,
-                shape = RoundedCornerShape(18.dp),
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(24.dp)
-            ) {
-                Icon(Icons.Default.CameraAlt, contentDescription = null)
-            }
-        }
+        // FAB removed: offline QR share/scan is temporarily disabled in the UI.
 
         if (showDuplicateFinder) {
             DuplicateFinderSheet(

@@ -7,6 +7,28 @@ import org.junit.Test
 class QrTransferAssemblerTest {
 
     @Test
+    fun consume_completesSingleFrameTransfer() {
+        val assembler = QrTransferAssembler()
+        val bytes = "hello single photobook".toByteArray()
+        val frame = QrTransferFrame.Single(
+            transferId = "single1",
+            fileName = "demo.webp",
+            mimeType = "image/webp",
+            sha256 = QrPayloadHash.sha256(bytes),
+            byteSize = bytes.size,
+            payload = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes),
+        )
+
+        val completed = assembler.consume(
+            QrTransferProtocol.encodeSingle(frame)
+        ) as QrAssemblyResult.Completed
+
+        assertThat(completed.transferId).isEqualTo("single1")
+        assertThat(completed.fileName).isEqualTo("demo.webp")
+        assertThat(completed.bytes).isEqualTo(bytes)
+    }
+
+    @Test
     fun consume_reassemblesPayload_whenAllChunksArrive() {
         val assembler = QrTransferAssembler()
         val bytes = "hello photobook".toByteArray()

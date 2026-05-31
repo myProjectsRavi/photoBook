@@ -8,15 +8,21 @@ import android.net.Uri
 import android.provider.MediaStore
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
@@ -49,7 +55,6 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -75,6 +80,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -86,6 +92,7 @@ import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -118,16 +125,14 @@ import com.photobook.app.feature.metadata.ExifDetailsResult
 import com.photobook.app.feature.metadata.ExifMetadataService
 import com.photobook.app.feature.metadata.MetadataCleanResult
 import com.photobook.app.feature.notes.PhotoNoteStore
-import com.photobook.app.feature.qrshare.QrShareEncoder
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.min
-import androidx.exifinterface.media.ExifInterface
-import androidx.core.content.FileProvider
-import java.io.File
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -138,6 +143,7 @@ fun PhotoViewerScreen(
     onPageChanged: (Int) -> Unit,
     onToggleFavorite: (Long) -> Unit,
     onMoveToTrash: (PhotoRecord) -> Unit,
+    reelsEnabled: Boolean = false,
 ) {
     if (photos.isEmpty()) return
 
@@ -155,9 +161,6 @@ fun PhotoViewerScreen(
     }
     val exifMetadataService = remember(context.applicationContext) {
         ExifMetadataService(context.applicationContext)
-    }
-    val qrShareEncoder = remember(context.applicationContext) {
-        QrShareEncoder(context.applicationContext)
     }
     val bestShotPicker = remember { BurstBestShotPicker() }
     val photoEditService = remember(context.applicationContext) {
@@ -179,9 +182,7 @@ fun PhotoViewerScreen(
     var isCleaningMetadata by remember { mutableStateOf(false) }
     var showQrShareSheet by remember { mutableStateOf(false) }
     var qrSharePhotoId by remember { mutableStateOf<Long?>(null) }
-    var viewerZoomScale by remember { mutableStateOf(MIN_VIEWER_ZOOM) }
-    var viewerZoomOffset by remember { mutableStateOf(Offset.Zero) }
-    var viewerImageSize by remember { mutableStateOf(IntSize.Zero) }
+    var currentPageZoom by remember { mutableStateOf(MIN_VIEWER_ZOOM) }
     var bestShotRecommendation by remember { mutableStateOf<BestShotRecommendation?>(null) }
     var showEditorSheet by remember { mutableStateOf(false) }
     var editorState by remember { mutableStateOf(PhotoEditState()) }
@@ -191,11 +192,9 @@ fun PhotoViewerScreen(
     var noteDraft by remember { mutableStateOf("") }
     var hasNoteForCurrent by remember { mutableStateOf(false) }
     var showControls by remember { mutableStateOf(true) }
-    var reelsMode by remember { mutableStateOf(false) }
 
     fun resetViewerZoom() {
-        viewerZoomScale = MIN_VIEWER_ZOOM
-        viewerZoomOffset = Offset.Zero
+        currentPageZoom = MIN_VIEWER_ZOOM
     }
 
     fun copyToClipboard(text: String) {
@@ -454,22 +453,30 @@ fun PhotoViewerScreen(
 
     fun shareActivePhoto() {
         val active = photos[pagerState.currentPage]
-        val uri = runCatching { Uri.parse(active.uriString) }.getOrNull() ?: return
-        // Create a temp copy stripped of date/time metadata so receivers can't see when it was taken
         coroutineScope.launch {
-            val cleanUri = withContext(Dispatchers.IO) {
-                stripDateTimeAndShare(context, uri, active.mimeType, active.fileName)
-            } ?: uri // fallback to original if stripping fails
-            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                type = active.mimeType.ifBlank { "image/*" }
-                putExtra(Intent.EXTRA_STREAM, cleanUri)
-                clipData = ClipData.newUri(context.contentResolver, active.fileName, cleanUri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            runCatching {
-                context.startActivity(
-                    Intent.createChooser(shareIntent, context.getString(R.string.viewer_share)),
-                )
+            when (val result = exifMetadataService.createSafeShareCopies(listOf(active))) {
+                is com.photobook.app.feature.metadata.SafeShareResult.Success -> {
+                    val item = result.items.firstOrNull() ?: return@launch
+                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = item.mimeType.ifBlank { "image/*" }
+                        putExtra(Intent.EXTRA_STREAM, item.uri)
+                        clipData = ClipData.newUri(context.contentResolver, item.label, item.uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    runCatching {
+                        context.startActivity(
+                            Intent.createChooser(shareIntent, context.getString(R.string.viewer_share)),
+                        )
+                    }
+                }
+
+                is com.photobook.app.feature.metadata.SafeShareResult.Error -> {
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.safe_share_prepare_error),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
             }
         }
     }
@@ -524,39 +531,33 @@ fun PhotoViewerScreen(
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 // ===== Main Pager (fills entire screen) =====
-                if (reelsMode) {
+                val pagerScrollEnabled = currentPageZoom <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON
+                if (reelsEnabled) {
+                    // Instagram Reels-style vertical browsing: swipe up = next photo.
                     VerticalPager(
                         state = pagerState,
-                        userScrollEnabled = viewerZoomScale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON,
+                        key = { page -> photos[page].id },
+                        userScrollEnabled = pagerScrollEnabled,
                         modifier = Modifier.fillMaxSize(),
                     ) { page ->
                         PhotoPage(
                             photo = photos[page],
-                            viewerZoomScale = viewerZoomScale,
-                            viewerZoomOffset = viewerZoomOffset,
-                            viewerImageSize = viewerImageSize,
-                            onZoomScaleChange = { viewerZoomScale = it },
-                            onZoomOffsetChange = { viewerZoomOffset = it },
-                            onImageSizeChange = { viewerImageSize = it },
-                            onResetZoom = ::resetViewerZoom,
+                            isActive = page == pagerState.currentPage,
+                            onZoomChanged = { currentPageZoom = it },
                             onSingleTap = { showControls = !showControls },
                         )
                     }
                 } else {
                     HorizontalPager(
                         state = pagerState,
-                        userScrollEnabled = viewerZoomScale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON,
+                        key = { page -> photos[page].id },
+                        userScrollEnabled = pagerScrollEnabled,
                         modifier = Modifier.fillMaxSize(),
                     ) { page ->
                         PhotoPage(
                             photo = photos[page],
-                            viewerZoomScale = viewerZoomScale,
-                            viewerZoomOffset = viewerZoomOffset,
-                            viewerImageSize = viewerImageSize,
-                            onZoomScaleChange = { viewerZoomScale = it },
-                            onZoomOffsetChange = { viewerZoomOffset = it },
-                            onImageSizeChange = { viewerImageSize = it },
-                            onResetZoom = ::resetViewerZoom,
+                            isActive = page == pagerState.currentPage,
+                            onZoomChanged = { currentPageZoom = it },
                             onSingleTap = { showControls = !showControls },
                         )
                     }
@@ -605,24 +606,6 @@ fun PhotoViewerScreen(
                                 color = Color.White,
                             )
                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                // Reels toggle
-                                Surface(
-                                    color = if (reelsMode) Color(0x66FFFFFF) else Color(0x22FFFFFF),
-                                    shape = RoundedCornerShape(28.dp),
-                                ) {
-                                    IconButton(
-                                        modifier = Modifier.size(42.dp),
-                                        onClick = { reelsMode = !reelsMode },
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.SwapVert,
-                                            contentDescription = "Toggle Reels",
-                                            tint = Color.White,
-                                            modifier = Modifier.size(22.dp),
-                                        )
-                                    }
-                                }
-                                // Share button
                                 Surface(
                                     color = Color(0x44FFFFFF),
                                     shape = RoundedCornerShape(28.dp),
@@ -685,14 +668,6 @@ fun PhotoViewerScreen(
                                         }
                                     }
                                     Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
-                                        IconButton(modifier = Modifier.size(42.dp), onClick = {
-                                            qrSharePhotoId = active.id
-                                            showQrShareSheet = true
-                                        }) {
-                                            Icon(Icons.Default.QrCode2, contentDescription = stringResource(R.string.viewer_generate_qr), tint = Color.White, modifier = Modifier.size(22.dp))
-                                        }
-                                    }
-                                    Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
                                         IconButton(modifier = Modifier.size(42.dp), onClick = { onMoveToTrash(active) }) {
                                             Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.viewer_move_to_trash), tint = Color.White, modifier = Modifier.size(22.dp))
                                         }
@@ -734,6 +709,11 @@ fun PhotoViewerScreen(
                                         color = Color.LightGray,
                                         style = MaterialTheme.typography.bodySmall,
                                     )
+                                    Text(
+                                        text = stringResource(R.string.viewer_swipe_hint),
+                                        color = Color(0xFFD6D6D6),
+                                        style = MaterialTheme.typography.labelSmall,
+                                    )
                                 }
                             }
                         }
@@ -761,13 +741,6 @@ fun PhotoViewerScreen(
             )
         }
 
-        if (showQrShareSheet) {
-            QrShareSheet(
-                photo = photos[pagerState.currentPage],
-                encoder = qrShareEncoder,
-                onDismiss = ::dismissQrShareSheet,
-            )
-        }
         if (showEditorSheet) {
             QuickEditorBottomSheet(
                 photo = photos[pagerState.currentPage],
@@ -1664,15 +1637,48 @@ private fun IntSize.centerOffset(): Offset {
 @Composable
 private fun PhotoPage(
     photo: PhotoRecord,
-    viewerZoomScale: Float,
-    viewerZoomOffset: Offset,
-    viewerImageSize: IntSize,
-    onZoomScaleChange: (Float) -> Unit,
-    onZoomOffsetChange: (Offset) -> Unit,
-    onImageSizeChange: (IntSize) -> Unit,
-    onResetZoom: () -> Unit,
+    isActive: Boolean,
+    onZoomChanged: (Float) -> Unit,
     onSingleTap: () -> Unit,
 ) {
+    val scope = rememberCoroutineScope()
+    var containerSize by remember { mutableStateOf(IntSize.Zero) }
+    // Zoom state lives locally per page and is keyed on the photo id, so it always
+    // resets cleanly when the pager recycles a page. Plain state (not Animatable) is
+    // used so the pinch loop can update it directly inside the restricted gesture
+    // scope, while double-tap uses a cancellable animation for a premium feel.
+    var scale by remember(photo.id) { mutableStateOf(MIN_VIEWER_ZOOM) }
+    var offset by remember(photo.id) { mutableStateOf(Offset.Zero) }
+    val animationJob = remember(photo.id) { mutableStateOf<Job?>(null) }
+
+    // Keep the parent informed of the live zoom so it can disable pager swiping
+    // while the user is zoomed in. Only the active page reports, to avoid offscreen
+    // pages racing the value back to 1x.
+    LaunchedEffect(photo.id, isActive) {
+        if (isActive) {
+            snapshotFlow { scale }.collect { onZoomChanged(it) }
+        }
+    }
+    // Whenever a page stops being active, snap it back to its neutral state.
+    LaunchedEffect(isActive) {
+        if (!isActive) {
+            animationJob.value?.cancel()
+            scale = MIN_VIEWER_ZOOM
+            offset = Offset.Zero
+        }
+    }
+
+    fun clampOffset(target: Offset, atScale: Float): Offset {
+        if (atScale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) return Offset.Zero
+        if (containerSize.width <= 0 || containerSize.height <= 0) return Offset.Zero
+        val maxX = containerSize.width * (atScale - 1f) / 2f
+        val maxY = containerSize.height * (atScale - 1f) / 2f
+        val x = target.x.coerceIn(-maxX, maxX)
+        val y = target.y.coerceIn(-maxY, maxY)
+        // Guard against any NaN/Infinity ever reaching graphicsLayer.
+        return Offset(if (x.isFinite()) x else 0f, if (y.isFinite()) y else 0f)
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1685,79 +1691,90 @@ private fun PhotoPage(
             contentScale = ContentScale.Fit,
             modifier = Modifier
                 .fillMaxSize()
-                .onSizeChanged { size -> onImageSizeChange(size) }
-                .pointerInput(photo.id, viewerImageSize) {
+                .onSizeChanged { containerSize = it }
+                // Taps: single tap toggles controls (always works, even when zoomed,
+                // guaranteeing the user can always reach the close button). Double tap
+                // smoothly zooms to/from the exact tap point.
+                .pointerInput(photo.id) {
                     detectTapGestures(
                         onTap = { onSingleTap() },
                         onDoubleTap = { tapOffset ->
-                            if (viewerImageSize.width == 0 || viewerImageSize.height == 0) {
+                            if (containerSize.width == 0 || containerSize.height == 0) {
                                 return@detectTapGestures
                             }
-                            if (viewerZoomScale > MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) {
-                                onResetZoom()
+                            val startScale = scale
+                            val startOffset = offset
+                            val zoomingOut = scale > MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON
+                            val targetScale = if (zoomingOut) MIN_VIEWER_ZOOM else DOUBLE_TAP_VIEWER_ZOOM
+                            val targetOffset = if (zoomingOut) {
+                                Offset.Zero
                             } else {
-                                // Zoom to 3x centered on the exact tap point (Google Photos style)
-                                val targetScale = DOUBLE_TAP_VIEWER_ZOOM
-                                val targetOffset = calculateDoubleTapZoomOffset(
-                                    tapOffset = tapOffset,
-                                    containerSize = viewerImageSize,
-                                    targetScale = targetScale,
+                                clampOffset(
+                                    calculateDoubleTapZoomOffset(tapOffset, containerSize, targetScale),
+                                    targetScale,
                                 )
-                                onZoomScaleChange(targetScale)
-                                onZoomOffsetChange(
-                                    clampViewerOffset(
-                                        offset = targetOffset,
-                                        scale = targetScale,
-                                        containerSize = viewerImageSize,
-                                    )
-                                )
+                            }
+                            animationJob.value?.cancel()
+                            animationJob.value = scope.launch {
+                                runCatching {
+                                    animate(0f, 1f, animationSpec = tween(220)) { t, _ ->
+                                        scale = startScale + (targetScale - startScale) * t
+                                        offset = Offset(
+                                            startOffset.x + (targetOffset.x - startOffset.x) * t,
+                                            startOffset.y + (targetOffset.y - startOffset.y) * t,
+                                        )
+                                    }
+                                }
                             }
                         },
                     )
                 }
-                .pointerInput(photo.id, viewerImageSize, viewerZoomScale) {
-                    detectTransformGestures { centroid, pan, zoom, _ ->
-                        if (viewerImageSize.width == 0 || viewerImageSize.height == 0) {
-                            return@detectTransformGestures
+                // Pinch-to-zoom + pan. This pointerInput is keyed ONLY on photo.id, so it
+                // is never cancelled/restarted mid-gesture (the previous bug that froze the
+                // whole app). It only consumes events while actually transforming, leaving
+                // single-finger 1x swipes for the pager.
+                .pointerInput(photo.id) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        // A new touch always cancels any in-flight double-tap animation.
+                        animationJob.value?.cancel()
+                        do {
+                            val event = awaitPointerEvent()
+                            val pressedCount = event.changes.count { it.pressed }
+                            val zoomedIn = scale > MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON
+                            if (pressedCount > 1 || zoomedIn) {
+                                val zoomChange = event.calculateZoom()
+                                val panChange = event.calculatePan()
+                                if (zoomChange != 1f || panChange != Offset.Zero) {
+                                    val oldScale = scale
+                                    val newScale = (oldScale * zoomChange)
+                                        .coerceIn(MIN_VIEWER_ZOOM, MAX_VIEWER_ZOOM)
+                                    val centroid = event.calculateCentroid(useCurrent = true)
+                                    val center = containerSize.centerOffset()
+                                    val centroidDelta = centroid - center
+                                    val scaleFactor = if (oldScale <= 0f) 1f else newScale / oldScale
+                                    val scaled = Offset(
+                                        x = offset.x * scaleFactor + centroidDelta.x * (1f - scaleFactor),
+                                        y = offset.y * scaleFactor + centroidDelta.y * (1f - scaleFactor),
+                                    )
+                                    scale = newScale
+                                    offset = clampOffset(scaled + panChange, newScale)
+                                    event.changes.forEach { if (it.positionChanged()) it.consume() }
+                                }
+                            }
+                        } while (event.changes.any { it.pressed })
+
+                        // Clean up any sub-pixel drift once the gesture ends.
+                        if (scale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON && offset != Offset.Zero) {
+                            offset = Offset.Zero
                         }
-                        val oldScale = viewerZoomScale
-                        val newScale = (oldScale * zoom).coerceIn(MIN_VIEWER_ZOOM, MAX_VIEWER_ZOOM)
-
-                        if (newScale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON && oldScale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON && pan == Offset.Zero) {
-                            // No zoom change at 1x, let pager handle the gesture
-                            return@detectTransformGestures
-                        }
-
-                        if (newScale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) {
-                            onResetZoom()
-                            return@detectTransformGestures
-                        }
-
-                        // Zoom anchored on pinch centroid (Google Photos quality)
-                        val center = viewerImageSize.centerOffset()
-                        val centroidDelta = centroid - center
-                        val scaleFactor = newScale / oldScale
-                        val scaledOffset = Offset(
-                            x = (viewerZoomOffset.x + centroidDelta.x) * scaleFactor - centroidDelta.x,
-                            y = (viewerZoomOffset.y + centroidDelta.y) * scaleFactor - centroidDelta.y,
-                        )
-                        val nextOffset = scaledOffset + pan
-
-                        onZoomScaleChange(newScale)
-                        onZoomOffsetChange(
-                            clampViewerOffset(
-                                offset = nextOffset,
-                                scale = newScale,
-                                containerSize = viewerImageSize,
-                            )
-                        )
                     }
                 }
                 .graphicsLayer {
-                    scaleX = viewerZoomScale
-                    scaleY = viewerZoomScale
-                    translationX = viewerZoomOffset.x
-                    translationY = viewerZoomOffset.y
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = offset.x
+                    translationY = offset.y
                 },
         )
     }
@@ -1776,29 +1793,9 @@ private fun calculateDoubleTapZoomOffset(
     )
 }
 
-private fun clampViewerOffset(
-    offset: Offset,
-    scale: Float,
-    containerSize: IntSize,
-): Offset {
-    if (scale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) {
-        return Offset.Zero
-    }
-    if (containerSize.width <= 0 || containerSize.height <= 0) {
-        return Offset.Zero
-    }
-
-    val maxTranslationX = (containerSize.width * (scale - 1f)) / 2f
-    val maxTranslationY = (containerSize.height * (scale - 1f)) / 2f
-    return Offset(
-        x = offset.x.coerceIn(-maxTranslationX, maxTranslationX),
-        y = offset.y.coerceIn(-maxTranslationY, maxTranslationY),
-    )
-}
-
 private const val MIN_VIEWER_ZOOM = 1f
-private const val MAX_VIEWER_ZOOM = 10f
-private const val DOUBLE_TAP_VIEWER_ZOOM = 3f
+private const val MAX_VIEWER_ZOOM = 8f
+private const val DOUBLE_TAP_VIEWER_ZOOM = 2.8f
 private const val VIEWER_ZOOM_EPSILON = 0.01f
 
 /**
@@ -1883,57 +1880,3 @@ private fun multiplyColorMatrices(a: FloatArray, b: FloatArray): FloatArray {
     }
     return out
 }
-
-/**
- * Creates a temporary copy of an image with all date/time EXIF metadata stripped.
- * Returns a FileProvider URI for sharing, or null if the operation fails.
- */
-private fun stripDateTimeAndShare(
-    context: android.content.Context,
-    sourceUri: Uri,
-    mimeType: String,
-    fileName: String,
-): Uri? = runCatching {
-    val shareDir = File(context.cacheDir, "share_clean")
-    shareDir.mkdirs()
-    // Clean old share files (older than 5 min) to avoid cache bloat
-    shareDir.listFiles()?.forEach { old ->
-        if (System.currentTimeMillis() - old.lastModified() > 300_000L) {
-            old.delete()
-        }
-    }
-    val ext = when {
-        mimeType.contains("png") -> ".png"
-        mimeType.contains("webp") -> ".webp"
-        else -> ".jpg"
-    }
-    val outFile = File(shareDir, "PB_share_${System.currentTimeMillis()}$ext")
-    // Copy bytes
-    context.contentResolver.openInputStream(sourceUri)?.use { input ->
-        outFile.outputStream().use { output -> input.copyTo(output) }
-    } ?: return@runCatching null
-
-    // Strip date/time EXIF tags
-    try {
-        val exif = ExifInterface(outFile.absolutePath)
-        exif.setAttribute(ExifInterface.TAG_DATETIME, null)
-        exif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, null)
-        exif.setAttribute(ExifInterface.TAG_DATETIME_DIGITIZED, null)
-        exif.setAttribute(ExifInterface.TAG_GPS_DATESTAMP, null)
-        exif.setAttribute(ExifInterface.TAG_GPS_TIMESTAMP, null)
-        // Also strip GPS location for extra privacy
-        exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE, null)
-        exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE_REF, null)
-        exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE, null)
-        exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE_REF, null)
-        exif.saveAttributes()
-    } catch (_: Exception) {
-        // If EXIF stripping fails (e.g. PNG), still share the copy — at least no location
-    }
-
-    FileProvider.getUriForFile(
-        context,
-        "${context.packageName}.fileprovider",
-        outFile,
-    )
-}.getOrNull()
