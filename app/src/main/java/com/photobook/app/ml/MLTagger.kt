@@ -83,9 +83,36 @@ class MLTagger @Inject constructor(
             if (fromThumbnail != null) return fromThumbnail
         }
 
+        return decodeSampledBitmap(uri, 1024)
+    }
+
+    private fun decodeSampledBitmap(uri: Uri, maxDimensionPx: Int): Bitmap? {
+        val bounds = BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+        runCatching {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, bounds)
+            }
+        }
+
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            return null
+        }
+
+        var sample = 1
+        while (bounds.outWidth / sample > maxDimensionPx || bounds.outHeight / sample > maxDimensionPx) {
+            sample *= 2
+        }
+
+        val decodeOptions = BitmapFactory.Options().apply {
+            inSampleSize = sample.coerceAtLeast(1)
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+
         return runCatching {
             context.contentResolver.openInputStream(uri)?.use { stream ->
-                BitmapFactory.decodeStream(stream)
+                BitmapFactory.decodeStream(stream, null, decodeOptions)
             }
         }.getOrNull()
     }
@@ -98,14 +125,26 @@ class MLTagger @Inject constructor(
 
     private suspend fun analyzeBitmapInternal(bitmap: Bitmap, isFrontCamera: Boolean): AnalysisResult = coroutineScope {
         val input = InputImage.fromBitmap(bitmap, 0)
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+        val isLowRam = activityManager?.isLowRamDevice == true
 
-        val labelsDeferred = async { runCatching { labeler.process(input).await() }.getOrDefault(emptyList()) }
-        val facesDeferred = async { runCatching { faceDetector.process(input).await() }.getOrDefault(emptyList()) }
-        val textDeferred = async { runCatching { textRecognizer.process(input).await().text }.getOrDefault("") }
+        val labels: List<com.google.mlkit.vision.label.ImageLabel>
+        val faces: List<com.google.mlkit.vision.face.Face>
+        val text: String
 
-        val labels = labelsDeferred.await()
-        val faces = facesDeferred.await()
-        val text = textDeferred.await()
+        if (isLowRam) {
+            labels = runCatching { labeler.process(input).await() }.getOrDefault(emptyList())
+            faces = runCatching { faceDetector.process(input).await() }.getOrDefault(emptyList())
+            text = runCatching { textRecognizer.process(input).await().text }.getOrDefault("")
+        } else {
+            val labelsDeferred = async { runCatching { labeler.process(input).await() }.getOrDefault(emptyList()) }
+            val facesDeferred = async { runCatching { faceDetector.process(input).await() }.getOrDefault(emptyList()) }
+            val textDeferred = async { runCatching { textRecognizer.process(input).await().text }.getOrDefault("") }
+
+            labels = labelsDeferred.await()
+            faces = facesDeferred.await()
+            text = textDeferred.await()
+        }
 
         val tagMap = linkedMapOf<String, MLTag>()
         labels.forEach { label ->

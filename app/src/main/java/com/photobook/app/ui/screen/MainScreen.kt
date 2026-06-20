@@ -46,7 +46,6 @@ import com.photobook.app.ui.component.SearchBar
 import com.photobook.app.ui.component.SuggestionDropdown
 import com.photobook.app.ui.component.WelcomeState
 import com.photobook.app.search.SuggestionItem
-import com.photobook.app.ui.model.HomeFeedMode
 import com.photobook.app.ui.model.TimelineMark
 
 private val MeshBase = Color(0xFFFFF0E4)
@@ -67,7 +66,6 @@ fun MainScreen(
     resultCount: Int,
     searchReady: Boolean,
     favoritesOnly: Boolean,
-    feedMode: HomeFeedMode,
     reelsEnabled: Boolean,
     selectedPhotoIds: Set<Long>,
     timelineMarks: List<TimelineMark>,
@@ -97,8 +95,7 @@ fun MainScreen(
     onPhotoLongClick: (PhotoRecord) -> Unit,
     onOpenQrScanner: () -> Unit,
     onOpenVault: () -> Unit,
-    onOpenReels: () -> Unit,
-    onSelectFeedMode: (HomeFeedMode) -> Unit,
+    onOpenTrash: () -> Unit,
     onSourceSelected: (PhotoSource) -> Unit,
     onOpenDeclutter: () -> Unit,
     onOpenDuplicateFinder: () -> Unit,
@@ -109,6 +106,7 @@ fun MainScreen(
     onMemoryStorySelected: (MemoryStory) -> Unit,
 ) {
     val isSelectionMode = selectedPhotoIds.isNotEmpty()
+    var showMoreActions by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -275,16 +273,16 @@ fun MainScreen(
                         enabled = searchReady
                     )
                     RefinedActionButton(
-                        icon = Icons.Default.Slideshow,
-                        label = "Reels",
-                        onClick = onToggleReels,
-                        color = if (reelsEnabled) AccentIndigo else Color(0xFF64748B),
-                        enabled = searchReady
+                        icon = Icons.Default.MoreHoriz,
+                        label = stringResource(R.string.more_actions),
+                        onClick = { showMoreActions = true },
+                        color = Color(0xFF64748B),
+                        enabled = searchReady && !isSelectionMode
                     )
                     RefinedActionButton(
                         icon = Icons.Default.Delete,
                         label = "Trash",
-                        onClick = onOpenReels, // wired to Trash via MainActivity
+                        onClick = onOpenTrash,
                         color = AccentViolet,
                         enabled = searchReady && !isSelectionMode
                     )
@@ -384,7 +382,9 @@ fun MainScreen(
                         IconButton(onClick = onClearSelection) { Icon(Icons.Default.Close, null) }
                         if (selectedPhotoIds.size == 1) {
                             IconButton(onClick = { onCopyTextFromPhoto(selectedPhotoIds.first()) }) { Icon(Icons.Default.ContentCopy, contentDescription = "Copy text from photo") }
+                            IconButton(onClick = { onGenerateQrForPhoto(selectedPhotoIds.first()) }) { Icon(Icons.Default.QrCode2, contentDescription = stringResource(R.string.viewer_generate_qr)) }
                         }
+                        IconButton(onClick = { onAddSelectedToVault(selectedPhotoIds) }) { Icon(Icons.Default.Lock, contentDescription = stringResource(R.string.vault_add_selected)) }
                         IconButton(onClick = { onCreatePdfSelected(selectedPhotoIds) }) { Icon(Icons.Default.PictureAsPdf, null) }
                         IconButton(onClick = { onShareSelected(selectedPhotoIds) }) { Icon(Icons.Default.Share, null) }
                         IconButton(onClick = { onMoveSelectedToTrash(selectedPhotoIds) }, colors = IconButtonDefaults.iconButtonColors(contentColor = Color.Red)) { Icon(Icons.Default.Delete, null) }
@@ -393,7 +393,27 @@ fun MainScreen(
             }
         }
 
-        // FAB removed: offline QR share/scan is temporarily disabled in the UI.
+        if (showMoreActions) {
+            MoreActionsSheet(
+                reelsEnabled = reelsEnabled,
+                onDismiss = { showMoreActions = false },
+                onOpenDuplicateFinder = {
+                    showMoreActions = false
+                    onOpenDuplicateFinder()
+                },
+                onToggleReels = {
+                    onToggleReels()
+                },
+                onOpenVault = {
+                    showMoreActions = false
+                    onOpenVault()
+                },
+                onOpenQrScanner = {
+                    showMoreActions = false
+                    onOpenQrScanner()
+                },
+            )
+        }
 
         if (showDuplicateFinder) {
             DuplicateFinderSheet(
@@ -458,6 +478,80 @@ private fun RefinedGlassChip(
             style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
         )
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MoreActionsSheet(
+    reelsEnabled: Boolean,
+    onDismiss: () -> Unit,
+    onOpenDuplicateFinder: () -> Unit,
+    onToggleReels: () -> Unit,
+    onOpenVault: () -> Unit,
+    onOpenQrScanner: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            MoreActionRow(
+                icon = Icons.Default.Storage,
+                title = stringResource(R.string.duplicates_title),
+                subtitle = stringResource(R.string.duplicates_subtitle),
+                onClick = onOpenDuplicateFinder,
+            )
+            MoreActionRow(
+                icon = Icons.Default.Slideshow,
+                title = if (reelsEnabled) stringResource(R.string.reels_browsing_on) else stringResource(R.string.reels_browsing_off),
+                subtitle = stringResource(R.string.reels_browsing_subtitle),
+                onClick = onToggleReels,
+            )
+            MoreActionRow(
+                icon = Icons.Default.Lock,
+                title = stringResource(R.string.vault_title),
+                subtitle = stringResource(R.string.vault_biometric_subtitle),
+                onClick = onOpenVault,
+            )
+            MoreActionRow(
+                icon = Icons.Default.QrCodeScanner,
+                title = stringResource(R.string.scan_qr_action),
+                subtitle = stringResource(R.string.scan_qr_hint),
+                onClick = onOpenQrScanner,
+            )
+        }
+    }
+}
+
+@Composable
+private fun MoreActionRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
+    ListItem(
+        headlineContent = {
+            Text(text = title, fontWeight = FontWeight.Bold)
+        },
+        supportingContent = {
+            Text(text = subtitle)
+        },
+        leadingContent = {
+            Icon(imageVector = icon, contentDescription = null, tint = AccentIndigo)
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick),
+    )
 }
 
 @Composable

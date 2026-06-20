@@ -132,7 +132,6 @@ class TaggingWorker @AssistedInject constructor(
                 .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
                 .setRequiresBatteryNotLow(true)
                 .setRequiresCharging(true)
-                .setRequiresDeviceIdle(true)
                 .build()
 
             val request = OneTimeWorkRequestBuilder<TaggingWorker>()

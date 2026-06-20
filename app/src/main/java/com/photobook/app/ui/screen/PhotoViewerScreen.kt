@@ -125,14 +125,15 @@ import com.photobook.app.feature.metadata.ExifDetailsResult
 import com.photobook.app.feature.metadata.ExifMetadataService
 import com.photobook.app.feature.metadata.MetadataCleanResult
 import com.photobook.app.feature.notes.PhotoNoteStore
+import com.photobook.app.feature.qrshare.QrShareEncoder
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.min
-import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -168,6 +169,9 @@ fun PhotoViewerScreen(
     }
     val photoNoteStore = remember(context.applicationContext) {
         PhotoNoteStore(context.applicationContext)
+    }
+    val qrShareEncoder = remember(context.applicationContext) {
+        QrShareEncoder(context.applicationContext)
     }
     var showCopyTextSheet by remember { mutableStateOf(false) }
     var copySheetState by remember { mutableStateOf<CopySheetState>(CopySheetState.Idle) }
@@ -273,6 +277,12 @@ fun PhotoViewerScreen(
         notePhotoId = active.id
         noteDraft = photoNoteStore.getNote(active.id)
         showNotesSheet = true
+    }
+
+    fun openQrShareSheet() {
+        val active = photos[pagerState.currentPage]
+        qrSharePhotoId = active.id
+        showQrShareSheet = true
     }
 
     fun saveNoteForActivePhoto() {
@@ -543,8 +553,13 @@ fun PhotoViewerScreen(
                         PhotoPage(
                             photo = photos[page],
                             isActive = page == pagerState.currentPage,
+                            reelsEnabled = true,
                             onZoomChanged = { currentPageZoom = it },
                             onSingleTap = { showControls = !showControls },
+                            onDismiss = {
+                                dismissCopySheet()
+                                onDismiss()
+                            },
                         )
                     }
                 } else {
@@ -557,8 +572,13 @@ fun PhotoViewerScreen(
                         PhotoPage(
                             photo = photos[page],
                             isActive = page == pagerState.currentPage,
+                            reelsEnabled = false,
                             onZoomChanged = { currentPageZoom = it },
                             onSingleTap = { showControls = !showControls },
+                            onDismiss = {
+                                dismissCopySheet()
+                                onDismiss()
+                            },
                         )
                     }
                 }
@@ -668,6 +688,26 @@ fun PhotoViewerScreen(
                                         }
                                     }
                                     Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
+                                        IconButton(modifier = Modifier.size(42.dp), onClick = { showTextRegionSelector = true }) {
+                                            Icon(Icons.Default.CropFree, contentDescription = stringResource(R.string.viewer_select_text_area), tint = Color.White, modifier = Modifier.size(22.dp))
+                                        }
+                                    }
+                                    Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
+                                        IconButton(modifier = Modifier.size(42.dp), onClick = ::openNotesSheet) {
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Filled.Notes,
+                                                contentDescription = stringResource(R.string.viewer_private_note),
+                                                tint = if (hasNoteForCurrent) Color(0xFFFFD166) else Color.White,
+                                                modifier = Modifier.size(22.dp),
+                                            )
+                                        }
+                                    }
+                                    Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
+                                        IconButton(modifier = Modifier.size(42.dp), onClick = ::openQrShareSheet) {
+                                            Icon(Icons.Default.QrCode2, contentDescription = stringResource(R.string.viewer_generate_qr), tint = Color.White, modifier = Modifier.size(22.dp))
+                                        }
+                                    }
+                                    Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
                                         IconButton(modifier = Modifier.size(42.dp), onClick = { onMoveToTrash(active) }) {
                                             Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.viewer_move_to_trash), tint = Color.White, modifier = Modifier.size(22.dp))
                                         }
@@ -771,6 +811,25 @@ fun PhotoViewerScreen(
                 },
                 onSave = ::saveNoteForActivePhoto,
                 onClear = ::clearNoteForActivePhoto,
+            )
+        }
+        if (showTextRegionSelector) {
+            TextRegionSelectionDialog(
+                photo = photos[pagerState.currentPage],
+                onDismiss = { showTextRegionSelector = false },
+                onRegionSelected = { region ->
+                    showTextRegionSelector = false
+                    startSelectedTextFlow(region)
+                },
+            )
+        }
+        if (showQrShareSheet) {
+            val qrPhoto = photos.firstOrNull { photo -> photo.id == qrSharePhotoId }
+                ?: photos[pagerState.currentPage]
+            QrShareSheet(
+                photo = qrPhoto,
+                encoder = qrShareEncoder,
+                onDismiss = ::dismissQrShareSheet,
             )
         }
     }
@@ -1638,10 +1697,13 @@ private fun IntSize.centerOffset(): Offset {
 private fun PhotoPage(
     photo: PhotoRecord,
     isActive: Boolean,
+    reelsEnabled: Boolean,
     onZoomChanged: (Float) -> Unit,
     onSingleTap: () -> Unit,
+    onDismiss: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     // Zoom state lives locally per page and is keyed on the photo id, so it always
     // resets cleanly when the pager recycles a page. Plain state (not Animatable) is
@@ -1650,6 +1712,10 @@ private fun PhotoPage(
     var scale by remember(photo.id) { mutableStateOf(MIN_VIEWER_ZOOM) }
     var offset by remember(photo.id) { mutableStateOf(Offset.Zero) }
     val animationJob = remember(photo.id) { mutableStateOf<Job?>(null) }
+
+    // Swipe-to-dismiss states
+    var swipeDragY by remember(photo.id) { mutableStateOf(0f) }
+    var isSwipingToDismiss by remember(photo.id) { mutableStateOf(false) }
 
     // Keep the parent informed of the live zoom so it can disable pager swiping
     // while the user is zoomed in. Only the active page reports, to avoid offscreen
@@ -1665,6 +1731,8 @@ private fun PhotoPage(
             animationJob.value?.cancel()
             scale = MIN_VIEWER_ZOOM
             offset = Offset.Zero
+            swipeDragY = 0f
+            isSwipingToDismiss = false
         }
     }
 
@@ -1679,12 +1747,24 @@ private fun PhotoPage(
         return Offset(if (x.isFinite()) x else 0f, if (y.isFinite()) y else 0f)
     }
 
+    val bgAlpha = if (isSwipingToDismiss && containerSize.height > 0) {
+        (1f - (kotlin.math.abs(swipeDragY) / containerSize.height.toFloat() * 1.6f)).coerceIn(0f, 1f)
+    } else {
+        1f
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black),
+            .background(Color.Black.copy(alpha = bgAlpha)),
         contentAlignment = Alignment.Center,
     ) {
+        val dragScale = if (isSwipingToDismiss && containerSize.height > 0) {
+            (1f - (kotlin.math.abs(swipeDragY) / containerSize.height.toFloat() * 0.45f)).coerceIn(0.65f, 1f)
+        } else {
+            1f
+        }
+
         AsyncImage(
             model = Uri.parse(photo.uriString),
             contentDescription = photo.fileName,
@@ -1729,6 +1809,70 @@ private fun PhotoPage(
                         },
                     )
                 }
+                // Vertical Swipe-to-dismiss gesture (only active when not zoomed in and reels mode is off)
+                .pointerInput(photo.id, isActive, reelsEnabled) {
+                    if (!isActive || reelsEnabled) return@pointerInput
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        animationJob.value?.cancel()
+                        var dragActive = false
+                        var dragDirectionChecked = false
+                        var accumulatedDragY = 0f
+
+                        do {
+                            val event = awaitPointerEvent()
+                            val pressedCount = event.changes.count { it.pressed }
+                            val zoomedIn = scale > MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON
+
+                            if (!zoomedIn && pressedCount == 1) {
+                                val change = event.changes.first()
+                                val positionChange = change.position - change.previousPosition
+
+                                if (!dragDirectionChecked) {
+                                    if (kotlin.math.abs(positionChange.y) > 4f || kotlin.math.abs(positionChange.x) > 4f) {
+                                        dragDirectionChecked = true
+                                        // Detect if vertical drag dominates significantly
+                                        if (kotlin.math.abs(positionChange.y) > kotlin.math.abs(positionChange.x) * 1.5f) {
+                                            dragActive = true
+                                            isSwipingToDismiss = true
+                                        }
+                                    }
+                                }
+
+                                if (dragActive) {
+                                    accumulatedDragY += positionChange.y
+                                    swipeDragY = accumulatedDragY
+                                    change.consume()
+                                }
+                            } else {
+                                dragActive = false
+                                isSwipingToDismiss = false
+                                swipeDragY = 0f
+                            }
+                        } while (event.changes.any { it.pressed })
+
+                        if (dragActive) {
+                            val dragThresholdPx = with(density) { 150.dp.toPx() }
+                            if (kotlin.math.abs(swipeDragY) > dragThresholdPx) {
+                                onDismiss()
+                            } else {
+                                val startDragY = swipeDragY
+                                animationJob.value?.cancel()
+                                animationJob.value = scope.launch {
+                                    runCatching {
+                                        animate(startDragY, 0f, animationSpec = tween(220)) { value, _ ->
+                                            swipeDragY = value
+                                        }
+                                    }
+                                    isSwipingToDismiss = false
+                                }
+                            }
+                        } else {
+                            isSwipingToDismiss = false
+                            swipeDragY = 0f
+                        }
+                    }
+                }
                 // Pinch-to-zoom + pan. This pointerInput is keyed ONLY on photo.id, so it
                 // is never cancelled/restarted mid-gesture (the previous bug that froze the
                 // whole app). It only consumes events while actually transforming, leaving
@@ -1771,10 +1915,10 @@ private fun PhotoPage(
                     }
                 }
                 .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
+                    scaleX = scale * dragScale
+                    scaleY = scale * dragScale
                     translationX = offset.x
-                    translationY = offset.y
+                    translationY = offset.y + swipeDragY
                 },
         )
     }

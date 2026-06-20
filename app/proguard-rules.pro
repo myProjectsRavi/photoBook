@@ -1,7 +1,7 @@
 # Add project specific ProGuard rules here.
 
 # ─── General ───
--dontobfuscate
+# Obfuscation is enabled for smaller and more secure release builds
 # Keep line numbers for crash reports
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
@@ -27,10 +27,7 @@
 -keep @androidx.room.Entity class * { *; }
 -keep @androidx.room.Dao interface * { *; }
 
-# ─── Compose: material-icons-extended ───
-# R8 full mode already tree-shakes unused icon classes; this ensures the icons
-# that ARE referenced survive.
--keep class androidx.compose.material.icons.** { *; }
+
 
 # ─── WorkManager ───
 -keep class * extends androidx.work.Worker { *; }

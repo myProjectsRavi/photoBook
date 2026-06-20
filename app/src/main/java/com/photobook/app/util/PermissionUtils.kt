@@ -12,6 +12,9 @@ object PermissionUtils {
         val permissions = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions += Manifest.permission.READ_MEDIA_IMAGES
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                permissions += Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+            }
         } else {
             permissions += Manifest.permission.READ_EXTERNAL_STORAGE
         }
@@ -22,8 +25,17 @@ object PermissionUtils {
     }
 
     fun hasPhotoPermissions(context: Context): Boolean {
-        return requiredPermissions().all {
-            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            hasPermission(context, Manifest.permission.READ_MEDIA_IMAGES) ||
+                hasPermission(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            hasPermission(context, Manifest.permission.READ_MEDIA_IMAGES)
+        } else {
+            hasPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE)
         }
+    }
+
+    private fun hasPermission(context: Context, permission: String): Boolean {
+        return ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
     }
 }

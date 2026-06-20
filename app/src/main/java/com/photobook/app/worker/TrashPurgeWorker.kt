@@ -81,7 +81,6 @@ class TrashPurgeWorker @AssistedInject constructor(
                 .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
                 .setRequiresBatteryNotLow(true)
                 .setRequiresCharging(true)
-                .setRequiresDeviceIdle(true)
                 .build()
 
             val request = PeriodicWorkRequestBuilder<TrashPurgeWorker>(1, TimeUnit.DAYS)

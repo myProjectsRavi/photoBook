@@ -1,0 +1,2 @@
+sed -i '' 's/private const val SINGLE_QR_MAX_BYTES = 1600/private const val SINGLE_QR_MAX_BYTES = 2050/' "/Users/ravitejanekkalapu/Documents/Code Repos/Photo Book/photoBook/app/src/main/java/com/photobook/app/feature/qrshare/QrShareEncoder.kt"
+sed -i '' 's/private const val SINGLE_QR_MAX_DIMENSION = 200/private const val SINGLE_QR_MAX_DIMENSION = 320/' "/Users/ravitejanekkalapu/Documents/Code Repos/Photo Book/photoBook/app/src/main/java/com/photobook/app/feature/qrshare/QrShareEncoder.kt"

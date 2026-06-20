@@ -166,6 +166,10 @@
     <string name="memories_title">Memories</string>
     <string name="memories_subtitle">Auto-curated</string>
     <string name="private_reassurance">Private, secure, and fully on-device.</string>
+    <string name="more_actions">More</string>
+    <string name="reels_browsing_on">Reels browsing on</string>
+    <string name="reels_browsing_off">Reels browsing off</string>
+    <string name="reels_browsing_subtitle">Switch viewer swipes between horizontal and vertical.</string>
     <string name="vault_short_action">Vault</string>
     <string name="vault_add_selected">Add to Vault</string>
     <string name="vault_title">Private Vault</string>

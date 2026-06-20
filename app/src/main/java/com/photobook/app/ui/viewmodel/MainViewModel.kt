@@ -136,7 +136,6 @@ class MainViewModel @Inject constructor(
         val searchResult = runSearch(
             query = input.query,
             records = input.records,
-            feedMode = input.feedMode,
         )
         val filteredRecords = if (input.favoritesOnly) {
             searchResult.results.filter { it.isFavorite }
@@ -932,7 +931,6 @@ class MainViewModel @Inject constructor(
     private suspend fun runSearch(
         query: String,
         records: List<PhotoRecord>,
-        feedMode: HomeFeedMode,
     ): FilterEngine.SearchResult {
         val normalizedQuery = query.trim()
         if (normalizedQuery.isBlank()) {

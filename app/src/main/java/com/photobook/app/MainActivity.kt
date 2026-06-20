@@ -311,7 +311,6 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         resultCount = uiState.resultCount,
         searchReady = uiState.searchReady,
         favoritesOnly = uiState.favoritesOnly,
-        feedMode = uiState.feedMode,
         reelsEnabled = uiState.reelsEnabled,
         selectedPhotoIds = uiState.selectedPhotoIds,
         timelineMarks = uiState.timelineMarks,
@@ -442,8 +441,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                 refreshVaultItems()
             }
         },
-        onOpenReels = { openTrashBin() },
-        onSelectFeedMode = viewModel::onSelectFeedMode,
+        onOpenTrash = { openTrashBin() },
         onSourceSelected = viewModel::onSourceSelected,
         onOpenDeclutter = viewModel::openDeclutterSwipe,
         onOpenDuplicateFinder = viewModel::openDuplicateFinder,
