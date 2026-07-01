@@ -7,10 +7,14 @@ import androidx.room.RoomDatabase
     entities = [
         PhotoEntity::class,
         PhotoFtsEntity::class,
+        VaultEntity::class,
+        ArchiveDecisionEntity::class,
     ],
-    version = 7,
+    version = 9,
     exportSchema = false,
 )
 abstract class PhotoBookDatabase : RoomDatabase() {
     abstract fun photoDao(): PhotoDao
+    abstract fun vaultDao(): VaultDao
+    abstract fun archiveDao(): ArchiveDao
 }

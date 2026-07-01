@@ -43,7 +43,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CropFree
@@ -52,7 +51,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.QrCode2
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AssistChip
@@ -124,8 +123,6 @@ import com.photobook.app.feature.metadata.ExifDetails
 import com.photobook.app.feature.metadata.ExifDetailsResult
 import com.photobook.app.feature.metadata.ExifMetadataService
 import com.photobook.app.feature.metadata.MetadataCleanResult
-import com.photobook.app.feature.notes.PhotoNoteStore
-import com.photobook.app.feature.qrshare.QrShareEncoder
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -144,6 +141,7 @@ fun PhotoViewerScreen(
     onPageChanged: (Int) -> Unit,
     onToggleFavorite: (Long) -> Unit,
     onMoveToTrash: (PhotoRecord) -> Unit,
+    onShareAsPdf: (PhotoRecord) -> Unit,
     reelsEnabled: Boolean = false,
 ) {
     if (photos.isEmpty()) return
@@ -167,34 +165,22 @@ fun PhotoViewerScreen(
     val photoEditService = remember(context.applicationContext) {
         PhotoEditService(context.applicationContext)
     }
-    val photoNoteStore = remember(context.applicationContext) {
-        PhotoNoteStore(context.applicationContext)
-    }
-    val qrShareEncoder = remember(context.applicationContext) {
-        QrShareEncoder(context.applicationContext)
-    }
     var showCopyTextSheet by remember { mutableStateOf(false) }
+    var showTextRegionSelector by remember { mutableStateOf(false) }
     var copySheetState by remember { mutableStateOf<CopySheetState>(CopySheetState.Idle) }
     var copySheetPhotoId by remember { mutableStateOf<Long?>(null) }
     var copySheetMode by remember { mutableStateOf(CopyTextMode.AllText) }
     var copySheetRegion by remember { mutableStateOf<NormalizedTextRegion?>(null) }
     var autoCopyPending by remember { mutableStateOf(false) }
-    var showTextRegionSelector by remember { mutableStateOf(false) }
     var showExifSheet by remember { mutableStateOf(false) }
     var exifSheetState by remember { mutableStateOf<ExifSheetState>(ExifSheetState.Idle) }
     var exifSheetPhotoId by remember { mutableStateOf<Long?>(null) }
     var isCleaningMetadata by remember { mutableStateOf(false) }
-    var showQrShareSheet by remember { mutableStateOf(false) }
-    var qrSharePhotoId by remember { mutableStateOf<Long?>(null) }
     var currentPageZoom by remember { mutableStateOf(MIN_VIEWER_ZOOM) }
     var bestShotRecommendation by remember { mutableStateOf<BestShotRecommendation?>(null) }
     var showEditorSheet by remember { mutableStateOf(false) }
     var editorState by remember { mutableStateOf(PhotoEditState()) }
     var isApplyingEditorAction by remember { mutableStateOf(false) }
-    var showNotesSheet by remember { mutableStateOf(false) }
-    var notePhotoId by remember { mutableStateOf<Long?>(null) }
-    var noteDraft by remember { mutableStateOf("") }
-    var hasNoteForCurrent by remember { mutableStateOf(false) }
     var showControls by remember { mutableStateOf(true) }
 
     fun resetViewerZoom() {
@@ -219,11 +205,7 @@ fun PhotoViewerScreen(
         copySheetMode = CopyTextMode.AllText
         copySheetRegion = null
         autoCopyPending = false
-    }
-
-    fun dismissQrShareSheet() {
-        showQrShareSheet = false
-        qrSharePhotoId = null
+        showTextRegionSelector = false
     }
 
     fun dismissExifSheet() {
@@ -270,43 +252,6 @@ fun PhotoViewerScreen(
             }
             isCleaningMetadata = false
         }
-    }
-
-    fun openNotesSheet() {
-        val active = photos[pagerState.currentPage]
-        notePhotoId = active.id
-        noteDraft = photoNoteStore.getNote(active.id)
-        showNotesSheet = true
-    }
-
-    fun openQrShareSheet() {
-        val active = photos[pagerState.currentPage]
-        qrSharePhotoId = active.id
-        showQrShareSheet = true
-    }
-
-    fun saveNoteForActivePhoto() {
-        val active = photos[pagerState.currentPage]
-        photoNoteStore.saveNote(active.id, noteDraft)
-        hasNoteForCurrent = noteDraft.trim().isNotEmpty()
-        Toast.makeText(
-            context,
-            context.getString(R.string.viewer_note_saved),
-            Toast.LENGTH_SHORT,
-        ).show()
-        showNotesSheet = false
-    }
-
-    fun clearNoteForActivePhoto() {
-        val active = photos[pagerState.currentPage]
-        photoNoteStore.deleteNote(active.id)
-        noteDraft = ""
-        hasNoteForCurrent = false
-        Toast.makeText(
-            context,
-            context.getString(R.string.viewer_note_cleared),
-            Toast.LENGTH_SHORT,
-        ).show()
     }
 
     fun openEditorSheet() {
@@ -415,7 +360,19 @@ fun PhotoViewerScreen(
                 }
 
                 is PreviewSeed.Fallback -> {
-                    copyToClipboard(seed.text)
+                    showCopyTextSheet = true
+                    copySheetState = CopySheetState.Ready(
+                        text = seed.text,
+                        isRefreshing = true,
+                    )
+                    autoCopyPending = true
+                    copyTextCoordinator.extractForPhoto(
+                        scope = coroutineScope,
+                        photoId = active.id,
+                        photoUri = active.uriString,
+                    ) { result ->
+                        applyCopyResult(result, fallbackText = seed.text)
+                    }
                 }
 
                 PreviewSeed.None -> {
@@ -497,21 +454,14 @@ fun PhotoViewerScreen(
         bestShotRecommendation = withContext(Dispatchers.Default) {
             bestShotPicker.pick(photos, pagerState.currentPage)
         }
-        hasNoteForCurrent = photoNoteStore.getNote(activeId).isNotBlank()
         if (copySheetPhotoId != null && copySheetPhotoId != activeId) {
             dismissCopySheet()
         }
+        if (showTextRegionSelector) {
+            showTextRegionSelector = false
+        }
         if (exifSheetPhotoId != null && exifSheetPhotoId != activeId) {
             dismissExifSheet()
-        }
-        showTextRegionSelector = false
-        if (qrSharePhotoId != null && qrSharePhotoId != activeId) {
-            dismissQrShareSheet()
-        }
-        if (showNotesSheet && notePhotoId != activeId) {
-            showNotesSheet = false
-            notePhotoId = null
-            noteDraft = ""
         }
         if (showEditorSheet) {
             showEditorSheet = false
@@ -530,7 +480,6 @@ fun PhotoViewerScreen(
         onDismissRequest = {
             dismissCopySheet()
             dismissExifSheet()
-            dismissQrShareSheet()
             onDismiss()
         },
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -651,16 +600,16 @@ fun PhotoViewerScreen(
                                 .fillMaxWidth()
                                 .background(Color(0x88000000)),
                         ) {
-                            // Action buttons bar (scrollable)
+                            // Action buttons bar
                             run {
                                 val active = photos.getOrNull(pagerState.currentPage) ?: return@run
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .horizontalScroll(rememberScrollState())
-                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                        .padding(horizontal = 18.dp, vertical = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
                                     Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
                                         IconButton(modifier = Modifier.size(42.dp), onClick = { onToggleFavorite(active.id) }) {
@@ -683,28 +632,24 @@ fun PhotoViewerScreen(
                                         }
                                     }
                                     Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
+                                        IconButton(modifier = Modifier.size(42.dp), onClick = { onShareAsPdf(active) }) {
+                                            Icon(Icons.Default.PictureAsPdf, contentDescription = stringResource(R.string.viewer_share_as_pdf), tint = Color.White, modifier = Modifier.size(22.dp))
+                                        }
+                                    }
+                                    Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
                                         IconButton(modifier = Modifier.size(42.dp), onClick = ::startCopyAllTextFlow) {
                                             Icon(Icons.Default.ContentCopy, contentDescription = stringResource(R.string.viewer_copy_all_text), tint = Color.White, modifier = Modifier.size(22.dp))
                                         }
                                     }
                                     Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
-                                        IconButton(modifier = Modifier.size(42.dp), onClick = { showTextRegionSelector = true }) {
+                                        IconButton(
+                                            modifier = Modifier.size(42.dp),
+                                            onClick = {
+                                                dismissCopySheet()
+                                                showTextRegionSelector = true
+                                            },
+                                        ) {
                                             Icon(Icons.Default.CropFree, contentDescription = stringResource(R.string.viewer_select_text_area), tint = Color.White, modifier = Modifier.size(22.dp))
-                                        }
-                                    }
-                                    Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
-                                        IconButton(modifier = Modifier.size(42.dp), onClick = ::openNotesSheet) {
-                                            Icon(
-                                                imageVector = Icons.AutoMirrored.Filled.Notes,
-                                                contentDescription = stringResource(R.string.viewer_private_note),
-                                                tint = if (hasNoteForCurrent) Color(0xFFFFD166) else Color.White,
-                                                modifier = Modifier.size(22.dp),
-                                            )
-                                        }
-                                    }
-                                    Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
-                                        IconButton(modifier = Modifier.size(42.dp), onClick = ::openQrShareSheet) {
-                                            Icon(Icons.Default.QrCode2, contentDescription = stringResource(R.string.viewer_generate_qr), tint = Color.White, modifier = Modifier.size(22.dp))
                                         }
                                     }
                                     Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
@@ -771,6 +716,16 @@ fun PhotoViewerScreen(
                 onCopy = { text -> copyToClipboard(text) },
             )
         }
+        if (showTextRegionSelector) {
+            TextRegionSelectionDialog(
+                photo = photos[pagerState.currentPage],
+                onDismiss = { showTextRegionSelector = false },
+                onRegionSelected = { region ->
+                    showTextRegionSelector = false
+                    startSelectedTextFlow(region)
+                },
+            )
+        }
         if (showExifSheet) {
             ExifMetadataBottomSheet(
                 state = exifSheetState,
@@ -796,40 +751,6 @@ fun PhotoViewerScreen(
                 },
                 onSaveCopy = { runEditorAction(shareAfterRender = false) },
                 onShareCopy = { runEditorAction(shareAfterRender = true) },
-            )
-        }
-        if (showNotesSheet) {
-            PrivateNoteBottomSheet(
-                noteText = noteDraft,
-                maxChars = PhotoNoteStore.MAX_NOTE_CHARS,
-                onDismiss = {
-                    showNotesSheet = false
-                    notePhotoId = null
-                },
-                onTextChange = { value ->
-                    noteDraft = value.take(PhotoNoteStore.MAX_NOTE_CHARS)
-                },
-                onSave = ::saveNoteForActivePhoto,
-                onClear = ::clearNoteForActivePhoto,
-            )
-        }
-        if (showTextRegionSelector) {
-            TextRegionSelectionDialog(
-                photo = photos[pagerState.currentPage],
-                onDismiss = { showTextRegionSelector = false },
-                onRegionSelected = { region ->
-                    showTextRegionSelector = false
-                    startSelectedTextFlow(region)
-                },
-            )
-        }
-        if (showQrShareSheet) {
-            val qrPhoto = photos.firstOrNull { photo -> photo.id == qrSharePhotoId }
-                ?: photos[pagerState.currentPage]
-            QrShareSheet(
-                photo = qrPhoto,
-                encoder = qrShareEncoder,
-                onDismiss = ::dismissQrShareSheet,
             )
         }
     }

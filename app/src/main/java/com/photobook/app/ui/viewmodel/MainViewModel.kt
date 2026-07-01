@@ -17,6 +17,9 @@ import com.photobook.app.data.index.PhotoIndex
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.data.model.RawPhotoData
 import com.photobook.app.data.source.MediaStoreScanner
+import com.photobook.app.feature.archive.ArchiveCandidate
+import com.photobook.app.feature.archive.ArchiveDueDeleteItem
+import com.photobook.app.feature.archive.ArchiveService
 import com.photobook.app.feature.declutter.DeclutterCandidate
 import com.photobook.app.feature.declutter.DeclutterReason
 import com.photobook.app.feature.declutter.DeclutterSession
@@ -45,6 +48,8 @@ import com.photobook.app.ui.model.HomeFeedMode
 import com.photobook.app.ui.model.TimelineMark
 import com.photobook.app.util.Constants
 import com.photobook.app.widget.OnThisDayWidgetProvider
+import com.photobook.app.worker.ArchiveRetentionWorker
+import com.photobook.app.worker.ArchiveScanWorker
 import com.photobook.app.worker.TrashPurgeWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -79,6 +84,7 @@ class MainViewModel @Inject constructor(
     private val tokenClassifier: TokenClassifier,
     private val suggestionEngine: SuggestionEngine,
     private val duplicatePhotoFinder: DuplicatePhotoFinder,
+    private val archiveService: ArchiveService,
     private val memoryCurator: MemoryCurator,
     private val sharedPreferences: SharedPreferences,
 ) : ViewModel() {
@@ -112,6 +118,13 @@ class MainViewModel @Inject constructor(
         val isDeclutterLoading: Boolean = false,
         val declutterSession: DeclutterSession? = null,
         val declutterCurrentPhoto: PhotoRecord? = null,
+        val showArchives: Boolean = false,
+        val isArchivesLoading: Boolean = false,
+        val archiveCandidates: List<ArchiveCandidate> = emptyList(),
+        val archiveSelectedPhotoIds: Set<Long> = emptySet(),
+        val archiveRetentionDays: Int = 30,
+        val archiveDueDeleteCount: Int = 0,
+        val archivesEnabled: Boolean = false,
     )
 
     val uiState = MutableStateFlow(UiState())
@@ -393,6 +406,22 @@ class MainViewModel @Inject constructor(
                             }
                         )
                     },
+                    archiveCandidates = if (isFavorite) {
+                        state.archiveCandidates.filterNot { candidate -> candidate.photo.id == photoId }
+                    } else {
+                        state.archiveCandidates.map { candidate ->
+                            if (candidate.photo.id == photoId) {
+                                candidate.copy(photo = candidate.photo.copy(isFavorite = false))
+                            } else {
+                                candidate
+                            }
+                        }
+                    },
+                    archiveSelectedPhotoIds = if (isFavorite) {
+                        state.archiveSelectedPhotoIds - photoId
+                    } else {
+                        state.archiveSelectedPhotoIds
+                    },
                 )
             }
         }
@@ -428,6 +457,8 @@ class MainViewModel @Inject constructor(
                 viewerPhotos = emptyList(),
                 showSuggestions = false,
                 showDuplicateFinder = false,
+                showArchives = false,
+                archiveSelectedPhotoIds = emptySet(),
             )
         }
     }
@@ -439,41 +470,16 @@ class MainViewModel @Inject constructor(
     fun onPhotosMovedToTrash(photoIds: Set<Long>) {
         if (photoIds.isEmpty()) return
         viewModelScope.launch {
-            photoIndex.removeRecords(photoIds)
-            indexPersistence.removeByIds(photoIds)
-            latestSearchResultIds = latestSearchResultIds.filterNot { id -> id in photoIds }
-            latestVisibleResultIds = latestVisibleResultIds.filterNot { id -> id in photoIds }
+            removePhotosAfterTrash(photoIds)
+        }
+    }
 
-            uiState.update { state ->
-                val nextDeclutterSession = state.declutterSession?.let { session ->
-                    val filteredCandidates = session.candidates.filterNot { candidate -> candidate.photoId in photoIds }
-                    if (filteredCandidates.isEmpty()) {
-                        null
-                    } else {
-                        val clampedIndex = session.currentIndex.coerceAtMost(filteredCandidates.lastIndex.coerceAtLeast(0))
-                        session.copy(
-                            candidates = filteredCandidates,
-                            currentIndex = clampedIndex,
-                            markedTrashIds = session.markedTrashIds - photoIds,
-                            keptIds = session.keptIds - photoIds,
-                        )
-                    }
-                }
-                state.copy(
-                    selectedPhotoIds = state.selectedPhotoIds - photoIds,
-                    viewerStartIndex = null,
-                    viewerPhotos = emptyList(),
-                    duplicateGroups = state.duplicateGroups
-                        .map { group ->
-                            group.copy(photos = group.photos.filterNot { photo -> photo.id in photoIds })
-                        }
-                        .filter { group -> group.photos.size > 1 },
-                    declutterSession = nextDeclutterSession,
-                    declutterCurrentPhoto = nextDeclutterSession?.let { session ->
-                        resolveDeclutterCurrentPhoto(session, photoIndex.snapshot())
-                    },
-                )
-            }
+    fun onArchivePhotosMovedToTrash(photoIds: Set<Long>, retentionDays: Int) {
+        if (photoIds.isEmpty()) return
+        viewModelScope.launch {
+            archiveService.markTrashed(photoIds, retentionDays)
+            removePhotosAfterTrash(photoIds)
+            loadArchiveSummary(refreshCandidates = false)
         }
     }
 
@@ -528,6 +534,121 @@ class MainViewModel @Inject constructor(
     fun openStoryPhoto(photo: PhotoRecord) {
         closeStoryViewer()
         onPhotoClicked(photo)
+    }
+
+    fun openArchives() {
+        uiState.update {
+            it.copy(
+                showArchives = true,
+                isArchivesLoading = true,
+                archiveSelectedPhotoIds = emptySet(),
+            )
+        }
+        viewModelScope.launch {
+            loadArchiveSummary(
+                refreshCandidates = true,
+                preselectCandidates = true,
+            )
+        }
+    }
+
+    fun refreshArchives() {
+        viewModelScope.launch {
+            uiState.update { it.copy(isArchivesLoading = true) }
+            loadArchiveSummary(
+                refreshCandidates = true,
+                preselectCandidates = true,
+            )
+        }
+    }
+
+    fun dismissArchives() {
+        uiState.update {
+            it.copy(
+                showArchives = false,
+                isArchivesLoading = false,
+                archiveSelectedPhotoIds = emptySet(),
+            )
+        }
+    }
+
+    fun setArchiveRetentionDays(days: Int) {
+        viewModelScope.launch {
+            val normalized = archiveService.setRetentionDays(days)
+            uiState.update { it.copy(archiveRetentionDays = normalized) }
+        }
+    }
+
+    fun setArchivesEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            uiState.update { state ->
+                state.copy(
+                    archivesEnabled = enabled,
+                    isArchivesLoading = enabled,
+                    archiveCandidates = if (enabled) state.archiveCandidates else emptyList(),
+                    archiveSelectedPhotoIds = emptySet(),
+                    archiveDueDeleteCount = if (enabled) state.archiveDueDeleteCount else 0,
+                )
+            }
+            val summary = archiveService.setEnabled(enabled)
+            if (enabled) {
+                ArchiveScanWorker.enqueueDaily(context)
+                ArchiveRetentionWorker.enqueueDaily(context)
+            } else {
+                ArchiveScanWorker.cancel(context)
+                ArchiveRetentionWorker.cancel(context)
+            }
+            applyArchiveSummary(
+                summary = summary,
+                preselectCandidates = enabled,
+            )
+        }
+    }
+
+    fun toggleArchiveCandidateSelection(photoId: Long) {
+        uiState.update { state ->
+            val nextSelected = state.archiveSelectedPhotoIds.toMutableSet().apply {
+                if (!add(photoId)) remove(photoId)
+            }
+            state.copy(archiveSelectedPhotoIds = nextSelected)
+        }
+    }
+
+    fun selectAllArchiveCandidates() {
+        uiState.update { state ->
+            state.copy(archiveSelectedPhotoIds = state.archiveCandidates.map { candidate -> candidate.photo.id }.toSet())
+        }
+    }
+
+    fun clearArchiveCandidateSelection() {
+        uiState.update { it.copy(archiveSelectedPhotoIds = emptySet()) }
+    }
+
+    fun keepSelectedArchiveCandidates() {
+        val selectedIds = uiState.value.archiveSelectedPhotoIds
+        if (selectedIds.isEmpty()) return
+        viewModelScope.launch {
+            archiveService.markKept(selectedIds)
+            loadArchiveSummary(refreshCandidates = false)
+        }
+    }
+
+    fun resolveArchivePhotosByIds(photoIds: Set<Long>): List<PhotoRecord> {
+        if (photoIds.isEmpty()) return emptyList()
+        val byId = uiState.value.archiveCandidates.associateBy { candidate -> candidate.photo.id }
+        return photoIds.mapNotNull { id -> byId[id]?.photo }
+    }
+
+    suspend fun resolveArchiveDueDeleteItems(): List<ArchiveDueDeleteItem> {
+        return archiveService.dueDeleteItems()
+    }
+
+    fun onArchiveDueItemsDeleted(photoIds: Set<Long>) {
+        if (photoIds.isEmpty()) return
+        viewModelScope.launch {
+            archiveService.markDueDeleted(photoIds)
+            loadArchiveSummary(refreshCandidates = false)
+        }
     }
 
     fun openDeclutterSwipe() {
@@ -698,7 +819,92 @@ class MainViewModel @Inject constructor(
 
             TaggingWorker.enqueueLibraryMaintenance(context)
             TrashPurgeWorker.enqueueDaily(context)
+            if (archiveService.isEnabled()) {
+                ArchiveScanWorker.enqueueDaily(context)
+                ArchiveRetentionWorker.enqueueDaily(context)
+            } else {
+                ArchiveScanWorker.cancel(context)
+                ArchiveRetentionWorker.cancel(context)
+            }
+            loadArchiveSummary(refreshCandidates = true)
             registerMediaObserver()
+        }
+    }
+
+    private suspend fun loadArchiveSummary(
+        refreshCandidates: Boolean,
+        preselectCandidates: Boolean = false,
+    ) {
+        val summary = if (refreshCandidates) {
+            archiveService.refreshCandidates()
+        } else {
+            archiveService.loadSummary()
+        }
+        applyArchiveSummary(
+            summary = summary,
+            preselectCandidates = preselectCandidates,
+        )
+    }
+
+    private fun applyArchiveSummary(
+        summary: com.photobook.app.feature.archive.ArchiveSummary,
+        preselectCandidates: Boolean,
+    ) {
+        val candidateIds = summary.candidates.map { candidate -> candidate.photo.id }.toSet()
+        uiState.update { state ->
+            val clampedSelection = state.archiveSelectedPhotoIds.intersect(candidateIds)
+            state.copy(
+                isArchivesLoading = false,
+                archiveCandidates = summary.candidates,
+                archiveSelectedPhotoIds = if (preselectCandidates && summary.enabled) {
+                    candidateIds
+                } else {
+                    clampedSelection
+                },
+                archiveRetentionDays = summary.retentionDays,
+                archiveDueDeleteCount = summary.dueDeleteCount,
+                archivesEnabled = summary.enabled,
+            )
+        }
+    }
+
+    private suspend fun removePhotosAfterTrash(photoIds: Set<Long>) {
+        photoIndex.removeRecords(photoIds)
+        indexPersistence.removeByIds(photoIds)
+        latestSearchResultIds = latestSearchResultIds.filterNot { id -> id in photoIds }
+        latestVisibleResultIds = latestVisibleResultIds.filterNot { id -> id in photoIds }
+
+        uiState.update { state ->
+            val nextDeclutterSession = state.declutterSession?.let { session ->
+                val filteredCandidates = session.candidates.filterNot { candidate -> candidate.photoId in photoIds }
+                if (filteredCandidates.isEmpty()) {
+                    null
+                } else {
+                    val clampedIndex = session.currentIndex.coerceAtMost(filteredCandidates.lastIndex.coerceAtLeast(0))
+                    session.copy(
+                        candidates = filteredCandidates,
+                        currentIndex = clampedIndex,
+                        markedTrashIds = session.markedTrashIds - photoIds,
+                        keptIds = session.keptIds - photoIds,
+                    )
+                }
+            }
+            state.copy(
+                selectedPhotoIds = state.selectedPhotoIds - photoIds,
+                archiveCandidates = state.archiveCandidates.filterNot { candidate -> candidate.photo.id in photoIds },
+                archiveSelectedPhotoIds = state.archiveSelectedPhotoIds - photoIds,
+                viewerStartIndex = null,
+                viewerPhotos = emptyList(),
+                duplicateGroups = state.duplicateGroups
+                    .map { group ->
+                        group.copy(photos = group.photos.filterNot { photo -> photo.id in photoIds })
+                    }
+                    .filter { group -> group.photos.size > 1 },
+                declutterSession = nextDeclutterSession,
+                declutterCurrentPhoto = nextDeclutterSession?.let { session ->
+                    resolveDeclutterCurrentPhoto(session, photoIndex.snapshot())
+                },
+            )
         }
     }
 

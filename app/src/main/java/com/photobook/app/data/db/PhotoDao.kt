@@ -10,6 +10,9 @@ interface PhotoDao {
     @Query("SELECT * FROM photos ORDER BY dateAdded DESC")
     suspend fun getAll(): List<PhotoEntity>
 
+    @Query("SELECT COUNT(*) FROM photos")
+    suspend fun getPhotoCount(): Int
+
     @Query("SELECT id FROM photos")
     suspend fun getAllIds(): List<Long>
 
@@ -18,6 +21,27 @@ interface PhotoDao {
 
     @Query("SELECT * FROM photos WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<Long>): List<PhotoEntity>
+
+    @Query(
+        """
+        SELECT * FROM photos
+        WHERE isFavorite = 0
+            AND mimeType LIKE 'image/%'
+            AND (
+                lower(folderName) LIKE '%screenshot%'
+                OR lower(folderPath) LIKE '%screenshot%'
+                OR lower(filePath) LIKE '%screenshot%'
+                OR lower(fileName) LIKE '%screenshot%'
+                OR lower(folderName) LIKE '%screen_shot%'
+                OR lower(folderPath) LIKE '%screen_shot%'
+                OR lower(filePath) LIKE '%screen_shot%'
+                OR lower(fileName) LIKE '%screen_shot%'
+            )
+        ORDER BY dateAdded DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getArchiveScreenshotCandidates(limit: Int): List<PhotoEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertPhoto(photo: PhotoEntity)
@@ -42,4 +66,21 @@ interface PhotoDao {
 
     @Query("SELECT rowid FROM photo_fts WHERE photo_fts MATCH :matchQuery LIMIT :limit")
     suspend fun searchIdsByText(matchQuery: String, limit: Int): List<Long>
+
+    @Query(
+        """
+        SELECT p.id FROM photos AS p
+        INNER JOIN (
+            SELECT fileSize, width, height FROM photos
+            WHERE fileSize > 0 AND width > 0 AND height > 0
+            GROUP BY fileSize, width, height
+            HAVING COUNT(*) > 1
+        ) AS duplicate_key
+        ON p.fileSize = duplicate_key.fileSize
+            AND p.width = duplicate_key.width
+            AND p.height = duplicate_key.height
+        ORDER BY p.fileSize DESC
+        """,
+    )
+    suspend fun getExactDuplicateCandidateIds(): List<Long>
 }

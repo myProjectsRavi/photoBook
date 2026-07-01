@@ -6,9 +6,12 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.room.Room
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.photobook.app.data.db.ArchiveDao
 import com.photobook.app.data.db.PhotoBookDatabase
 import com.photobook.app.data.db.PhotoDao
+import com.photobook.app.data.db.VaultDao
 import com.photobook.app.util.Constants
+import com.photobook.app.util.PerformanceProfiler
 import coil.ImageLoader
 import coil.memory.MemoryCache
 import dagger.Module
@@ -34,8 +37,16 @@ object AppModule {
         )
             .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
             .addCallback(WAL_OPEN_CALLBACK)
-            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
-            .fallbackToDestructiveMigration()
+            .addMigrations(
+                MIGRATION_1_2,
+                MIGRATION_2_3,
+                MIGRATION_3_4,
+                MIGRATION_4_5,
+                MIGRATION_5_6,
+                MIGRATION_6_7,
+                MIGRATION_7_8,
+                MIGRATION_8_9,
+            )
             .build()
     }
 
@@ -43,6 +54,18 @@ object AppModule {
     @Singleton
     fun providePhotoDao(database: PhotoBookDatabase): PhotoDao {
         return database.photoDao()
+    }
+
+    @Provides
+    @Singleton
+    fun provideVaultDao(database: PhotoBookDatabase): VaultDao {
+        return database.vaultDao()
+    }
+
+    @Provides
+    @Singleton
+    fun provideArchiveDao(database: PhotoBookDatabase): ArchiveDao {
+        return database.archiveDao()
     }
 
     @Provides
@@ -58,10 +81,7 @@ object AppModule {
     fun provideImageLoader(
         @ApplicationContext context: Context,
     ): ImageLoader {
-        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
-        // Use a smaller memory cache on low-RAM devices (2 GB or less) to avoid
-        // triggering system OOM kills while remaining responsive.
-        val cachePercent = if (am.isLowRamDevice) 0.08 else 0.15
+        val cachePercent = PerformanceProfiler.from(context).imageCacheMemoryPercent
         return ImageLoader.Builder(context)
             .memoryCache {
                 MemoryCache.Builder(context)
@@ -71,6 +91,16 @@ object AppModule {
             .allowHardware(true)
             .crossfade(false)
             .build()
+    }
+
+    private val MIGRATION_1_2 = object : Migration(1, 2) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_photos_dateAdded ON photos(dateAdded)")
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_photos_isFavorite_dateAdded " +
+                    "ON photos(isFavorite, dateAdded)",
+            )
+        }
     }
 
     private val MIGRATION_2_3 = object : Migration(2, 3) {
@@ -142,6 +172,71 @@ object AppModule {
             // Video search feature removed — drop legacy video tables.
             db.execSQL("DROP TABLE IF EXISTS video_frame_fts")
             db.execSQL("DROP TABLE IF EXISTS video_frames")
+        }
+    }
+
+    private val MIGRATION_7_8 = object : Migration(7, 8) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_photos_fileSize_width_height " +
+                    "ON photos(fileSize, width, height)",
+            )
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS vault_items (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    sourcePhotoId INTEGER NOT NULL,
+                    originalFileName TEXT NOT NULL,
+                    mimeType TEXT NOT NULL,
+                    encryptedFileName TEXT NOT NULL,
+                    addedAtMs INTEGER NOT NULL
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS index_vault_items_sourcePhotoId " +
+                    "ON vault_items(sourcePhotoId)",
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_vault_items_addedAtMs " +
+                    "ON vault_items(addedAtMs)",
+            )
+        }
+    }
+
+    private val MIGRATION_8_9 = object : Migration(8, 9) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS archive_decisions (
+                    photoId INTEGER NOT NULL PRIMARY KEY,
+                    uriString TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    reasons TEXT NOT NULL,
+                    firstDetectedAtMs INTEGER NOT NULL,
+                    lastDetectedAtMs INTEGER NOT NULL,
+                    trashedAtMs INTEGER,
+                    retentionDays INTEGER NOT NULL
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_archive_decisions_state " +
+                    "ON archive_decisions(state)",
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_archive_decisions_lastDetectedAtMs " +
+                    "ON archive_decisions(lastDetectedAtMs)",
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_archive_decisions_trashedAtMs " +
+                    "ON archive_decisions(trashedAtMs)",
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_archive_decisions_retentionDays " +
+                    "ON archive_decisions(retentionDays)",
+            )
         }
     }
 

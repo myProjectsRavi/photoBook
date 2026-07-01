@@ -32,6 +32,7 @@ import coil.request.CachePolicy
 import coil.request.ImageRequest
 import coil.size.Precision
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.util.PerformanceProfiler
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -51,8 +52,7 @@ fun PhotoThumbnail(
     )
     val context = LocalContext.current
     val thumbSize = remember {
-        val am = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
-        if (am.isLowRamDevice) THUMBNAIL_REQUEST_SIZE_LOW_RAM else THUMBNAIL_REQUEST_SIZE_PX
+        PerformanceProfiler.from(context).thumbnailRequestSizePx
     }
     val imageRequest = remember(photo.uriString, thumbSize) {
         ImageRequest.Builder(context)
@@ -109,6 +109,3 @@ fun PhotoThumbnail(
         }
     }
 }
-
-private const val THUMBNAIL_REQUEST_SIZE_PX = 512
-private const val THUMBNAIL_REQUEST_SIZE_LOW_RAM = 256

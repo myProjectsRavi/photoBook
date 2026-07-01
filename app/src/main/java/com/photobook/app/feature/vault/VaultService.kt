@@ -9,15 +9,20 @@ import android.provider.MediaStore
 import androidx.security.crypto.EncryptedFile
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.data.db.VaultDao
+import com.photobook.app.data.db.VaultEntity
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
 import java.io.File
 import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
-import org.json.JSONObject
 
 data class VaultItem(
     val id: String,
@@ -48,7 +53,16 @@ sealed interface VaultExportResult {
 
 class VaultService @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val vaultDao: VaultDao,
 ) {
+    constructor(context: Context) : this(
+        context,
+        EntryPointAccessors.fromApplication(
+            context.applicationContext,
+            VaultServiceEntryPoint::class.java,
+        ).vaultDao(),
+    )
+
     private val masterKey: MasterKey by lazy {
         MasterKey.Builder(context)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
@@ -70,14 +84,16 @@ class VaultService @Inject constructor(
     }
 
     suspend fun listItems(): List<VaultItem> = withContext(Dispatchers.IO) {
-        loadItems().sortedByDescending { item -> item.addedAtMs }
+        migrateLegacyItemsIfNeeded()
+        vaultDao.getAllVaultItems().map { entity -> entity.toVaultItem() }
     }
 
     suspend fun addPhotos(photos: List<PhotoRecord>): VaultSaveResult = withContext(Dispatchers.IO) {
         if (photos.isEmpty()) return@withContext VaultSaveResult.Success(addedCount = 0, skippedCount = 0)
         runCatching {
-            val currentItems = loadItems().toMutableList()
-            val existingByPhotoId = currentItems.map { item -> item.sourcePhotoId }.toSet()
+            migrateLegacyItemsIfNeeded()
+            val photoIds = photos.map { photo -> photo.id }
+            val existingByPhotoId = vaultDao.getProtectedPhotoIds(photoIds).toMutableSet()
 
             var added = 0
             var skipped = 0
@@ -94,7 +110,7 @@ class VaultService @Inject constructor(
                 val copied = copyIntoEncryptedFile(sourceUri, encryptedFile)
                 if (!copied) return@forEach
 
-                currentItems += VaultItem(
+                val entity = VaultEntity(
                     id = UUID.randomUUID().toString(),
                     sourcePhotoId = photo.id,
                     originalFileName = photo.fileName.ifBlank { "PhotoBook_${photo.id}.jpg" },
@@ -102,10 +118,22 @@ class VaultService @Inject constructor(
                     encryptedFileName = encryptedName,
                     addedAtMs = System.currentTimeMillis(),
                 )
-                added += 1
+
+                val inserted = runCatching { vaultDao.insertVaultItem(entity) }
+                    .getOrElse {
+                        runCatching { targetFile.delete() }
+                        throw it
+                    }
+                if (inserted == INSERT_CONFLICT) {
+                    runCatching { targetFile.delete() }
+                    existingByPhotoId += photo.id
+                    skipped += 1
+                } else {
+                    existingByPhotoId += photo.id
+                    added += 1
+                }
             }
 
-            saveItems(currentItems)
             VaultSaveResult.Success(
                 addedCount = added,
                 skippedCount = skipped,
@@ -117,7 +145,8 @@ class VaultService @Inject constructor(
 
     suspend fun exportToDevice(itemId: String): VaultExportResult = withContext(Dispatchers.IO) {
         runCatching {
-            val item = loadItems().firstOrNull { it.id == itemId }
+            migrateLegacyItemsIfNeeded()
+            val item = vaultDao.getVaultItemById(itemId)
                 ?: return@runCatching VaultExportResult.Error()
             val encryptedFile = File(vaultDir, item.encryptedFileName)
             if (!encryptedFile.exists()) {
@@ -170,10 +199,10 @@ class VaultService @Inject constructor(
 
     suspend fun deleteItem(itemId: String): Boolean = withContext(Dispatchers.IO) {
         runCatching {
-            val current = loadItems().toMutableList()
-            val item = current.firstOrNull { it.id == itemId } ?: return@runCatching false
-            current.remove(item)
-            saveItems(current)
+            migrateLegacyItemsIfNeeded()
+            val item = vaultDao.getVaultItemById(itemId) ?: return@runCatching false
+            val deletedRows = vaultDao.deleteVaultItemById(itemId)
+            if (deletedRows <= 0) return@runCatching false
             runCatching { File(vaultDir, item.encryptedFileName).delete() }
             true
         }.getOrDefault(false)
@@ -200,7 +229,32 @@ class VaultService @Inject constructor(
         }.getOrDefault(false)
     }
 
-    private fun loadItems(): List<VaultItem> {
+    private suspend fun migrateLegacyItemsIfNeeded() {
+        val legacyItems = loadLegacyItems()
+        if (legacyItems.isEmpty()) return
+
+        var allImported = true
+        legacyItems.forEach { item ->
+            val inserted = runCatching {
+                vaultDao.insertVaultItem(item.toVaultEntity())
+            }.getOrElse {
+                allImported = false
+                INSERT_CONFLICT
+            }
+            if (inserted == INSERT_CONFLICT) {
+                val existing = vaultDao.getProtectedPhotoIds(listOf(item.sourcePhotoId))
+                if (existing.isEmpty()) {
+                    allImported = false
+                }
+            }
+        }
+
+        if (allImported) {
+            securePrefs.edit().remove(KEY_ITEMS).apply()
+        }
+    }
+
+    private fun loadLegacyItems(): List<VaultItem> {
         val encoded = securePrefs.getString(KEY_ITEMS, null) ?: return emptyList()
         return runCatching {
             val array = JSONArray(encoded)
@@ -220,23 +274,6 @@ class VaultService @Inject constructor(
                 }
             }
         }.getOrDefault(emptyList())
-    }
-
-    private fun saveItems(items: List<VaultItem>) {
-        val array = JSONArray()
-        items.forEach { item ->
-            array.put(
-                JSONObject().apply {
-                    put("id", item.id)
-                    put("sourcePhotoId", item.sourcePhotoId)
-                    put("originalFileName", item.originalFileName)
-                    put("mimeType", item.mimeType)
-                    put("encryptedFileName", item.encryptedFileName)
-                    put("addedAtMs", item.addedAtMs)
-                },
-            )
-        }
-        securePrefs.edit().putString(KEY_ITEMS, array.toString()).apply()
     }
 
     private fun buildEncryptedFileName(originalName: String): String {
@@ -262,5 +299,34 @@ class VaultService @Inject constructor(
         private const val PREFS_NAME = "vault_secure_prefs"
         private const val KEY_ITEMS = "vault_items"
         private const val VAULT_DIR = "vault_store"
+        private const val INSERT_CONFLICT = -1L
     }
+}
+
+private fun VaultEntity.toVaultItem(): VaultItem {
+    return VaultItem(
+        id = id,
+        sourcePhotoId = sourcePhotoId,
+        originalFileName = originalFileName,
+        mimeType = mimeType,
+        encryptedFileName = encryptedFileName,
+        addedAtMs = addedAtMs,
+    )
+}
+
+private fun VaultItem.toVaultEntity(): VaultEntity {
+    return VaultEntity(
+        id = id,
+        sourcePhotoId = sourcePhotoId,
+        originalFileName = originalFileName,
+        mimeType = mimeType,
+        encryptedFileName = encryptedFileName,
+        addedAtMs = addedAtMs,
+    )
+}
+
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+internal interface VaultServiceEntryPoint {
+    fun vaultDao(): VaultDao
 }

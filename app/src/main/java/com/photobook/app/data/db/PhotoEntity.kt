@@ -12,6 +12,7 @@ import com.photobook.app.data.model.PhotoRecord
         Index(value = ["isFavorite", "dateAdded"]),
         Index(value = ["folderName"]),
         Index(value = ["city", "state", "country"]),
+        Index(value = ["fileSize", "width", "height"]),
     ],
 )
 data class PhotoEntity(

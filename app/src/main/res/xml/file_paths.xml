@@ -6,6 +6,9 @@
     <cache-path
         name="share_clean_cache"
         path="share_clean/" />
+    <cache-path
+        name="pdf_share_cache"
+        path="pdf_share/" />
     <external-files-path
         name="pdf_exports"
         path="Documents/PhotoBook/" />

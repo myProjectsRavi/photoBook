@@ -3,10 +3,10 @@ package com.photobook.app.feature.copytext
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.graphics.Rect
 import android.net.Uri
-import android.os.Build
-import android.util.Size
+import androidx.exifinterface.media.ExifInterface
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
@@ -31,7 +31,7 @@ class OnDevicePhotoTextExtractor @Inject constructor(
             val uri = runCatching { Uri.parse(photoUri) }.getOrNull()
                 ?: return@withContext ExtractedTextResult.Error()
 
-            val bitmap = loadBitmap(uri)
+            val bitmap = loadTextBitmap(uri, MAX_TEXT_BITMAP_DIMENSION_PX)
                 ?: return@withContext ExtractedTextResult.Error()
 
             try {
@@ -67,7 +67,7 @@ class OnDevicePhotoTextExtractor @Inject constructor(
             val uri = runCatching { Uri.parse(photoUri) }.getOrNull()
                 ?: return@withContext ExtractedTextResult.Error()
 
-            val bitmap = decodeSampledBitmap(uri, MAX_REGION_BITMAP_DIMENSION_PX)
+            val bitmap = loadTextBitmap(uri, MAX_REGION_BITMAP_DIMENSION_PX)
                 ?: return@withContext ExtractedTextResult.Error()
 
             val crop = try {
@@ -102,20 +102,13 @@ class OnDevicePhotoTextExtractor @Inject constructor(
         }
     }
 
-    private fun loadBitmap(uri: Uri): Bitmap? {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val thumbnail = runCatching {
-                context.contentResolver.loadThumbnail(
-                    uri,
-                    Size(MAX_BITMAP_DIMENSION_PX, MAX_BITMAP_DIMENSION_PX),
-                    null,
-                )
-            }.getOrNull()
-            if (thumbnail != null) {
-                return thumbnail
-            }
+    private fun loadTextBitmap(uri: Uri, maxDimensionPx: Int): Bitmap? {
+        val decoded = decodeSampledBitmap(uri, maxDimensionPx) ?: return null
+        val oriented = applyExifOrientation(decoded, uri)
+        if (oriented !== decoded) {
+            recycleSafely(decoded)
         }
-        return decodeSampledBitmap(uri, MAX_BITMAP_DIMENSION_PX)
+        return oriented
     }
 
     private fun decodeSampledBitmap(uri: Uri, maxDimensionPx: Int): Bitmap? {
@@ -166,6 +159,59 @@ class OnDevicePhotoTextExtractor @Inject constructor(
         }.getOrNull()
     }
 
+    private fun applyExifOrientation(source: Bitmap, uri: Uri): Bitmap {
+        val orientation = readExifOrientation(uri)
+        if (
+            orientation == ExifInterface.ORIENTATION_NORMAL ||
+            orientation == ExifInterface.ORIENTATION_UNDEFINED
+        ) {
+            return source
+        }
+
+        val matrix = Matrix().apply {
+            when (orientation) {
+                ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> preScale(-1f, 1f)
+                ExifInterface.ORIENTATION_ROTATE_180 -> postRotate(180f)
+                ExifInterface.ORIENTATION_FLIP_VERTICAL -> preScale(1f, -1f)
+                ExifInterface.ORIENTATION_TRANSPOSE -> {
+                    preScale(-1f, 1f)
+                    postRotate(270f)
+                }
+
+                ExifInterface.ORIENTATION_ROTATE_90 -> postRotate(90f)
+                ExifInterface.ORIENTATION_TRANSVERSE -> {
+                    preScale(-1f, 1f)
+                    postRotate(90f)
+                }
+
+                ExifInterface.ORIENTATION_ROTATE_270 -> postRotate(270f)
+            }
+        }
+
+        return runCatching {
+            Bitmap.createBitmap(
+                source,
+                0,
+                0,
+                source.width,
+                source.height,
+                matrix,
+                true,
+            )
+        }.getOrDefault(source)
+    }
+
+    private fun readExifOrientation(uri: Uri): Int {
+        return runCatching {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                ExifInterface(stream).getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_UNDEFINED,
+                )
+            } ?: ExifInterface.ORIENTATION_UNDEFINED
+        }.getOrDefault(ExifInterface.ORIENTATION_UNDEFINED)
+    }
+
     private fun recycleSafely(bitmap: Bitmap) {
         runCatching {
             if (!bitmap.isRecycled) {
@@ -175,7 +221,7 @@ class OnDevicePhotoTextExtractor @Inject constructor(
     }
 
     companion object {
-        private const val MAX_BITMAP_DIMENSION_PX = 1600
-        private const val MAX_REGION_BITMAP_DIMENSION_PX = 2048
+        private const val MAX_TEXT_BITMAP_DIMENSION_PX = 2600
+        private const val MAX_REGION_BITMAP_DIMENSION_PX = 3200
     }
 }
