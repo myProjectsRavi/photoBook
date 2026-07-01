@@ -1,12 +1,9 @@
 package com.photobook.app
 
-import android.Manifest
 import android.app.Activity
 import android.content.ClipData
 import android.content.Context
-import android.content.ContextWrapper
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
@@ -15,8 +12,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.biometric.BiometricManager
-import androidx.biometric.BiometricPrompt
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
@@ -29,8 +24,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.core.content.ContextCompat
-import androidx.fragment.app.FragmentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.paging.compose.collectAsLazyPagingItems
@@ -41,21 +34,14 @@ import com.photobook.app.feature.metadata.SafeShareItem
 import com.photobook.app.feature.metadata.SafeShareResult
 import com.photobook.app.feature.pdf.PdfExportResult
 import com.photobook.app.feature.pdf.PdfExportService
-import com.photobook.app.feature.qrshare.QrReceivedImageStore
 import com.photobook.app.feature.trash.TrashRequestResult
 import com.photobook.app.feature.trash.TrashService
-import com.photobook.app.feature.vault.VaultExportResult
-import com.photobook.app.feature.vault.VaultItem
-import com.photobook.app.feature.vault.VaultSaveResult
-import com.photobook.app.feature.vault.VaultService
+import com.photobook.app.ui.screen.ArchivesScreen
 import com.photobook.app.ui.screen.MainScreen
 import com.photobook.app.ui.screen.OnboardingScreen
 import com.photobook.app.ui.screen.PhotoViewerScreen
 import com.photobook.app.ui.screen.MemoryStoryViewerScreen
 import com.photobook.app.ui.screen.PhotoReelsScreen
-import com.photobook.app.ui.screen.DeclutterSwipeScreen
-import com.photobook.app.ui.screen.QrReceiveScannerScreen
-import com.photobook.app.ui.screen.VaultBottomSheet
 import com.photobook.app.ui.theme.PhotoBookTheme
 import com.photobook.app.ui.viewmodel.MainViewModel
 import com.photobook.app.util.PermissionUtils
@@ -115,9 +101,6 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     val pagedResults = viewModel.pagedResults.collectAsLazyPagingItems()
     val permissions = PermissionUtils.requiredPermissions()
     val coroutineScope = rememberCoroutineScope()
-    val qrReceivedImageStore = remember(context.applicationContext) {
-        QrReceivedImageStore(context.applicationContext)
-    }
     val exifMetadataService = remember(context.applicationContext) {
         ExifMetadataService(context.applicationContext)
     }
@@ -127,15 +110,10 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     val trashService = remember(context.applicationContext) {
         TrashService(context.applicationContext)
     }
-    val vaultService = remember(context.applicationContext) {
-        VaultService(context.applicationContext)
-    }
-    var showQrScanner by remember { mutableStateOf(false) }
     var pendingTrashPhotoIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
-    var showVaultSheet by remember { mutableStateOf(false) }
-    var isVaultLoading by remember { mutableStateOf(false) }
-    var isVaultBusy by remember { mutableStateOf(false) }
-    var vaultItems by remember { mutableStateOf<List<VaultItem>>(emptyList()) }
+    var pendingArchiveTrashRequest by remember { mutableStateOf(false) }
+    var pendingArchiveRetentionDays by remember { mutableStateOf(30) }
+    var pendingArchiveDueDeleteIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
 
     // Trash bin state
     var showTrashScreen by remember { mutableStateOf(false) }
@@ -147,28 +125,23 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     ) { _ ->
         viewModel.refreshPermissionStatus(PermissionUtils.hasPhotoPermissions(context))
     }
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        if (granted) {
-            showQrScanner = true
-        } else {
-            Toast.makeText(
-                context,
-                context.getString(R.string.scan_qr_camera_denied),
-                Toast.LENGTH_SHORT,
-            ).show()
-        }
-    }
     val trashRequestLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult(),
     ) { result ->
         val trashedIds = pendingTrashPhotoIds
+        val fromArchives = pendingArchiveTrashRequest
+        val retentionDays = pendingArchiveRetentionDays
         pendingTrashPhotoIds = emptySet()
+        pendingArchiveTrashRequest = false
+        pendingArchiveRetentionDays = 30
         if (trashedIds.isEmpty()) return@rememberLauncherForActivityResult
 
         if (result.resultCode == Activity.RESULT_OK) {
-            viewModel.onPhotosMovedToTrash(trashedIds)
+            if (fromArchives) {
+                viewModel.onArchivePhotosMovedToTrash(trashedIds, retentionDays)
+            } else {
+                viewModel.onPhotosMovedToTrash(trashedIds)
+            }
             Toast.makeText(
                 context,
                 context.getString(R.string.trash_moved_success),
@@ -186,7 +159,12 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     // Launcher used for both Restore and Delete-Forever flows in the Trash screen.
     val trashActionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult(),
-    ) { _ ->
+    ) { result ->
+        val dueDeleteIds = pendingArchiveDueDeleteIds
+        pendingArchiveDueDeleteIds = emptySet()
+        if (result.resultCode == Activity.RESULT_OK && dueDeleteIds.isNotEmpty()) {
+            viewModel.onArchiveDueItemsDeleted(dueDeleteIds)
+        }
         // After any system action, re-query trash list.
         coroutineScope.launch {
             isLoadingTrash = true
@@ -204,11 +182,13 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         }
     }
 
-    fun requestMoveToTrash(photos: List<PhotoRecord>) {
+    fun requestMoveToTrash(photos: List<PhotoRecord>, archiveRetentionDays: Int? = null) {
         if (photos.isEmpty()) return
         when (val request = trashService.createTrashRequest(photos)) {
             is TrashRequestResult.Ready -> {
                 pendingTrashPhotoIds = photos.map { photo -> photo.id }.toSet()
+                pendingArchiveTrashRequest = archiveRetentionDays != null
+                pendingArchiveRetentionDays = archiveRetentionDays ?: 30
                 val intentRequest = IntentSenderRequest.Builder(request.intentSender).build()
                 trashRequestLauncher.launch(intentRequest)
             }
@@ -253,34 +233,51 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         }
     }
 
-    fun refreshVaultItems() {
-        coroutineScope.launch {
-            isVaultLoading = true
-            vaultItems = vaultService.listItems()
-            isVaultLoading = false
+    suspend fun createAndSharePdf(
+        photos: List<PhotoRecord>,
+        persistToDownloads: Boolean,
+        clearSelectionOnSuccess: Boolean,
+    ) {
+        if (photos.isEmpty()) return
+        Toast.makeText(
+            context,
+            context.getString(R.string.create_pdf_preparing),
+            Toast.LENGTH_SHORT,
+        ).show()
+        val result = if (persistToDownloads) {
+            pdfExportService.exportPhotos(photos)
+        } else {
+            pdfExportService.exportPhotosForSharing(photos)
         }
-    }
-
-    fun runWithVaultBiometrics(onAuthorized: () -> Unit) {
-        requestBiometricUnlock(
-            context = context,
-            title = context.getString(R.string.vault_biometric_title),
-            subtitle = context.getString(R.string.vault_biometric_subtitle),
-            onSuccess = onAuthorized,
-            onFailure = {
+        when (result) {
+            is PdfExportResult.Success -> {
                 Toast.makeText(
                     context,
-                    context.getString(R.string.vault_biometric_failed),
-                    Toast.LENGTH_LONG,
+                    context.getString(R.string.create_pdf_success, result.pageCount),
+                    Toast.LENGTH_SHORT,
                 ).show()
-                // Help the user set up a screen lock so the vault becomes usable next time.
-                runCatching {
-                    val settingsIntent = Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    context.startActivity(settingsIntent)
+                sharePdf(context, result.uri, result.fileName)
+                if (clearSelectionOnSuccess) {
+                    viewModel.clearSelection()
                 }
-            },
-        )
+            }
+
+            is PdfExportResult.TooManyPages -> {
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.create_pdf_too_many_pages, result.maxAllowed),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+
+            is PdfExportResult.Error -> {
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.create_pdf_error),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -321,6 +318,8 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         duplicateGroups = uiState.duplicateGroups,
         isFindingDuplicates = uiState.isFindingDuplicates,
         showDuplicateFinder = uiState.showDuplicateFinder,
+        archiveCandidateCount = uiState.archiveCandidates.size,
+        archiveDueDeleteCount = uiState.archiveDueDeleteCount,
         onQueryChange = viewModel::onQueryChanged,
         onSearchSubmitted = viewModel::onSearchSubmitted,
         onSearchFocusChanged = viewModel::onSearchFocusChanged,
@@ -346,104 +345,23 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         onCreatePdfSelected = { selectedIds ->
             coroutineScope.launch {
                 val selectedPhotos = viewModel.resolvePhotosByIds(selectedIds)
-                if (selectedPhotos.isEmpty()) return@launch
-                when (val result = pdfExportService.exportPhotos(selectedPhotos)) {
-                    is PdfExportResult.Success -> {
-                        Toast.makeText(
-                            context,
-                            context.getString(R.string.create_pdf_success, result.pageCount),
-                            Toast.LENGTH_SHORT,
-                        ).show()
-                        sharePdf(context, result.uri, result.fileName)
-                        viewModel.clearSelection()
-                    }
-
-                    is PdfExportResult.TooManyPages -> {
-                        Toast.makeText(
-                            context,
-                            context.getString(R.string.create_pdf_too_many_pages, result.maxAllowed),
-                            Toast.LENGTH_SHORT,
-                        ).show()
-                    }
-
-                    is PdfExportResult.Error -> {
-                        Toast.makeText(
-                            context,
-                            context.getString(R.string.create_pdf_error),
-                            Toast.LENGTH_SHORT,
-                        ).show()
-                    }
-                }
-            }
-        },
-        onAddSelectedToVault = { selectedIds ->
-            coroutineScope.launch {
-                val selectedPhotos = viewModel.resolvePhotosByIds(selectedIds)
-                if (selectedPhotos.isEmpty()) return@launch
-                runWithVaultBiometrics {
-                    coroutineScope.launch {
-                        isVaultBusy = true
-                        when (val result = vaultService.addPhotos(selectedPhotos)) {
-                            is VaultSaveResult.Success -> {
-                                Toast.makeText(
-                                    context,
-                                    context.getString(
-                                        R.string.vault_add_success,
-                                        result.addedCount,
-                                        result.skippedCount,
-                                    ),
-                                    Toast.LENGTH_SHORT,
-                                ).show()
-                                viewModel.clearSelection()
-                                if (showVaultSheet) {
-                                    refreshVaultItems()
-                                }
-                            }
-
-                            is VaultSaveResult.Error -> {
-                                Toast.makeText(
-                                    context,
-                                    context.getString(R.string.vault_add_error),
-                                    Toast.LENGTH_SHORT,
-                                ).show()
-                            }
-                        }
-                        isVaultBusy = false
-                    }
-                }
+                createAndSharePdf(
+                    photos = selectedPhotos,
+                    persistToDownloads = true,
+                    clearSelectionOnSuccess = true,
+                )
             }
         },
         onCopyTextFromPhoto = { photoId ->
             // Open the viewer on this photo so the user can access Copy Text from there
             viewModel.openPhotoById(photoId)
         },
-        onGenerateQrForPhoto = { photoId ->
-            // Open the viewer on this photo so the user can access QR generation from there
-            viewModel.openPhotoById(photoId)
-        },
         onClearSelection = viewModel::clearSelection,
         onPhotoClick = viewModel::onPhotoClicked,
         onPhotoLongClick = viewModel::onPhotoLongPressed,
-        onOpenQrScanner = {
-            val granted = ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.CAMERA,
-            ) == PackageManager.PERMISSION_GRANTED
-            if (granted) {
-                showQrScanner = true
-            } else {
-                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-            }
-        },
-        onOpenVault = {
-            runWithVaultBiometrics {
-                showVaultSheet = true
-                refreshVaultItems()
-            }
-        },
         onOpenTrash = { openTrashBin() },
+        onOpenArchives = viewModel::openArchives,
         onSourceSelected = viewModel::onSourceSelected,
-        onOpenDeclutter = viewModel::openDeclutterSwipe,
         onOpenDuplicateFinder = viewModel::openDuplicateFinder,
         onRefreshDuplicates = viewModel::refreshDuplicateGroups,
         onDismissDuplicateFinder = viewModel::dismissDuplicateFinder,
@@ -463,6 +381,15 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             onToggleFavorite = viewModel::onToggleFavorite,
             onMoveToTrash = { photo ->
                 requestMoveToTrash(listOf(photo))
+            },
+            onShareAsPdf = { photo ->
+                coroutineScope.launch {
+                    createAndSharePdf(
+                        photos = listOf(photo),
+                        persistToDownloads = false,
+                        clearSelectionOnSuccess = false,
+                    )
+                }
             },
             reelsEnabled = uiState.reelsEnabled,
         )
@@ -526,83 +453,53 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         )
     }
 
-    val declutterSession = uiState.declutterSession
-    if (declutterSession != null || uiState.isDeclutterLoading) {
-        DeclutterSwipeScreen(
-            session = declutterSession ?: com.photobook.app.feature.declutter.DeclutterSession(emptyList()),
-            currentPhoto = uiState.declutterCurrentPhoto,
-            isLoading = uiState.isDeclutterLoading,
-            onDismiss = viewModel::dismissDeclutterSwipe,
-            onKeepCurrent = viewModel::onDeclutterKeepCurrent,
-            onTrashCurrent = viewModel::onDeclutterTrashCurrent,
-            onUndoLast = viewModel::onDeclutterUndo,
-            onApplyTrash = { photoIds ->
+    if (uiState.showArchives) {
+        ArchivesScreen(
+            candidates = uiState.archiveCandidates,
+            selectedPhotoIds = uiState.archiveSelectedPhotoIds,
+            retentionDays = uiState.archiveRetentionDays,
+            dueDeleteCount = uiState.archiveDueDeleteCount,
+            archivesEnabled = uiState.archivesEnabled,
+            isLoading = uiState.isArchivesLoading,
+            onDismiss = viewModel::dismissArchives,
+            onRefresh = viewModel::refreshArchives,
+            onArchivesEnabledChanged = viewModel::setArchivesEnabled,
+            onRetentionDaysChanged = viewModel::setArchiveRetentionDays,
+            onToggleSelection = viewModel::toggleArchiveCandidateSelection,
+            onSelectAll = viewModel::selectAllArchiveCandidates,
+            onClearSelection = viewModel::clearArchiveCandidateSelection,
+            onKeepSelected = viewModel::keepSelectedArchiveCandidates,
+            onMoveSelectedToTrash = {
                 coroutineScope.launch {
-                    val photos = viewModel.resolvePhotosByIds(photoIds)
-                    if (photos.isNotEmpty()) {
-                        requestMoveToTrash(photos)
-                    }
-                    viewModel.dismissDeclutterSwipe()
+                    val photos = viewModel.resolveArchivePhotosByIds(uiState.archiveSelectedPhotoIds)
+                    requestMoveToTrash(photos, archiveRetentionDays = uiState.archiveRetentionDays)
                 }
             },
-        )
-    }
-
-    if (showQrScanner) {
-        QrReceiveScannerScreen(
-            imageStore = qrReceivedImageStore,
-            onDismiss = { showQrScanner = false },
-        )
-    }
-
-    if (showVaultSheet) {
-        VaultBottomSheet(
-            items = vaultItems,
-            isLoading = isVaultLoading,
-            isBusy = isVaultBusy,
-            onDismiss = { showVaultSheet = false },
-            onRefresh = ::refreshVaultItems,
-            onSaveToDevice = { item ->
+            onDeleteDueItems = {
                 coroutineScope.launch {
-                    isVaultBusy = true
-                    when (vaultService.exportToDevice(item.id)) {
-                        is VaultExportResult.Success -> {
-                            Toast.makeText(
-                                context,
-                                context.getString(R.string.vault_export_success),
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                        }
-
-                        is VaultExportResult.Error -> {
-                            Toast.makeText(
-                                context,
-                                context.getString(R.string.vault_export_error),
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                        }
+                    val dueItems = viewModel.resolveArchiveDueDeleteItems()
+                    if (dueItems.isEmpty()) return@launch
+                    val uris = dueItems.mapNotNull { item ->
+                        runCatching { Uri.parse(item.uriString) }.getOrNull()
                     }
-                    isVaultBusy = false
-                }
-            },
-            onDelete = { item ->
-                coroutineScope.launch {
-                    isVaultBusy = true
-                    val deleted = vaultService.deleteItem(item.id)
-                    if (deleted) {
-                        vaultItems = vaultItems.filterNot { existing -> existing.id == item.id }
-                    } else {
-                        Toast.makeText(
-                            context,
-                            context.getString(R.string.vault_delete_error),
-                            Toast.LENGTH_SHORT,
+                    if (uris.isEmpty()) return@launch
+                    when (val req = trashService.createDeleteRequest(uris)) {
+                        is TrashRequestResult.Ready -> {
+                            pendingArchiveDueDeleteIds = dueItems.map { item -> item.photoId }.toSet()
+                            trashActionLauncher.launch(IntentSenderRequest.Builder(req.intentSender).build())
+                        }
+                        TrashRequestResult.UnsupportedAndroid -> Toast.makeText(
+                            context, context.getString(R.string.trash_not_supported), Toast.LENGTH_SHORT
+                        ).show()
+                        is TrashRequestResult.Error -> Toast.makeText(
+                            context, context.getString(R.string.trash_request_error), Toast.LENGTH_SHORT
                         ).show()
                     }
-                    isVaultBusy = false
                 }
             },
         )
     }
+
 }
 
 private fun sharePhotos(context: Context, photos: List<SafeShareItem>) {
@@ -654,89 +551,4 @@ private fun sharePdf(context: Context, uri: Uri, fileName: String) {
             context.getString(R.string.create_pdf_share),
         ),
     )
-}
-
-private fun requestBiometricUnlock(
-    context: Context,
-    title: String,
-    subtitle: String,
-    onSuccess: () -> Unit,
-    onFailure: () -> Unit,
-) {
-    val activity = context.findFragmentActivity()
-    if (activity == null) {
-        onFailure()
-        return
-    }
-
-    val biometricManager = BiometricManager.from(activity)
-
-    // Try, in order of strength: STRONG+PIN, WEAK+PIN, STRONG-only, WEAK-only, PIN-only.
-    // On API 28/29 the combined BIOMETRIC_*|DEVICE_CREDENTIAL flag is not supported, so we
-    // gracefully fall back. We only treat the prompt as unavailable when nothing works.
-    val candidates = buildList {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-            add(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
-            add(BiometricManager.Authenticators.BIOMETRIC_WEAK or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
-            add(BiometricManager.Authenticators.DEVICE_CREDENTIAL)
-        }
-        add(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-        add(BiometricManager.Authenticators.BIOMETRIC_WEAK)
-    }
-
-    val supported = candidates.firstOrNull { auth ->
-        runCatching {
-            biometricManager.canAuthenticate(auth) == BiometricManager.BIOMETRIC_SUCCESS
-        }.getOrDefault(false)
-    }
-
-    if (supported == null) {
-        onFailure()
-        return
-    }
-
-    val promptInfo = runCatching {
-        val builder = BiometricPrompt.PromptInfo.Builder()
-            .setTitle(title)
-            .setSubtitle(subtitle)
-            .setAllowedAuthenticators(supported)
-        // setNegativeButtonText is required when DEVICE_CREDENTIAL is not part of the allowed set.
-        val hasDeviceCredential =
-            (supported and BiometricManager.Authenticators.DEVICE_CREDENTIAL) != 0
-        if (!hasDeviceCredential) {
-            builder.setNegativeButtonText(context.getString(android.R.string.cancel))
-        }
-        builder.build()
-    }.getOrElse {
-        onFailure()
-        return
-    }
-
-    val prompt = BiometricPrompt(
-        activity,
-        ContextCompat.getMainExecutor(activity),
-        object : BiometricPrompt.AuthenticationCallback() {
-            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                onSuccess()
-            }
-
-            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                if (errorCode != BiometricPrompt.ERROR_USER_CANCELED &&
-                    errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON &&
-                    errorCode != BiometricPrompt.ERROR_CANCELED
-                ) {
-                    onFailure()
-                }
-            }
-        },
-    )
-    runCatching { prompt.authenticate(promptInfo) }.onFailure { onFailure() }
-}
-
-private tailrec fun Context.findFragmentActivity(): FragmentActivity? {
-    return when (this) {
-        is FragmentActivity -> this
-        is ContextWrapper -> baseContext.findFragmentActivity()
-        else -> null
-    }
 }

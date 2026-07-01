@@ -19,4 +19,6 @@ object Constants {
 
     const val ML_WORKER_NAME = "photobook_ml_worker"
     const val TRASH_PURGE_WORK_NAME = "photobook_trash_purge_worker"
+    const val ARCHIVE_SCAN_WORK_NAME = "photobook_archive_scan_worker"
+    const val ARCHIVE_RETENTION_WORK_NAME = "photobook_archive_retention_worker"
 }

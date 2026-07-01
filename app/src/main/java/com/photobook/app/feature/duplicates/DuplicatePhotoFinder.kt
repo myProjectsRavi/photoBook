@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import com.photobook.app.data.db.PhotoDao
 import com.photobook.app.data.model.PhotoRecord
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.security.MessageDigest
@@ -14,12 +15,14 @@ import kotlin.math.abs
 
 class DuplicatePhotoFinder @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val photoDao: PhotoDao,
 ) {
     suspend fun findDuplicates(records: List<PhotoRecord>): List<DuplicatePhotoGroup> {
         if (records.size < 2) return emptyList()
 
         return withContext(Dispatchers.IO) {
-            val exactGroups = findExactDuplicates(records)
+            val exactCandidates = exactDuplicateCandidates(records)
+            val exactGroups = findExactDuplicates(exactCandidates)
             val exactIds = exactGroups.flatMap { group -> group.photos.map { it.id } }.toSet()
             val remainingForSimilar = records.filterNot { it.id in exactIds }
             val similarGroups = findNearDuplicates(remainingForSimilar)
@@ -51,6 +54,25 @@ class DuplicatePhotoFinder @Inject constructor(
                 )
                 .take(MAX_GROUPS)
         }
+    }
+
+    private suspend fun exactDuplicateCandidates(records: List<PhotoRecord>): List<PhotoRecord> {
+        if (records.size < DB_PREFILTER_MIN_RECORDS) return records
+
+        return runCatching {
+            val dbPhotoCount = photoDao.getPhotoCount()
+            if (dbPhotoCount != records.size) {
+                return@runCatching records
+            }
+
+            val candidateIds = photoDao.getExactDuplicateCandidateIds()
+            if (candidateIds.isEmpty()) {
+                return@runCatching emptyList()
+            }
+
+            val candidateIdSet = candidateIds.toHashSet()
+            records.filter { photo -> photo.id in candidateIdSet }
+        }.getOrDefault(records)
     }
 
     private fun findExactDuplicates(records: List<PhotoRecord>): List<DuplicatePhotoGroup> {
@@ -484,6 +506,7 @@ class DuplicatePhotoFinder @Inject constructor(
 
     companion object {
         private const val PARTIAL_HASH_LIMIT = 64 * 1024 // 64KB
+        private const val DB_PREFILTER_MIN_RECORDS = 1_000
         private const val BAND_COUNT = 8
         private const val NEAR_DUPLICATE_DISTANCE = 8
         private const val MAX_GROUPS = 30

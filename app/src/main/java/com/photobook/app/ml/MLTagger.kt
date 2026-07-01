@@ -18,6 +18,7 @@ import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.photobook.app.data.model.MLTag
 import com.photobook.app.util.Constants
+import com.photobook.app.util.PerformanceProfiler
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -55,6 +56,10 @@ class MLTagger @Inject constructor(
         TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     }
 
+    private val performanceProfiler: PerformanceProfiler by lazy {
+        PerformanceProfiler.from(context)
+    }
+
     suspend fun tagPhoto(uriString: String, isFrontCamera: Boolean): List<MLTag> {
         return analyzePhoto(uriString, isFrontCamera).tags
     }
@@ -75,15 +80,16 @@ class MLTagger @Inject constructor(
 
     fun loadIntelligenceBitmap(uriString: String): Bitmap? {
         val uri = Uri.parse(uriString)
+        val maxDimension = performanceProfiler.intelligenceBitmapMaxDimensionPx
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val fromThumbnail = runCatching {
-                context.contentResolver.loadThumbnail(uri, Size(1024, 1024), null)
+                context.contentResolver.loadThumbnail(uri, Size(maxDimension, maxDimension), null)
             }.getOrNull()
             if (fromThumbnail != null) return fromThumbnail
         }
 
-        return decodeSampledBitmap(uri, 1024)
+        return decodeSampledBitmap(uri, maxDimension)
     }
 
     private fun decodeSampledBitmap(uri: Uri, maxDimensionPx: Int): Bitmap? {
@@ -125,14 +131,11 @@ class MLTagger @Inject constructor(
 
     private suspend fun analyzeBitmapInternal(bitmap: Bitmap, isFrontCamera: Boolean): AnalysisResult = coroutineScope {
         val input = InputImage.fromBitmap(bitmap, 0)
-        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
-        val isLowRam = activityManager?.isLowRamDevice == true
-
         val labels: List<com.google.mlkit.vision.label.ImageLabel>
         val faces: List<com.google.mlkit.vision.face.Face>
         val text: String
 
-        if (isLowRam) {
+        if (performanceProfiler.shouldRunMlSequentially) {
             labels = runCatching { labeler.process(input).await() }.getOrDefault(emptyList())
             faces = runCatching { faceDetector.process(input).await() }.getOrDefault(emptyList())
             text = runCatching { textRecognizer.process(input).await().text }.getOrDefault("")

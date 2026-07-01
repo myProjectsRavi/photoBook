@@ -1,0 +1,136 @@
+package com.photobook.app.feature.archive
+
+import com.google.common.truth.Truth.assertThat
+import com.photobook.app.data.model.PhotoRecord
+import org.junit.Test
+
+class ArchiveClassifierTest {
+
+    private val classifier = ArchiveClassifier()
+
+    @Test
+    fun phonePeTransactionScreenshot_matchesStrictClassifier() {
+        val photo = sampleScreenshot(
+            ocrText = "PhonePe payment successful. Paid Rs. 500 to Ravi by UPI. UTR 123456789.",
+        )
+
+        val result = classifier.classify(photo, NOW_MS)
+
+        assertThat(result).isNotNull()
+        assertThat(result!!.confidence).isAtLeast(0.84)
+        assertThat(result.reasons).contains("Payment app cue")
+        assertThat(result.reasons).contains("UPI cue")
+    }
+
+    @Test
+    fun gPayTransactionScreenshot_matchesStrictClassifier() {
+        val photo = sampleScreenshot(
+            ocrText = "Google Pay sent INR 1,200. Transaction completed with UPI reference id 98765.",
+        )
+
+        val result = classifier.classify(photo, NOW_MS)
+
+        assertThat(result).isNotNull()
+        assertThat(result!!.reasons).contains("Amount-like text")
+    }
+
+    @Test
+    fun genericScreenshot_isRejected() {
+        val photo = sampleScreenshot(
+            ocrText = "Lunch plan, movie timings, and a reminder to call later.",
+        )
+
+        val result = classifier.classify(photo, NOW_MS)
+
+        assertThat(result).isNull()
+    }
+
+    @Test
+    fun sensitiveDocumentScreenshot_isRejected() {
+        val photo = sampleScreenshot(
+            ocrText = "Google Pay payment successful Rs. 900 UPI transaction. Aadhaar number visible.",
+        )
+
+        val result = classifier.classify(photo, NOW_MS)
+
+        assertThat(result).isNull()
+    }
+
+    @Test
+    fun favoriteScreenshot_isRejected() {
+        val photo = sampleScreenshot(
+            isFavorite = true,
+            ocrText = "Paytm payment successful Rs. 250 UPI transaction completed.",
+        )
+
+        val result = classifier.classify(photo, NOW_MS)
+
+        assertThat(result).isNull()
+    }
+
+    @Test
+    fun freshScreenshot_isRejected() {
+        val photo = sampleScreenshot(
+            dateAdded = NOW_MS - (60L * 60L * 1000L),
+            ocrText = "BHIM UPI payment successful Rs. 300 transaction completed.",
+        )
+
+        val result = classifier.classify(photo, NOW_MS)
+
+        assertThat(result).isNull()
+    }
+
+    @Test
+    fun missingOcrWithWeakMetadata_isRejected() {
+        val photo = sampleScreenshot(
+            ocrText = "",
+            isOcrProcessed = false,
+        )
+
+        val result = classifier.classify(photo, NOW_MS)
+
+        assertThat(result).isNull()
+    }
+
+    private fun sampleScreenshot(
+        id: Long = 1L,
+        dateAdded: Long = NOW_MS - (3L * 24L * 60L * 60L * 1000L),
+        isFavorite: Boolean = false,
+        ocrText: String,
+        isOcrProcessed: Boolean = true,
+    ): PhotoRecord {
+        return PhotoRecord(
+            id = id,
+            uriString = "content://media/external/images/media/$id",
+            filePath = "/storage/emulated/0/Pictures/Screenshots/Screenshot_$id.png",
+            fileName = "Screenshot_$id.png",
+            dateAdded = dateAdded,
+            year = 2026,
+            month = 7,
+            dayOfMonth = 1,
+            dayOfWeek = 3,
+            hourOfDay = 10,
+            latitude = null,
+            longitude = null,
+            city = null,
+            state = null,
+            country = null,
+            fileSize = 512_000L,
+            width = 1080,
+            height = 2400,
+            mimeType = "image/png",
+            folderName = "Screenshots",
+            folderPath = "Pictures/Screenshots/",
+            cameraModel = null,
+            isFrontCamera = false,
+            isHdr = false,
+            isFavorite = isFavorite,
+            ocrText = ocrText,
+            isOcrProcessed = isOcrProcessed,
+        )
+    }
+
+    companion object {
+        private const val NOW_MS = 1_783_000_000_000L
+    }
+}

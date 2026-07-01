@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.paging.compose.LazyPagingItems
@@ -76,6 +77,8 @@ fun MainScreen(
     duplicateGroups: List<DuplicatePhotoGroup>,
     isFindingDuplicates: Boolean,
     showDuplicateFinder: Boolean,
+    archiveCandidateCount: Int,
+    archiveDueDeleteCount: Int,
     onQueryChange: (String) -> Unit,
     onSearchSubmitted: () -> Unit,
     onSearchFocusChanged: (Boolean) -> Unit,
@@ -87,17 +90,13 @@ fun MainScreen(
     onShareSelected: (Set<Long>) -> Unit,
     onMoveSelectedToTrash: (Set<Long>) -> Unit,
     onCreatePdfSelected: (Set<Long>) -> Unit,
-    onAddSelectedToVault: (Set<Long>) -> Unit,
     onCopyTextFromPhoto: (Long) -> Unit,
-    onGenerateQrForPhoto: (Long) -> Unit,
     onClearSelection: () -> Unit,
     onPhotoClick: (PhotoRecord) -> Unit,
     onPhotoLongClick: (PhotoRecord) -> Unit,
-    onOpenQrScanner: () -> Unit,
-    onOpenVault: () -> Unit,
     onOpenTrash: () -> Unit,
+    onOpenArchives: () -> Unit,
     onSourceSelected: (PhotoSource) -> Unit,
-    onOpenDeclutter: () -> Unit,
     onOpenDuplicateFinder: () -> Unit,
     onRefreshDuplicates: () -> Unit,
     onDismissDuplicateFinder: () -> Unit,
@@ -106,7 +105,6 @@ fun MainScreen(
     onMemoryStorySelected: (MemoryStory) -> Unit,
 ) {
     val isSelectionMode = selectedPhotoIds.isNotEmpty()
-    var showMoreActions by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -255,36 +253,51 @@ fun MainScreen(
 
                 // Action Row
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     RefinedActionButton(
-                        icon = Icons.Default.AutoFixHigh,
-                        label = "Declutter",
-                        onClick = onOpenDeclutter,
+                        icon = Icons.Default.Storage,
+                        label = stringResource(R.string.duplicates_title),
+                        onClick = onOpenDuplicateFinder,
                         color = AccentIndigo,
-                        enabled = searchReady && !isSelectionMode
+                        enabled = searchReady && !isSelectionMode,
+                        modifier = Modifier.width(76.dp),
                     )
                     RefinedActionButton(
                         icon = if (favoritesOnly) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                         label = "Favorites",
                         onClick = onToggleFavoritesOnly,
                         color = if (favoritesOnly) AccentPink else Color(0xFF64748B),
-                        enabled = searchReady
+                        enabled = searchReady,
+                        modifier = Modifier.width(76.dp),
                     )
                     RefinedActionButton(
-                        icon = Icons.Default.MoreHoriz,
-                        label = stringResource(R.string.more_actions),
-                        onClick = { showMoreActions = true },
-                        color = Color(0xFF64748B),
-                        enabled = searchReady && !isSelectionMode
+                        icon = Icons.Default.Slideshow,
+                        label = stringResource(R.string.reels_browsing_action),
+                        onClick = onToggleReels,
+                        color = if (reelsEnabled) AccentPink else Color(0xFF64748B),
+                        enabled = searchReady && !isSelectionMode,
+                        modifier = Modifier.width(76.dp),
+                    )
+                    RefinedActionButton(
+                        icon = Icons.Default.Archive,
+                        label = stringResource(R.string.archives_action),
+                        onClick = onOpenArchives,
+                        color = Color(0xFF0F766E),
+                        enabled = searchReady && !isSelectionMode,
+                        badgeCount = archiveCandidateCount + archiveDueDeleteCount,
+                        modifier = Modifier.width(76.dp),
                     )
                     RefinedActionButton(
                         icon = Icons.Default.Delete,
                         label = "Trash",
                         onClick = onOpenTrash,
                         color = AccentViolet,
-                        enabled = searchReady && !isSelectionMode
+                        enabled = searchReady && !isSelectionMode,
+                        modifier = Modifier.width(76.dp),
                     )
                 }
 
@@ -382,37 +395,22 @@ fun MainScreen(
                         IconButton(onClick = onClearSelection) { Icon(Icons.Default.Close, null) }
                         if (selectedPhotoIds.size == 1) {
                             IconButton(onClick = { onCopyTextFromPhoto(selectedPhotoIds.first()) }) { Icon(Icons.Default.ContentCopy, contentDescription = "Copy text from photo") }
-                            IconButton(onClick = { onGenerateQrForPhoto(selectedPhotoIds.first()) }) { Icon(Icons.Default.QrCode2, contentDescription = stringResource(R.string.viewer_generate_qr)) }
                         }
-                        IconButton(onClick = { onAddSelectedToVault(selectedPhotoIds) }) { Icon(Icons.Default.Lock, contentDescription = stringResource(R.string.vault_add_selected)) }
-                        IconButton(onClick = { onCreatePdfSelected(selectedPhotoIds) }) { Icon(Icons.Default.PictureAsPdf, null) }
-                        IconButton(onClick = { onShareSelected(selectedPhotoIds) }) { Icon(Icons.Default.Share, null) }
-                        IconButton(onClick = { onMoveSelectedToTrash(selectedPhotoIds) }, colors = IconButtonDefaults.iconButtonColors(contentColor = Color.Red)) { Icon(Icons.Default.Delete, null) }
+                        IconButton(onClick = { onCreatePdfSelected(selectedPhotoIds) }) {
+                            Icon(Icons.Default.PictureAsPdf, contentDescription = stringResource(R.string.create_pdf_selected))
+                        }
+                        IconButton(onClick = { onShareSelected(selectedPhotoIds) }) {
+                            Icon(Icons.Default.Share, contentDescription = stringResource(R.string.share_selected))
+                        }
+                        IconButton(
+                            onClick = { onMoveSelectedToTrash(selectedPhotoIds) },
+                            colors = IconButtonDefaults.iconButtonColors(contentColor = Color.Red),
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.trash_selected))
+                        }
                     }
                 }
             }
-        }
-
-        if (showMoreActions) {
-            MoreActionsSheet(
-                reelsEnabled = reelsEnabled,
-                onDismiss = { showMoreActions = false },
-                onOpenDuplicateFinder = {
-                    showMoreActions = false
-                    onOpenDuplicateFinder()
-                },
-                onToggleReels = {
-                    onToggleReels()
-                },
-                onOpenVault = {
-                    showMoreActions = false
-                    onOpenVault()
-                },
-                onOpenQrScanner = {
-                    showMoreActions = false
-                    onOpenQrScanner()
-                },
-            )
         }
 
         if (showDuplicateFinder) {
@@ -433,11 +431,13 @@ private fun RefinedActionButton(
     label: String,
     onClick: () -> Unit,
     color: Color,
-    enabled: Boolean
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    badgeCount: Int = 0,
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
+        modifier = modifier
             .clickable(enabled = enabled) { onClick() }
             .alpha(if (enabled) 1f else 0.5f)
     ) {
@@ -449,14 +449,37 @@ private fun RefinedActionButton(
             contentAlignment = Alignment.Center
         ) {
             Icon(icon, contentDescription = null, tint = color)
+            if (badgeCount > 0) {
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(3.dp)
+                        .heightIn(min = 18.dp)
+                        .widthIn(min = 18.dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.error,
+                ) {
+                    Text(
+                        text = if (badgeCount > 99) "99+" else badgeCount.toString(),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Black,
+                            color = MaterialTheme.colorScheme.onError,
+                        ),
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+                    )
+                }
+            }
         }
         Spacer(modifier = Modifier.height(8.dp))
         Text(
             label,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
             style = MaterialTheme.typography.labelMedium.copy(
                 fontWeight = FontWeight.Bold,
                 color = color
-            )
+            ),
+            modifier = Modifier.fillMaxWidth(),
         )
     }
 }
@@ -478,80 +501,6 @@ private fun RefinedGlassChip(
             style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
         )
     }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun MoreActionsSheet(
-    reelsEnabled: Boolean,
-    onDismiss: () -> Unit,
-    onOpenDuplicateFinder: () -> Unit,
-    onToggleReels: () -> Unit,
-    onOpenVault: () -> Unit,
-    onOpenQrScanner: () -> Unit,
-) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            MoreActionRow(
-                icon = Icons.Default.Storage,
-                title = stringResource(R.string.duplicates_title),
-                subtitle = stringResource(R.string.duplicates_subtitle),
-                onClick = onOpenDuplicateFinder,
-            )
-            MoreActionRow(
-                icon = Icons.Default.Slideshow,
-                title = if (reelsEnabled) stringResource(R.string.reels_browsing_on) else stringResource(R.string.reels_browsing_off),
-                subtitle = stringResource(R.string.reels_browsing_subtitle),
-                onClick = onToggleReels,
-            )
-            MoreActionRow(
-                icon = Icons.Default.Lock,
-                title = stringResource(R.string.vault_title),
-                subtitle = stringResource(R.string.vault_biometric_subtitle),
-                onClick = onOpenVault,
-            )
-            MoreActionRow(
-                icon = Icons.Default.QrCodeScanner,
-                title = stringResource(R.string.scan_qr_action),
-                subtitle = stringResource(R.string.scan_qr_hint),
-                onClick = onOpenQrScanner,
-            )
-        }
-    }
-}
-
-@Composable
-private fun MoreActionRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    subtitle: String,
-    onClick: () -> Unit,
-) {
-    ListItem(
-        headlineContent = {
-            Text(text = title, fontWeight = FontWeight.Bold)
-        },
-        supportingContent = {
-            Text(text = subtitle)
-        },
-        leadingContent = {
-            Icon(imageVector = icon, contentDescription = null, tint = AccentIndigo)
-        },
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick),
-    )
 }
 
 @Composable

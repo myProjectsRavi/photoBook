@@ -34,8 +34,8 @@ android {
         applicationId = "com.photobook.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "2.0.3"
+        versionCode = 11
+        versionName = "2.0.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -124,7 +124,7 @@ android {
             isEnable = true
             reset()
             include("arm64-v8a", "armeabi-v7a")
-            // No universal APK — keeps per-ABI APKs lean (arm64-v8a ~48MB instead of ~140MB).
+            // No universal APK — keeps per-ABI APKs under the strict 30 MB size gate.
             // Use Play Store AAB for automatic per-device delivery.
             isUniversalApk = false
         }
@@ -198,10 +198,10 @@ dependencies {
 
 tasks.register("verifyApkSize") {
     group = "verification"
-    description = "Fails when any generated APK exceeds 60 MB."
+    description = "Fails when any generated APK exceeds 30 MB."
 
     doLast {
-        val maxBytes = 60L * 1024L * 1024L
+        val maxBytes = 30L * 1024L * 1024L
         val apkRoot = layout.buildDirectory.dir("outputs/apk").get().asFile
         if (!apkRoot.exists()) return@doLast
 
@@ -213,7 +213,30 @@ tasks.register("verifyApkSize") {
         apks.forEach { apk ->
             val sizeBytes = apk.length()
             check(sizeBytes <= maxBytes) {
-                "APK size gate failed for ${apk.path}: ${sizeBytes / (1024 * 1024)} MB > 60 MB"
+                "APK size gate failed for ${apk.path}: ${sizeBytes / (1024 * 1024)} MB > 30 MB"
+            }
+        }
+    }
+}
+
+tasks.register("verifyReleaseBundleSize") {
+    group = "verification"
+    description = "Fails when any generated release AAB exceeds 20 MB."
+
+    doLast {
+        val maxBytes = 20L * 1024L * 1024L
+        val bundleRoot = layout.buildDirectory.dir("outputs/bundle/release").get().asFile
+        if (!bundleRoot.exists()) return@doLast
+
+        val bundles = bundleRoot.walkTopDown()
+            .filter { it.isFile && it.extension == "aab" }
+            .toList()
+        if (bundles.isEmpty()) return@doLast
+
+        bundles.forEach { bundle ->
+            val sizeBytes = bundle.length()
+            check(sizeBytes <= maxBytes) {
+                "Release bundle size gate failed for ${bundle.path}: ${sizeBytes / (1024 * 1024)} MB > 20 MB"
             }
         }
     }
@@ -221,4 +244,8 @@ tasks.register("verifyApkSize") {
 
 tasks.matching { it.name.startsWith("assemble") }.configureEach {
     finalizedBy("verifyApkSize")
+}
+
+tasks.matching { it.name == "bundleRelease" }.configureEach {
+    finalizedBy("verifyReleaseBundleSize")
 }
