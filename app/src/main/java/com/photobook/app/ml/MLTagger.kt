@@ -6,6 +6,8 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.util.Size
+import com.google.android.gms.common.api.OptionalModuleApi
+import com.google.android.gms.common.moduleinstall.ModuleInstall
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
@@ -16,8 +18,10 @@ import com.google.mlkit.vision.label.defaults.ImageLabelerOptions
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.photobook.app.data.model.IntelligenceStatus
 import com.photobook.app.data.model.MLTag
 import com.photobook.app.util.Constants
+import com.photobook.app.util.LocalDiagnostics
 import com.photobook.app.util.PerformanceProfiler
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -34,6 +38,13 @@ class MLTagger @Inject constructor(
     data class AnalysisResult(
         val tags: List<MLTag>,
         val ocrText: String,
+        val mlStatus: IntelligenceStatus,
+        val ocrStatus: IntelligenceStatus,
+    )
+
+    data class ModelAvailability(
+        val mlReady: Boolean,
+        val ocrReady: Boolean,
     )
 
     private val labeler: ImageLabeler by lazy {
@@ -69,6 +80,8 @@ class MLTagger @Inject constructor(
             val bitmap = loadIntelligenceBitmap(uriString) ?: return@withContext AnalysisResult(
                 tags = emptyList(),
                 ocrText = "",
+                mlStatus = IntelligenceStatus.FAILED_RETRYABLE,
+                ocrStatus = IntelligenceStatus.FAILED_RETRYABLE,
             )
             try {
                 analyzeBitmapInternal(bitmap, isFrontCamera)
@@ -123,32 +136,120 @@ class MLTagger @Inject constructor(
         }.getOrNull()
     }
 
-    suspend fun analyzeBitmap(bitmap: Bitmap, isFrontCamera: Boolean): AnalysisResult {
-        return withContext(Dispatchers.Default) {
-            analyzeBitmapInternal(bitmap, isFrontCamera)
+    suspend fun ensureModelsReady(needsMl: Boolean, needsOcr: Boolean): ModelAvailability {
+        return withContext(Dispatchers.IO) {
+            val mlReady = if (needsMl) {
+                areModulesAvailable(labeler, faceDetector)
+            } else {
+                true
+            }
+            val ocrReady = if (needsOcr) {
+                areModulesAvailable(textRecognizer)
+            } else {
+                true
+            }
+
+            if (needsMl && !mlReady) {
+                requestDeferredInstall(labeler, faceDetector)
+            }
+            if (needsOcr && !ocrReady) {
+                requestDeferredInstall(textRecognizer)
+            }
+
+            ModelAvailability(
+                mlReady = !needsMl || mlReady,
+                ocrReady = !needsOcr || ocrReady,
+            )
         }
     }
 
-    private suspend fun analyzeBitmapInternal(bitmap: Bitmap, isFrontCamera: Boolean): AnalysisResult = coroutineScope {
+    private suspend fun areModulesAvailable(vararg apis: OptionalModuleApi): Boolean {
+        return runCatching {
+            ModuleInstall.getClient(context)
+                .areModulesAvailable(*apis)
+                .await()
+                .areModulesAvailable()
+        }.getOrElse { error ->
+            LocalDiagnostics.record(
+                context = context,
+                area = "ml-model-availability",
+                message = "Model availability check failed; attempting analyzer directly",
+                throwable = error,
+            )
+            true
+        }
+    }
+
+    private suspend fun requestDeferredInstall(vararg apis: OptionalModuleApi) {
+        runCatching {
+            ModuleInstall.getClient(context)
+                .deferredInstall(*apis)
+                .await()
+        }.onFailure { error ->
+            LocalDiagnostics.record(
+                context = context,
+                area = "ml-model-install",
+                message = "Deferred ML Kit model install request failed",
+                throwable = error,
+            )
+        }
+    }
+
+    suspend fun analyzeBitmap(
+        bitmap: Bitmap,
+        isFrontCamera: Boolean,
+        analyzeMl: Boolean = true,
+        analyzeOcr: Boolean = true,
+    ): AnalysisResult {
+        return withContext(Dispatchers.Default) {
+            analyzeBitmapInternal(bitmap, isFrontCamera, analyzeMl, analyzeOcr)
+        }
+    }
+
+    private suspend fun analyzeBitmapInternal(
+        bitmap: Bitmap,
+        isFrontCamera: Boolean,
+        analyzeMl: Boolean = true,
+        analyzeOcr: Boolean = true,
+    ): AnalysisResult = coroutineScope {
         val input = InputImage.fromBitmap(bitmap, 0)
-        val labels: List<com.google.mlkit.vision.label.ImageLabel>
-        val faces: List<com.google.mlkit.vision.face.Face>
-        val text: String
+        val labelsResult: Result<List<com.google.mlkit.vision.label.ImageLabel>>
+        val facesResult: Result<List<com.google.mlkit.vision.face.Face>>
+        val textResult: Result<String>
 
         if (performanceProfiler.shouldRunMlSequentially) {
-            labels = runCatching { labeler.process(input).await() }.getOrDefault(emptyList())
-            faces = runCatching { faceDetector.process(input).await() }.getOrDefault(emptyList())
-            text = runCatching { textRecognizer.process(input).await().text }.getOrDefault("")
+            labelsResult = if (analyzeMl) runCatching { labeler.process(input).await() } else Result.success(emptyList())
+            facesResult = if (analyzeMl) runCatching { faceDetector.process(input).await() } else Result.success(emptyList())
+            textResult = if (analyzeOcr) runCatching { textRecognizer.process(input).await().text } else Result.success("")
         } else {
-            val labelsDeferred = async { runCatching { labeler.process(input).await() }.getOrDefault(emptyList()) }
-            val facesDeferred = async { runCatching { faceDetector.process(input).await() }.getOrDefault(emptyList()) }
-            val textDeferred = async { runCatching { textRecognizer.process(input).await().text }.getOrDefault("") }
+            val labelsDeferred = async {
+                if (analyzeMl) runCatching { labeler.process(input).await() } else Result.success(emptyList())
+            }
+            val facesDeferred = async {
+                if (analyzeMl) runCatching { faceDetector.process(input).await() } else Result.success(emptyList())
+            }
+            val textDeferred = async {
+                if (analyzeOcr) runCatching { textRecognizer.process(input).await().text } else Result.success("")
+            }
 
-            labels = labelsDeferred.await()
-            faces = facesDeferred.await()
-            text = textDeferred.await()
+            labelsResult = labelsDeferred.await()
+            facesResult = facesDeferred.await()
+            textResult = textDeferred.await()
         }
 
+        labelsResult.exceptionOrNull()?.let { error ->
+            LocalDiagnostics.record(context, "ml-labeling", "Image labeling failed", error)
+        }
+        facesResult.exceptionOrNull()?.let { error ->
+            LocalDiagnostics.record(context, "ml-face-detection", "Face detection failed", error)
+        }
+        textResult.exceptionOrNull()?.let { error ->
+            LocalDiagnostics.record(context, "ml-ocr", "Text recognition failed", error)
+        }
+
+        val labels = labelsResult.getOrDefault(emptyList())
+        val faces = facesResult.getOrDefault(emptyList())
+        val text = textResult.getOrDefault("")
         val tagMap = linkedMapOf<String, MLTag>()
         labels.forEach { label ->
             val canonical = LabelMapping.map(label.text) ?: return@forEach
@@ -174,9 +275,27 @@ class MLTagger @Inject constructor(
             .trim()
             .take(Constants.OCR_MAX_TEXT_CHARS)
 
+        val mlStatus = if (!analyzeMl) {
+            IntelligenceStatus.PENDING
+        } else if (labelsResult.isSuccess && facesResult.isSuccess) {
+            IntelligenceStatus.PROCESSED
+        } else {
+            IntelligenceStatus.FAILED_RETRYABLE
+        }
+
+        val ocrStatus = if (!analyzeOcr) {
+            IntelligenceStatus.PENDING
+        } else if (textResult.isSuccess) {
+            IntelligenceStatus.PROCESSED
+        } else {
+            IntelligenceStatus.FAILED_RETRYABLE
+        }
+
         AnalysisResult(
             tags = tagMap.values.toList(),
             ocrText = normalizedOcrText,
+            mlStatus = mlStatus,
+            ocrStatus = ocrStatus,
         )
     }
 

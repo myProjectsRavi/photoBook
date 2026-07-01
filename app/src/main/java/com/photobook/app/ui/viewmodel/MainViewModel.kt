@@ -47,6 +47,7 @@ import com.photobook.app.search.utilityKind
 import com.photobook.app.ui.model.HomeFeedMode
 import com.photobook.app.ui.model.TimelineMark
 import com.photobook.app.util.Constants
+import com.photobook.app.util.PermissionUtils
 import com.photobook.app.widget.OnThisDayWidgetProvider
 import com.photobook.app.worker.ArchiveRetentionWorker
 import com.photobook.app.worker.ArchiveScanWorker
@@ -91,6 +92,7 @@ class MainViewModel @Inject constructor(
 
     data class UiState(
         val hasPhotoPermission: Boolean = false,
+        val photoAccessMode: PermissionUtils.PhotoAccessMode = PermissionUtils.PhotoAccessMode.None,
         val isIndexing: Boolean = false,
         val indexProgress: Float = 0f,
         val searchReady: Boolean = false,
@@ -107,6 +109,7 @@ class MainViewModel @Inject constructor(
         val memoryStories: List<MemoryStory> = emptyList(),
         val viewerStartIndex: Int? = null,
         val viewerPhotos: List<PhotoRecord> = emptyList(),
+        val viewerUsesVisibleWindow: Boolean = false,
         val reelsStartIndex: Int? = null,
         val reelsPhotos: List<PhotoRecord> = emptyList(),
         val storyViewerTitle: String = "",
@@ -224,8 +227,14 @@ class MainViewModel @Inject constructor(
         observeSuggestions()
     }
 
-    fun refreshPermissionStatus(granted: Boolean) {
-        uiState.update { it.copy(hasPhotoPermission = granted) }
+    fun refreshPermissionStatus(accessMode: PermissionUtils.PhotoAccessMode) {
+        val granted = accessMode != PermissionUtils.PhotoAccessMode.None
+        uiState.update {
+            it.copy(
+                hasPhotoPermission = granted,
+                photoAccessMode = accessMode,
+            )
+        }
         if (granted && !hasInitializedIndex) {
             hasInitializedIndex = true
             initializeIndex()
@@ -241,6 +250,7 @@ class MainViewModel @Inject constructor(
                 query = normalized,
                 selectedPhotoIds = emptySet(),
                 viewerStartIndex = null,
+                viewerUsesVisibleWindow = false,
                 showSuggestions = false,
             )
         }
@@ -259,6 +269,7 @@ class MainViewModel @Inject constructor(
                 query = query,
                 selectedPhotoIds = emptySet(),
                 viewerStartIndex = null,
+                viewerUsesVisibleWindow = false,
                 storyViewerPhotos = emptyList(),
                 storyViewerTitle = "",
             )
@@ -284,6 +295,7 @@ class MainViewModel @Inject constructor(
                 feedMode = mode,
                 selectedPhotoIds = emptySet(),
                 viewerStartIndex = null,
+                viewerUsesVisibleWindow = false,
             )
         }
     }
@@ -296,6 +308,7 @@ class MainViewModel @Inject constructor(
                 query = query,
                 selectedPhotoIds = emptySet(),
                 viewerStartIndex = null,
+                viewerUsesVisibleWindow = false,
                 showSuggestions = false,
             )
         }
@@ -308,6 +321,7 @@ class MainViewModel @Inject constructor(
                 query = suggestion.text,
                 selectedPhotoIds = emptySet(),
                 viewerStartIndex = null,
+                viewerUsesVisibleWindow = false,
                 showSuggestions = false,
             )
         }
@@ -332,6 +346,7 @@ class MainViewModel @Inject constructor(
                 query = "",
                 selectedPhotoIds = emptySet(),
                 viewerStartIndex = null,
+                viewerUsesVisibleWindow = false,
                 showSuggestions = focusFlow.value && it.suggestions.isNotEmpty(),
             )
         }
@@ -340,11 +355,10 @@ class MainViewModel @Inject constructor(
     fun onPhotoClicked(photo: PhotoRecord) {
         var openedViewer = false
         viewModelScope.launch {
-            val visiblePhotos = withContext(Dispatchers.Default) {
-                resolveVisiblePhotos()
+            val viewerWindow = withContext(Dispatchers.Default) {
+                resolveVisiblePhotoWindow(photo.id)
             }
-            val viewerIndex = visiblePhotos.indexOfFirst { it.id == photo.id }
-            
+
             uiState.update { state ->
                 if (state.selectedPhotoIds.isNotEmpty()) {
                     val nextSelected = state.selectedPhotoIds.toMutableSet().apply {
@@ -352,13 +366,14 @@ class MainViewModel @Inject constructor(
                     }
                     state.copy(selectedPhotoIds = nextSelected)
                 } else {
-                    if (viewerIndex < 0) {
+                    if (viewerWindow == null) {
                         state
                     } else {
                         openedViewer = true
                         state.copy(
-                            viewerStartIndex = viewerIndex,
-                            viewerPhotos = visiblePhotos,
+                            viewerStartIndex = viewerWindow.startIndex,
+                            viewerPhotos = viewerWindow.photos,
+                            viewerUsesVisibleWindow = true,
                         )
                     }
                 }
@@ -386,6 +401,7 @@ class MainViewModel @Inject constructor(
             state.copy(
                 selectedPhotoIds = nextSelected,
                 viewerStartIndex = null,
+                viewerUsesVisibleWindow = false,
             )
         }
     }
@@ -455,6 +471,7 @@ class MainViewModel @Inject constructor(
                 selectedPhotoIds = emptySet(),
                 viewerStartIndex = null,
                 viewerPhotos = emptyList(),
+                viewerUsesVisibleWindow = false,
                 showSuggestions = false,
                 showDuplicateFinder = false,
                 showArchives = false,
@@ -484,9 +501,27 @@ class MainViewModel @Inject constructor(
     }
 
     fun onViewerPageChanged(index: Int) {
-        val focusedPhotoId = uiState.value.viewerPhotos.getOrNull(index)?.id
+        val state = uiState.value
+        val focusedPhotoId = state.viewerPhotos.getOrNull(index)?.id
         if (focusedPhotoId != null) {
             runCatching { TaggingWorker.enqueueFocusedPhoto(context, focusedPhotoId) }
+        }
+        if (
+            focusedPhotoId != null &&
+            state.viewerUsesVisibleWindow &&
+            shouldRecentreViewerWindow(index, state.viewerPhotos.size)
+        ) {
+            val window = resolveVisiblePhotoWindow(focusedPhotoId)
+            if (window != null) {
+                uiState.update {
+                    it.copy(
+                        viewerStartIndex = window.startIndex,
+                        viewerPhotos = window.photos,
+                        viewerUsesVisibleWindow = true,
+                    )
+                }
+                return
+            }
         }
         uiState.update { it.copy(viewerStartIndex = index) }
     }
@@ -496,6 +531,7 @@ class MainViewModel @Inject constructor(
             it.copy(
                 viewerStartIndex = null,
                 viewerPhotos = emptyList(),
+                viewerUsesVisibleWindow = false,
             )
         }
     }
@@ -755,6 +791,7 @@ class MainViewModel @Inject constructor(
             state.copy(
                 viewerStartIndex = index,
                 viewerPhotos = group.photos,
+                viewerUsesVisibleWindow = false,
                 showDuplicateFinder = false,
             )
         }
@@ -895,6 +932,7 @@ class MainViewModel @Inject constructor(
                 archiveSelectedPhotoIds = state.archiveSelectedPhotoIds - photoIds,
                 viewerStartIndex = null,
                 viewerPhotos = emptyList(),
+                viewerUsesVisibleWindow = false,
                 duplicateGroups = state.duplicateGroups
                     .map { group ->
                         group.copy(photos = group.photos.filterNot { photo -> photo.id in photoIds })
@@ -1093,8 +1131,10 @@ class MainViewModel @Inject constructor(
                 blurScore = existing.blurScore,
                 mlTags = existing.mlTags,
                 isMlProcessed = existing.isMlProcessed,
+                mlStatus = existing.mlStatus,
                 ocrText = existing.ocrText,
                 isOcrProcessed = existing.isOcrProcessed,
+                ocrStatus = existing.ocrStatus,
             )
         }
     }
@@ -1113,6 +1153,36 @@ class MainViewModel @Inject constructor(
         if (latestVisibleResultIds.isEmpty()) return emptyList()
         val byId = photoIndex.snapshot().associateBy { record -> record.id }
         return latestVisibleResultIds.mapNotNull(byId::get)
+    }
+
+    private data class ViewerWindow(
+        val photos: List<PhotoRecord>,
+        val startIndex: Int,
+    )
+
+    private fun resolveVisiblePhotoWindow(centerPhotoId: Long): ViewerWindow? {
+        if (latestVisibleResultIds.isEmpty()) return null
+        val centerIndex = latestVisibleResultIds.indexOf(centerPhotoId)
+        if (centerIndex < 0) return null
+
+        val start = (centerIndex - VIEWER_WINDOW_RADIUS).coerceAtLeast(0)
+        val endExclusive = (centerIndex + VIEWER_WINDOW_RADIUS + 1).coerceAtMost(latestVisibleResultIds.size)
+        val windowIds = latestVisibleResultIds.subList(start, endExclusive)
+        val byId = photoIndex.snapshot().associateBy { record -> record.id }
+        val photos = windowIds.mapNotNull(byId::get)
+        val localIndex = photos.indexOfFirst { photo -> photo.id == centerPhotoId }
+        if (photos.isEmpty() || localIndex < 0) return null
+
+        return ViewerWindow(
+            photos = photos,
+            startIndex = localIndex,
+        )
+    }
+
+    private fun shouldRecentreViewerWindow(currentIndex: Int, windowSize: Int): Boolean {
+        if (windowSize <= VIEWER_WINDOW_RECENTER_THRESHOLD * 2 + 1) return false
+        return currentIndex <= VIEWER_WINDOW_RECENTER_THRESHOLD ||
+            currentIndex >= windowSize - VIEWER_WINDOW_RECENTER_THRESHOLD - 1
     }
 
     private fun maybeRefreshMemoryStories(records: List<PhotoRecord>) {
@@ -1231,6 +1301,7 @@ class MainViewModel @Inject constructor(
                 storyViewerPhotos = photos,
                 viewerStartIndex = null,
                 viewerPhotos = emptyList(),
+                viewerUsesVisibleWindow = false,
                 selectedPhotoIds = emptySet(),
             )
         }
@@ -1335,6 +1406,8 @@ class MainViewModel @Inject constructor(
     companion object {
         private const val SEARCH_PAGE_SIZE = 60
         private const val SEARCH_PREFETCH_DISTANCE = 20
+        private const val VIEWER_WINDOW_RADIUS = 50
+        private const val VIEWER_WINDOW_RECENTER_THRESHOLD = 12
         private const val RECORDS_UPDATE_DEBOUNCE_MS = 250L
         private const val MAX_DECLUTTER_CANDIDATES = 300
         private const val REELS_ENABLED_KEY = "reels_enabled_v1"

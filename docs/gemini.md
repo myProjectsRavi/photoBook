@@ -1,40 +1,56 @@
-# 🤖 Gemini Agent Guidelines for PhotoBook
+# Gemini Agent Guidelines for PhotoBook
 
-Welcome, Gemini. You are analyzing the **PhotoBook** Android application. 
+PhotoBook is a private, offline-first Android photo manager. The app must stay local, free, lightweight, and smooth on low-memory Android devices.
 
-This document provides specialized guidelines for you to understand the architecture, style, and rules when suggesting modifications or writing code for this repository.
+## Project Identity
 
----
+- Stack: Kotlin, Android SDK, Jetpack Compose, Room/FTS, Coroutines/Flow, Hilt, Paging 3, Coil, WorkManager, ML Kit Play Services, AndroidX Security Crypto, AndroidX Biometric.
+- Core principle: no accounts, no cloud dependency, no app-level internet permission, no tracking.
+- Size discipline: generated APKs <= 30 MB and release AAB <= 20 MB.
 
-## 🏛️ Project Identity
-*   **App:** PhotoBook
-*   **Stack:** Kotlin, Android SDK, Jetpack Compose, Room (FTS4), Coroutines/Flow, Dagger Hilt, Coil (image loading), ML Kit (labeling, faces, text, barcodes), WorkManager, ZXing (QR generation).
-*   **Core Principle:** 100% Offline, Zero network calls. High performance on 2GB RAM devices. APK size ~48MB.
+## Strict Directives
 
-## 🛑 Strict Directives
+1. Do not add `android.permission.INTERNET`.
+2. Do not add telemetry, analytics, cloud crash reporting, Firebase, external APIs, or remote model calls.
+3. Do not add large bundled models or heavy libraries for features Android can perform locally.
+4. Use idiomatic Kotlin, coroutines, Flow, and Hilt boundaries.
+5. Use Compose for UI.
+6. Include explicit Room migrations for schema changes.
+7. Do not swallow uncaught exceptions. Use local diagnostics, WorkManager result states, and targeted `runCatching`.
+8. Keep 2 GB RAM devices in mind: use paging, database prefiltering, sampled bitmap decoding, bounded viewer windows, and Lite performance settings.
+9. Keep destructive media actions behind Android system confirmation flows.
 
-1.  **NO INTERNET:** Never suggest adding network calls, external APIs (like Google Maps API, OpenAI API, Firebase Crashlytics), or adding the `<uses-permission android:name="android.permission.INTERNET" />`.
-2.  **Idiomatic Kotlin:** Use concise, idiomatic Kotlin. Favor `Flow` over `LiveData`. Use Coroutines for all async operations.
-3.  **Compose First:** All UI MUST be written in Jetpack Compose. Do not use XML layouts unless absolutely necessary (e.g., specific Android manifest or theme requirements).
-4.  **Database Changes:** Any changes to `PhotoEntity` or `PhotoFtsEntity` MUST be accompanied by a database migration strategy in `PhotoBookDatabase.kt`.
-5.  **MVVM Architecture:** Respect the boundaries. Views (`ui/screen`) observe StateFlows from ViewModels (`ui/viewmodel`). ViewModels interact with Repositories/Use Cases. Data classes reside in `data/model`.
-6.  **Crash Resilience:** The app uses a global uncaught exception handler. Wrap risky code in `runCatching`. Never allow unhandled exceptions to force-close the app.
-7.  **Low-RAM Awareness:** Use `ActivityManager.isLowRamDevice` to adapt cache sizes and thumbnail resolutions. Coil uses 8% heap on low-RAM, 15% otherwise.
+## Key Files
 
-## 📁 Key Files to Know
+- `app/src/main/AndroidManifest.xml` - privacy-sensitive permissions. No internet permission.
+- `app/src/main/java/com/photobook/app/PhotoBookApplication.kt` - app startup and local crash diagnostics.
+- `app/src/main/java/com/photobook/app/data/db/PhotoBookDatabase.kt` - Room schema and migrations.
+- `app/src/main/java/com/photobook/app/ui/viewmodel/MainViewModel.kt` - main state owner.
+- `app/src/main/java/com/photobook/app/ui/screen/MainScreen.kt` - primary Compose screen.
+- `app/src/main/java/com/photobook/app/ui/screen/PhotoViewerScreen.kt` - full-screen viewer and photo actions.
+- `app/src/main/java/com/photobook/app/search/` - local query parsing, filtering, and ranking.
+- `app/src/main/java/com/photobook/app/ml/TaggingWorker.kt` - background ML/OCR indexing.
+- `app/src/main/java/com/photobook/app/feature/archive/` - Archives cleanup candidate detection.
+- `app/src/main/java/com/photobook/app/feature/pdf/PdfExportService.kt` - offline photo-to-PDF export.
+- `app/src/main/java/com/photobook/app/feature/qrshare/` - compressed offline QR preview transfer.
+- `app/src/main/java/com/photobook/app/feature/vault/VaultService.kt` - encrypted vault storage.
 
-*   `app/src/main/java/com/photobook/app/data/db/PhotoBookDatabase.kt` - The source of truth for local data.
-*   `app/src/main/java/com/photobook/app/search/QueryParser.kt` - Complex NLP and tokenization logic for our hybrid search engine.
-*   `app/src/main/java/com/photobook/app/ui/screen/MainScreen.kt` - The primary entry point for the Jetpack Compose UI (tabs: Photos, Screenshots, Search).
-*   `app/src/main/java/com/photobook/app/ui/screen/PhotoViewerScreen.kt` - Full-screen viewer with 6x zoom, gesture handling, prominent share button.
-*   `app/src/main/java/com/photobook/app/ui/screen/PhotoReelsScreen.kt` - Instagram-style vertical pager for immersive photo browsing.
-*   `app/src/main/java/com/photobook/app/ml/TaggingWorker.kt` - Background ML indexing via WorkManager expedited work (no battery constraints on expedited).
-*   `app/src/main/java/com/photobook/app/feature/qrshare/QrShareEncoder.kt` - Single-frame QR sharing (`PB1|` protocol, ≤2KB compressed payload).
+## Current Behavior to Preserve
 
-## 💬 Response Format
+- Android 14 selected-photo access is supported and surfaced in UI as limited library mode.
+- ML/OCR processing uses explicit status fields and must not mark unavailable-model empty results as processed.
+- Search ranking improves order but must not silently broaden or shrink eligibility.
+- Smart Albums are virtual local filters/actions over existing metadata. Do not add persistent album storage for default Smart Albums.
+- Full-screen viewer opens a bounded photo window around the active item for large libraries.
+- Vault UI is active. Open, add, export, and delete operations require biometric or device credential authentication; vault UI also uses `FLAG_SECURE` and clears state on background.
+- Archives detects likely temporary transaction screenshots locally, but trash and delete still require Android confirmation.
+- Share as PDF uses Android `PdfDocument`, FileProvider cache output, EXIF orientation handling, and sampled one-bitmap-at-a-time rendering.
+- QR transfer is a compressed preview/small-transfer feature with single-frame and animated chunked modes, hash verification, estimated scan time, and hard size limits. Do not describe it as universal full-quality photo transfer.
 
-*   When providing code snippets, always include the relevant imports.
-*   If you modify a Compose file, ensure you consider State hoisting and recomposition performance.
-*   Always be concise and direct. We are optimizing for speed and correctness.
-*   The Vault UI has been removed. Do not re-add vault-related buttons or screens.
-*   "Utilities" tab is now labeled "Screenshots" in the UI.
+## Verification
+
+Use focused tests while iterating, then run the full gate before release or final readiness claims:
+
+```bash
+./gradlew testDebugUnitTest assembleDebug bundleRelease verifyApkSize verifyReleaseBundleSize lintDebug
+```

@@ -7,6 +7,7 @@ import com.photobook.app.data.db.PhotoDao
 import com.photobook.app.data.db.toFtsEntity
 import com.photobook.app.data.db.toPhotoEntity
 import com.photobook.app.data.db.toPhotoRecord
+import com.photobook.app.data.model.IntelligenceStatus
 import com.photobook.app.data.model.MLTag
 import com.photobook.app.data.model.PhotoRecord
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -231,9 +232,21 @@ class IndexPersistence @Inject constructor(
             blurScore = if (isNull("blurScore")) null else optDouble("blurScore"),
             mlTags = tags,
             isMlProcessed = optBoolean("isMlProcessed", tags.isNotEmpty()),
+            mlStatus = IntelligenceStatus.fromStored(
+                optNullableString("mlStatus"),
+                optBoolean("isMlProcessed", tags.isNotEmpty()),
+            ),
             ocrText = optString("ocrText", ""),
             isOcrProcessed = optBoolean("isOcrProcessed", false),
+            ocrStatus = IntelligenceStatus.fromStored(
+                optNullableString("ocrStatus"),
+                optBoolean("isOcrProcessed", false),
+            ),
         )
+    }
+
+    private fun JSONObject.optNullableString(name: String): String? {
+        return if (has(name) && !isNull(name)) optString(name) else null
     }
 
     private fun JSONObject.optStringOrNull(name: String): String? {

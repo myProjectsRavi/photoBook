@@ -13,11 +13,13 @@ import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import com.photobook.app.data.model.IntelligenceStatus
 import com.photobook.app.data.index.IndexPersistence
 import com.photobook.app.data.index.PhotoIndex
 import com.photobook.app.feature.duplicates.BlurScoreComputer
 import com.photobook.app.feature.duplicates.PerceptualHashComputer
 import com.photobook.app.util.Constants
+import com.photobook.app.util.LocalDiagnostics
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.delay
@@ -34,6 +36,22 @@ class TaggingWorker @AssistedInject constructor(
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
+        return runCatching {
+            runTaggingWork()
+        }.getOrElse { error ->
+            LocalDiagnostics.record(
+                context = applicationContext,
+                area = "tagging-worker",
+                message = "Unhandled tagging worker failure",
+                throwable = error,
+            )
+            if (runAttemptCount < MAX_RETRY_ATTEMPTS) Result.retry() else Result.failure(
+                workDataOf("reason" to "tagging_worker_failure"),
+            )
+        }
+    }
+
+    private suspend fun runTaggingWork(): Result {
         if (isBatteryTooLow()) {
             return Result.retry()
         }
@@ -53,18 +71,42 @@ class TaggingWorker @AssistedInject constructor(
         photos.forEachIndexed { index, photo ->
             if (isStopped) return Result.retry()
 
-            val needsMl = !photo.isMlProcessed
-            val needsOcr = !photo.isOcrProcessed
+            val needsMl = photo.mlStatus.shouldProcess
+            val needsOcr = photo.ocrStatus.shouldProcess
             val needsPerceptualHash = photo.perceptualHash == null
             val needsBlurScore = photo.blurScore == null
 
             if (needsMl || needsOcr || needsPerceptualHash || needsBlurScore) {
                 val bitmap = mlTagger.loadIntelligenceBitmap(photo.uriString)
-                
-                val analysis = if (bitmap != null && (needsMl || needsOcr)) {
-                    mlTagger.analyzeBitmap(bitmap, photo.isFrontCamera)
-                } else {
-                    null
+
+                val modelAvailability = if (bitmap != null && (needsMl || needsOcr)) {
+                    mlTagger.ensureModelsReady(needsMl = needsMl, needsOcr = needsOcr)
+                } else null
+
+                val analyzeMl = needsMl && modelAvailability?.mlReady == true
+                val analyzeOcr = needsOcr && modelAvailability?.ocrReady == true
+                val analysis = if (bitmap != null && (analyzeMl || analyzeOcr)) {
+                    mlTagger.analyzeBitmap(
+                        bitmap = bitmap,
+                        isFrontCamera = photo.isFrontCamera,
+                        analyzeMl = analyzeMl,
+                        analyzeOcr = analyzeOcr,
+                    )
+                } else null
+
+                val mlStatus = when {
+                    !needsMl -> null
+                    modelAvailability?.mlReady == false -> IntelligenceStatus.MODEL_PREPARING
+                    bitmap == null -> IntelligenceStatus.FAILED_RETRYABLE
+                    analyzeMl -> analysis?.mlStatus ?: IntelligenceStatus.FAILED_RETRYABLE
+                    else -> null
+                }
+                val ocrStatus = when {
+                    !needsOcr -> null
+                    modelAvailability?.ocrReady == false -> IntelligenceStatus.MODEL_PREPARING
+                    bitmap == null -> IntelligenceStatus.FAILED_RETRYABLE
+                    analyzeOcr -> analysis?.ocrStatus ?: IntelligenceStatus.FAILED_RETRYABLE
+                    else -> null
                 }
                 val perceptualHash = if (bitmap != null && needsPerceptualHash) {
                     perceptualHashComputer.computeFromBitmap(bitmap)
@@ -82,9 +124,11 @@ class TaggingWorker @AssistedInject constructor(
                 pendingIndexUpdates += PhotoIndex.PhotoIntelligenceUpdate(
                     id = photo.id,
                     tags = if (needsMl) analysis?.tags else null,
-                    isMlProcessed = if (needsMl) true else null,
+                    isMlProcessed = mlStatus?.let { it == IntelligenceStatus.PROCESSED },
+                    mlStatus = mlStatus,
                     ocrText = if (needsOcr) analysis?.ocrText else null,
-                    isOcrProcessed = if (needsOcr) true else null,
+                    isOcrProcessed = ocrStatus?.let { it == IntelligenceStatus.PROCESSED },
+                    ocrStatus = ocrStatus,
                     perceptualHash = perceptualHash,
                     blurScore = blurScore,
                 )
@@ -126,6 +170,7 @@ class TaggingWorker @AssistedInject constructor(
     companion object {
         private const val KEY_TARGET_PHOTO_IDS = "target_photo_ids"
         private const val PRIORITY_WORK_NAME_PREFIX = "photobook_ml_worker_priority"
+        private const val MAX_RETRY_ATTEMPTS = 3
 
         fun enqueueLibraryMaintenance(context: Context) {
             val constraints = Constraints.Builder()

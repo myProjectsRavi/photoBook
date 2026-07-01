@@ -48,6 +48,8 @@ class TokenClassifier @Inject constructor(
     private val propertyKeywords = setOf(
         "large", "small", "wide", "panorama", "portrait", "landscape", "square", "hdr",
         "gif", "png", "jpg", "jpeg", "raw", "favorite", "favorites", "starred",
+        "blurry", "blurred", "text", "with_text", "with_location", "without_location",
+        "receipt", "receipts", "payment", "payments",
     )
 
     private val sourceKeywords = setOf(

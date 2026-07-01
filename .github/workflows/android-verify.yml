@@ -1,0 +1,29 @@
+name: Android Verification
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "feature/**"
+      - "codex/**"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Verify app
+        run: |
+          chmod +x ./gradlew
+          ./gradlew testDebugUnitTest assembleDebug bundleRelease verifyApkSize verifyReleaseBundleSize lintDebug

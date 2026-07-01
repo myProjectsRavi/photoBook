@@ -1,6 +1,7 @@
 package com.photobook.app.data.index
 
 import com.photobook.app.data.geo.OfflineGeocoder
+import com.photobook.app.data.model.IntelligenceStatus
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.data.model.RawPhotoData
 import com.photobook.app.data.source.ExifExtractor
@@ -76,8 +77,10 @@ class IndexBuilder @Inject constructor(
             isHdr = exif.isHdr,
             isFavorite = false,
             isMlProcessed = false,
+            mlStatus = IntelligenceStatus.PENDING,
             ocrText = "",
             isOcrProcessed = false,
+            ocrStatus = IntelligenceStatus.PENDING,
         )
     }
 }

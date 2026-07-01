@@ -95,7 +95,7 @@ fun QrShareSheet(
         val ready = qrResult as? QrPacketResult.Ready ?: return@LaunchedEffect
         if (ready.packet.frames.size <= 1) return@LaunchedEffect
         while (true) {
-            delay(220)
+            delay(QR_FRAME_INTERVAL_MS.toLong())
             frameIndex = (frameIndex + 1) % ready.packet.frames.size
         }
     }
@@ -168,11 +168,19 @@ fun QrShareSheet(
                         )
                     }
                     Text(
-                        text = stringResource(
-                            R.string.viewer_qr_scan_hint,
-                            result.packet.byteSize / 1024,
-                            result.packet.totalChunks,
-                        ),
+                        text = if (result.packet.frames.size == 1) {
+                            stringResource(
+                                R.string.viewer_qr_single_hint,
+                                result.packet.byteSize.toKilobytesCeil(),
+                            )
+                        } else {
+                            stringResource(
+                                R.string.viewer_qr_scan_hint,
+                                result.packet.byteSize.toKilobytesCeil(),
+                                result.packet.totalChunks,
+                                estimatedScanSeconds(result.packet.frames.size),
+                            )
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -193,3 +201,16 @@ private sealed interface QrPacketResult {
         val packet: com.photobook.app.feature.qrshare.QrSharePacket,
     ) : QrPacketResult
 }
+
+private fun estimatedScanSeconds(frameCount: Int): Int {
+    if (frameCount <= 1) return 1
+    val cycleMs = frameCount * QR_FRAME_INTERVAL_MS
+    val twoPassScanMs = cycleMs * 2
+    return (twoPassScanMs / 1000).coerceAtLeast(2)
+}
+
+private fun Int.toKilobytesCeil(): Int {
+    return ((coerceAtLeast(1) + 1023) / 1024).coerceAtLeast(1)
+}
+
+private const val QR_FRAME_INTERVAL_MS = 220

@@ -37,11 +37,13 @@ PhotoBook solves this securely using an **Offline Geocoder** (`OfflineGeocoder.k
 *   **Database:** We use Android Room. The data stored in the local SQLite file (`PhotoBookDatabase`) is strictly isolated inside the app's sandboxed `data/data/com.photobook.app/` directory.
 *   **Media Access:** We use the `MediaStore` API with `READ_MEDIA_IMAGES` (API 33+) or `READ_EXTERNAL_STORAGE`. We index the URIs. We do not duplicate or move your actual image files, saving space and preserving file integrity.
 
-## 5. 🔗 P2P QR Sharing
+## 5. 🔗 Offline QR Transfer
 
-The `qrshare` feature (`QrTransferProtocol.kt`) allows users to share high-fidelity text or image payloads directly with another user nearby using their camera.
+The `qrshare` feature (`QrTransferProtocol.kt`) allows users to share a compressed private photo preview directly with another user nearby using their camera.
 *   Data is encoded using `QrShareEncoder.kt`.
-*   Payloads are securely chunked and hashed (`QrPayloadHash.kt`).
+*   Tiny previews can use a single QR frame; larger previews use animated chunked frames.
+*   Payloads are chunked and verified with a local hash (`QrPayloadHash.kt`).
+*   The UI shows transfer size, chunk count, estimated scan time, and a hard max-size limit.
 *   Transfer happens purely via visual optical data transfer—no Bluetooth, WiFi-Direct, or Network required.
 
 ---

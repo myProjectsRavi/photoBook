@@ -33,8 +33,18 @@ data class PhotoRecord(
     val blurScore: Double? = null,
     val mlTags: List<MLTag> = emptyList(),
     val isMlProcessed: Boolean = false,
+    val mlStatus: IntelligenceStatus = if (isMlProcessed) {
+        IntelligenceStatus.PROCESSED
+    } else {
+        IntelligenceStatus.PENDING
+    },
     val ocrText: String = "",
     val isOcrProcessed: Boolean = false,
+    val ocrStatus: IntelligenceStatus = if (isOcrProcessed) {
+        IntelligenceStatus.PROCESSED
+    } else {
+        IntelligenceStatus.PENDING
+    },
 ) {
     val aspectRatio: Float
         get() = if (height == 0) 1f else width.toFloat() / height.toFloat()

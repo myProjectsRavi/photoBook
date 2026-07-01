@@ -46,6 +46,7 @@ object AppModule {
                 MIGRATION_6_7,
                 MIGRATION_7_8,
                 MIGRATION_8_9,
+                MIGRATION_9_10,
             )
             .build()
     }
@@ -237,6 +238,15 @@ object AppModule {
                 "CREATE INDEX IF NOT EXISTS index_archive_decisions_retentionDays " +
                     "ON archive_decisions(retentionDays)",
             )
+        }
+    }
+
+    private val MIGRATION_9_10 = object : Migration(9, 10) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE photos ADD COLUMN mlStatus TEXT NOT NULL DEFAULT 'PENDING'")
+            db.execSQL("ALTER TABLE photos ADD COLUMN ocrStatus TEXT NOT NULL DEFAULT 'PENDING'")
+            db.execSQL("UPDATE photos SET mlStatus = 'PROCESSED' WHERE isMlProcessed = 1")
+            db.execSQL("UPDATE photos SET ocrStatus = 'PROCESSED' WHERE isOcrProcessed = 1")
         }
     }
 

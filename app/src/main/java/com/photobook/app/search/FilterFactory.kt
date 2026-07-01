@@ -124,6 +124,29 @@ class FilterFactory private constructor(
             }
 
             "favorite", "favorites", "starred" -> { photo -> photo.isFavorite }
+            "blurry", "blurred" -> { photo -> (photo.blurScore ?: Double.MAX_VALUE) <= BLUR_VARIANCE_THRESHOLD }
+            "text", "with_text" -> { photo -> photo.ocrText.isNotBlank() }
+            "with_location" -> { photo -> photo.latitude != null && photo.longitude != null }
+            "without_location" -> { photo -> photo.latitude == null || photo.longitude == null }
+            "receipt", "receipts" -> { photo ->
+                photo.ocrText.contains("receipt", ignoreCase = true) ||
+                    photo.fileName.contains("receipt", ignoreCase = true) ||
+                    photo.folderName.contains("receipt", ignoreCase = true) ||
+                    photo.hasMlTag("document", 0.60f)
+            }
+            "payment", "payments" -> { photo ->
+                val text = buildString {
+                    append(photo.ocrText)
+                    append(' ')
+                    append(photo.fileName)
+                    append(' ')
+                    append(photo.folderName)
+                    append(' ')
+                    append(photo.folderPath)
+                }.lowercase()
+                photo.matchesSource(PhotoSource.Screenshots) &&
+                    PAYMENT_CUES.any { cue -> text.contains(cue) }
+            }
 
             else -> { _ -> true }
         }
@@ -203,5 +226,20 @@ class FilterFactory private constructor(
             cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
             sin(dLon / 2).pow(2)
         return 2 * 6371.0 * atan2(sqrt(a), sqrt(1 - a))
+    }
+
+    private companion object {
+        private const val BLUR_VARIANCE_THRESHOLD = 95.0
+        private val PAYMENT_CUES = listOf(
+            "upi",
+            "phonepe",
+            "gpay",
+            "google pay",
+            "paytm",
+            "bhim",
+            "transaction",
+            "paid",
+            "payment",
+        )
     }
 }

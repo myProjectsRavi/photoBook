@@ -6,8 +6,10 @@ import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import coil.Coil
 import coil.ImageLoader
+import com.photobook.app.util.LocalDiagnostics
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
+import kotlin.system.exitProcess
 
 @HiltAndroidApp
 class PhotoBookApplication : Application(), Configuration.Provider {
@@ -22,18 +24,21 @@ class PhotoBookApplication : Application(), Configuration.Provider {
         super.onCreate()
         Coil.setImageLoader(imageLoader)
 
-        // Install a global uncaught exception handler that prevents the app from closing
-        // on non-fatal background exceptions (e.g. background tasks or image prefetching),
-        // but always crashes properly on main thread errors to prevent permanent ANR freezes.
+        // Keep crash diagnostics local-only, then delegate to Android's normal crash path.
+        // Swallowing background crashes hides indexing/database/file bugs and makes failures
+        // impossible to repair without cloud crash reporting.
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            val isMainThread = thread == android.os.Looper.getMainLooper().thread
-            val isFatal = throwable is VirtualMachineError || throwable is LinkageError || throwable is AssertionError
-            if (isMainThread || isFatal) {
-                defaultHandler?.uncaughtException(thread, throwable)
+            LocalDiagnostics.record(
+                context = this,
+                area = "uncaught-${thread.name}",
+                message = "Unhandled exception",
+                throwable = throwable,
+            )
+            if (defaultHandler != null) {
+                defaultHandler.uncaughtException(thread, throwable)
             } else {
-                // Log silently and attempt to continue background execution
-                android.util.Log.e("PhotoBook", "Uncaught non-fatal exception on background thread ${thread.name}", throwable)
+                exitProcess(10)
             }
         }
     }

@@ -16,6 +16,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
+import androidx.compose.material.icons.automirrored.filled.TextSnippet
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -58,6 +61,8 @@ private val GlassBorder = Color(0xF2FFFFFF)
 private val AccentIndigo = Color(0xFF4F46E5)
 private val AccentPink = Color(0xFFEC4899)
 private val AccentViolet = Color(0xFF8B5CF6)
+private val AccentTeal = Color(0xFF0F766E)
+private val AccentAmber = Color(0xFFB45309)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,6 +84,7 @@ fun MainScreen(
     showDuplicateFinder: Boolean,
     archiveCandidateCount: Int,
     archiveDueDeleteCount: Int,
+    limitedPhotoAccess: Boolean,
     onQueryChange: (String) -> Unit,
     onSearchSubmitted: () -> Unit,
     onSearchFocusChanged: (Boolean) -> Unit,
@@ -90,11 +96,14 @@ fun MainScreen(
     onShareSelected: (Set<Long>) -> Unit,
     onMoveSelectedToTrash: (Set<Long>) -> Unit,
     onCreatePdfSelected: (Set<Long>) -> Unit,
+    onAddSelectedToVault: (Set<Long>) -> Unit,
     onCopyTextFromPhoto: (Long) -> Unit,
     onClearSelection: () -> Unit,
     onPhotoClick: (PhotoRecord) -> Unit,
     onPhotoLongClick: (PhotoRecord) -> Unit,
     onOpenTrash: () -> Unit,
+    onOpenVault: () -> Unit,
+    onManagePhotoAccess: () -> Unit,
     onOpenArchives: () -> Unit,
     onSourceSelected: (PhotoSource) -> Unit,
     onOpenDuplicateFinder: () -> Unit,
@@ -105,6 +114,37 @@ fun MainScreen(
     onMemoryStorySelected: (MemoryStory) -> Unit,
 ) {
     val isSelectionMode = selectedPhotoIds.isNotEmpty()
+    val smartAlbums = remember {
+        listOf(
+            SmartAlbum.Search("Screenshots", "source:screenshots", Icons.Default.Image, AccentIndigo),
+            SmartAlbum.Search("Receipts", "receipts", Icons.AutoMirrored.Filled.ReceiptLong, AccentAmber),
+            SmartAlbum.Search("Documents", "document", Icons.Default.Description, Color(0xFF475569)),
+            SmartAlbum.Archives("Payments", Icons.Default.Payments, AccentTeal),
+            SmartAlbum.Search("Food", "food", Icons.Default.Restaurant, Color(0xFFBE123C)),
+            SmartAlbum.Search("Selfies", "selfie", Icons.Default.Face, AccentPink),
+            SmartAlbum.Search("Groups", "people", Icons.Default.Groups, Color(0xFF7C3AED)),
+            SmartAlbum.Search("Blurry", "blurry", Icons.Default.BlurOn, Color(0xFF64748B)),
+            SmartAlbum.Storage("Duplicates", Icons.Default.ContentCopy, AccentIndigo),
+            SmartAlbum.Search("Large files", "large", Icons.Default.SdStorage, AccentViolet),
+            SmartAlbum.Search("WhatsApp", "source:whatsapp", Icons.AutoMirrored.Filled.Chat, Color(0xFF15803D)),
+            SmartAlbum.Search("Camera", "source:camera", Icons.Default.CameraAlt, Color(0xFF0369A1)),
+            SmartAlbum.Search("Downloads", "source:downloads", Icons.Default.Download, Color(0xFF7C2D12)),
+            SmartAlbum.Search("Text", "with_text", Icons.AutoMirrored.Filled.TextSnippet, Color(0xFF4338CA)),
+            SmartAlbum.Search("With location", "with_location", Icons.Default.LocationOn, Color(0xFF0E7490)),
+            SmartAlbum.Search("No location", "without_location", Icons.Default.LocationOff, Color(0xFF9F1239)),
+        )
+    }
+
+    fun openSmartAlbum(album: SmartAlbum) {
+        when (album) {
+            is SmartAlbum.Search -> {
+                onQueryChange(album.query)
+                onSearchSubmitted()
+            }
+            is SmartAlbum.Archives -> onOpenArchives()
+            is SmartAlbum.Storage -> onOpenDuplicateFinder()
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -292,6 +332,14 @@ fun MainScreen(
                         modifier = Modifier.width(76.dp),
                     )
                     RefinedActionButton(
+                        icon = Icons.Default.Lock,
+                        label = stringResource(R.string.vault_short_action),
+                        onClick = onOpenVault,
+                        color = Color(0xFF7C2D12),
+                        enabled = searchReady && !isSelectionMode,
+                        modifier = Modifier.width(76.dp),
+                    )
+                    RefinedActionButton(
                         icon = Icons.Default.Delete,
                         label = "Trash",
                         onClick = onOpenTrash,
@@ -301,9 +349,38 @@ fun MainScreen(
                     )
                 }
 
+                if (limitedPhotoAccess) {
+                    Spacer(modifier = Modifier.height(14.dp))
+                    LimitedPhotoAccessBanner(onManagePhotoAccess = onManagePhotoAccess)
+                }
+
                 Spacer(modifier = Modifier.height(20.dp))
 
-                // Source Chips
+                Text(
+                    text = stringResource(R.string.smart_albums_title),
+                    style = MaterialTheme.typography.labelLarge.copy(
+                        fontWeight = FontWeight.Black,
+                        color = Color(0xFF334155),
+                    ),
+                    modifier = Modifier.padding(start = 2.dp, bottom = 8.dp),
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    smartAlbums.forEach { album ->
+                        SmartAlbumChip(
+                            album = album,
+                            enabled = searchReady && !isSelectionMode,
+                            onClick = { openSmartAlbum(album) },
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -402,6 +479,9 @@ fun MainScreen(
                         IconButton(onClick = { onShareSelected(selectedPhotoIds) }) {
                             Icon(Icons.Default.Share, contentDescription = stringResource(R.string.share_selected))
                         }
+                        IconButton(onClick = { onAddSelectedToVault(selectedPhotoIds) }) {
+                            Icon(Icons.Default.Lock, contentDescription = stringResource(R.string.vault_add_selected))
+                        }
                         IconButton(
                             onClick = { onMoveSelectedToTrash(selectedPhotoIds) },
                             colors = IconButtonDefaults.iconButtonColors(contentColor = Color.Red),
@@ -420,6 +500,67 @@ fun MainScreen(
                 onDismiss = onDismissDuplicateFinder,
                 onRefresh = onRefreshDuplicates,
                 onPhotoClick = onDuplicatePhotoClick,
+            )
+        }
+    }
+}
+
+private sealed class SmartAlbum(
+    val label: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val color: Color,
+) {
+    class Search(
+        label: String,
+        val query: String,
+        icon: androidx.compose.ui.graphics.vector.ImageVector,
+        color: Color,
+    ) : SmartAlbum(label, icon, color)
+
+    class Archives(
+        label: String,
+        icon: androidx.compose.ui.graphics.vector.ImageVector,
+        color: Color,
+    ) : SmartAlbum(label, icon, color)
+
+    class Storage(
+        label: String,
+        icon: androidx.compose.ui.graphics.vector.ImageVector,
+        color: Color,
+    ) : SmartAlbum(label, icon, color)
+}
+
+@Composable
+private fun SmartAlbumChip(
+    album: SmartAlbum,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        color = Color.White.copy(alpha = 0.74f),
+        shape = RoundedCornerShape(16.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, album.color.copy(alpha = 0.20f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            Icon(
+                imageVector = album.icon,
+                contentDescription = null,
+                tint = album.color,
+                modifier = Modifier.size(18.dp),
+            )
+            Text(
+                text = album.label,
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF334155),
+                ),
+                maxLines = 1,
             )
         }
     }
@@ -500,6 +641,49 @@ private fun RefinedGlassChip(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
         )
+    }
+}
+
+@Composable
+private fun LimitedPhotoAccessBanner(
+    onManagePhotoAccess: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = Color.White.copy(alpha = 0.76f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorder),
+        tonalElevation = 1.dp,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Default.PhotoLibrary,
+                contentDescription = null,
+                tint = AccentIndigo,
+                modifier = Modifier.size(22.dp),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.limited_access_title),
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Black),
+                    color = Color(0xFF111827),
+                )
+                Text(
+                    text = stringResource(R.string.limited_access_subtitle),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF4B5563),
+                )
+            }
+            TextButton(onClick = onManagePhotoAccess) {
+                Text(text = stringResource(R.string.limited_access_action))
+            }
+        }
     }
 }
 
