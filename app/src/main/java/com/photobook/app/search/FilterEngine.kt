@@ -9,7 +9,15 @@ class FilterEngine @Inject constructor(
     private val queryParser: QueryParser,
     private val tokenClassifier: TokenClassifier,
     private val filterFactory: FilterFactory,
+    private val searchRanker: SearchRanker,
 ) {
+
+    constructor(
+        index: PhotoIndex,
+        queryParser: QueryParser,
+        tokenClassifier: TokenClassifier,
+        filterFactory: FilterFactory,
+    ) : this(index, queryParser, tokenClassifier, filterFactory, SearchRanker())
 
     data class SearchResult(
         val results: List<PhotoRecord>,
@@ -47,12 +55,12 @@ class FilterEngine @Inject constructor(
             records.asSequence().filter { photo -> filters.all { it(photo) } }.toList()
         }
 
-        val sortAscending = tokens.any { it is TemporalToken && it.keyword == "oldest" }
-        val sorted = if (sortAscending) {
-            filtered.sortedBy { it.dateAdded }
-        } else {
-            filtered.sortedByDescending { it.dateAdded }
-        }
+        val sorted = searchRanker.rank(
+            records = filtered,
+            tokens = tokens,
+            normalizedQuery = normalized,
+            context = context,
+        )
 
         val finalResults = if (tokens.any { it is TemporalToken && it.keyword == "recent" }) {
             sorted.take(50)

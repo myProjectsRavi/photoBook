@@ -1,6 +1,7 @@
 package com.photobook.app.data.index
 
 import com.photobook.app.data.model.MLTag
+import com.photobook.app.data.model.IntelligenceStatus
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.ml.LabelMapping
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -51,13 +52,23 @@ class PhotoIndex @Inject constructor() {
         id: Long,
         tags: List<MLTag>? = null,
         isMlProcessed: Boolean? = null,
+        mlStatus: IntelligenceStatus? = null,
         ocrText: String? = null,
         isOcrProcessed: Boolean? = null,
+        ocrStatus: IntelligenceStatus? = null,
         perceptualHash: Long? = null,
         blurScore: Double? = null,
     ): PhotoRecord? {
         return updatePhotosIntelligence(listOf(PhotoIntelligenceUpdate(
-            id, tags, isMlProcessed, ocrText, isOcrProcessed, perceptualHash, blurScore
+            id = id,
+            tags = tags,
+            isMlProcessed = isMlProcessed,
+            mlStatus = mlStatus,
+            ocrText = ocrText,
+            isOcrProcessed = isOcrProcessed,
+            ocrStatus = ocrStatus,
+            perceptualHash = perceptualHash,
+            blurScore = blurScore,
         ))).firstOrNull()
     }
 
@@ -75,8 +86,10 @@ class PhotoIndex @Inject constructor() {
                 val nextRecord = record.copy(
                     mlTags = nextTags,
                     isMlProcessed = update.isMlProcessed ?: record.isMlProcessed,
+                    mlStatus = update.mlStatus ?: record.mlStatus,
                     ocrText = update.ocrText ?: record.ocrText,
                     isOcrProcessed = update.isOcrProcessed ?: record.isOcrProcessed,
+                    ocrStatus = update.ocrStatus ?: record.ocrStatus,
                     perceptualHash = update.perceptualHash ?: record.perceptualHash,
                     blurScore = update.blurScore ?: record.blurScore,
                 )
@@ -225,8 +238,10 @@ class PhotoIndex @Inject constructor() {
         val id: Long,
         val tags: List<MLTag>? = null,
         val isMlProcessed: Boolean? = null,
+        val mlStatus: IntelligenceStatus? = null,
         val ocrText: String? = null,
         val isOcrProcessed: Boolean? = null,
+        val ocrStatus: IntelligenceStatus? = null,
         val perceptualHash: Long? = null,
         val blurScore: Double? = null,
     )

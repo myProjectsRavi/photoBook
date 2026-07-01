@@ -8,6 +8,12 @@ import androidx.core.content.ContextCompat
 
 object PermissionUtils {
 
+    enum class PhotoAccessMode {
+        None,
+        Limited,
+        Full,
+    }
+
     fun requiredPermissions(): List<String> {
         val permissions = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -25,13 +31,24 @@ object PermissionUtils {
     }
 
     fun hasPhotoPermissions(context: Context): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            hasPermission(context, Manifest.permission.READ_MEDIA_IMAGES) ||
-                hasPermission(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            hasPermission(context, Manifest.permission.READ_MEDIA_IMAGES)
-        } else {
-            hasPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE)
+        return photoAccessMode(context) != PhotoAccessMode.None
+    }
+
+    fun photoAccessMode(context: Context): PhotoAccessMode {
+        return when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+                hasPermission(context, Manifest.permission.READ_MEDIA_IMAGES) -> PhotoAccessMode.Full
+
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+                hasPermission(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) -> PhotoAccessMode.Limited
+
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                hasPermission(context, Manifest.permission.READ_MEDIA_IMAGES) -> PhotoAccessMode.Full
+
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU &&
+                hasPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) -> PhotoAccessMode.Full
+
+            else -> PhotoAccessMode.None
         }
     }
 

@@ -165,6 +165,49 @@ class FilterEngineTest {
         assertThat(result.results.first().id).isEqualTo(1L)
     }
 
+    @Test
+    fun ranking_prioritizesExactOcrPhraseWithoutChangingEligibility() = runTest {
+        val index = PhotoIndex()
+        val now = 1_700_000_000_000L
+        val records = listOf(
+            samplePhoto(
+                id = 1,
+                year = 2024,
+                month = 3,
+                folderPath = "/storage/emulated/0/Download",
+                folderName = "download",
+                ocrText = "paid from zomato by card",
+                dateAdded = now - 30_000L,
+            ),
+            samplePhoto(
+                id = 2,
+                year = 2024,
+                month = 3,
+                folderPath = "/storage/emulated/0/Pictures/Screenshots",
+                folderName = "screenshots",
+                ocrText = "zomato paid march order total",
+                dateAdded = now - 10_000_000L,
+            ),
+        )
+        index.setRecords(records)
+
+        val engine = FilterEngine(
+            index = index,
+            queryParser = QueryParser(),
+            tokenClassifier = TokenClassifier(index),
+            filterFactory = FilterFactory(),
+        )
+
+        val result = engine.search(
+            query = "zomato paid march",
+            records = records,
+            context = SearchContext(nowMillis = now),
+        )
+
+        assertThat(result.results.map { it.id }).containsExactly(2L, 1L).inOrder()
+        assertThat(result.results.map { it.id }.toSet()).isEqualTo(records.map { it.id }.toSet())
+    }
+
     private fun samplePhoto(
         id: Long,
         year: Int,
@@ -175,13 +218,14 @@ class FilterEngineTest {
         mlTags: List<MLTag> = emptyList(),
         ocrText: String = "",
         isFavorite: Boolean = false,
+        dateAdded: Long = System.currentTimeMillis(),
     ): PhotoRecord {
         return PhotoRecord(
             id = id,
             uriString = "content://$id",
             filePath = "$folderPath/$id.jpg",
             fileName = "$id.jpg",
-            dateAdded = System.currentTimeMillis(),
+            dateAdded = dateAdded,
             year = year,
             month = month,
             dayOfMonth = 1,

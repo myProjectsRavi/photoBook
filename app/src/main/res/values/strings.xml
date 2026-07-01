@@ -3,6 +3,9 @@
     <string name="search_placeholder">Search... try &quot;today&quot; or &quot;selfie&quot;</string>
     <string name="allow_photo_access">Allow Photo Access</string>
     <string name="permission_message">Allow photo access so PhotoBook can show only your on-device results. Nothing is uploaded.</string>
+    <string name="limited_access_title">Limited library mode</string>
+    <string name="limited_access_subtitle">PhotoBook can search only the photos you selected.</string>
+    <string name="limited_access_action">Add photos</string>
     <string name="indexing_message">Preparing your private photo library.</string>
     <string name="ready_message">PhotoBook is ready!</string>
     <string name="search_hint">Try: today, last week, screenshots, selfie, Hyderabad</string>

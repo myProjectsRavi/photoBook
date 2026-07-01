@@ -79,6 +79,7 @@ fun MainScreen(
     showDuplicateFinder: Boolean,
     archiveCandidateCount: Int,
     archiveDueDeleteCount: Int,
+    limitedPhotoAccess: Boolean,
     onQueryChange: (String) -> Unit,
     onSearchSubmitted: () -> Unit,
     onSearchFocusChanged: (Boolean) -> Unit,
@@ -90,11 +91,14 @@ fun MainScreen(
     onShareSelected: (Set<Long>) -> Unit,
     onMoveSelectedToTrash: (Set<Long>) -> Unit,
     onCreatePdfSelected: (Set<Long>) -> Unit,
+    onAddSelectedToVault: (Set<Long>) -> Unit,
     onCopyTextFromPhoto: (Long) -> Unit,
     onClearSelection: () -> Unit,
     onPhotoClick: (PhotoRecord) -> Unit,
     onPhotoLongClick: (PhotoRecord) -> Unit,
     onOpenTrash: () -> Unit,
+    onOpenVault: () -> Unit,
+    onManagePhotoAccess: () -> Unit,
     onOpenArchives: () -> Unit,
     onSourceSelected: (PhotoSource) -> Unit,
     onOpenDuplicateFinder: () -> Unit,
@@ -292,6 +296,14 @@ fun MainScreen(
                         modifier = Modifier.width(76.dp),
                     )
                     RefinedActionButton(
+                        icon = Icons.Default.Lock,
+                        label = stringResource(R.string.vault_short_action),
+                        onClick = onOpenVault,
+                        color = Color(0xFF7C2D12),
+                        enabled = searchReady && !isSelectionMode,
+                        modifier = Modifier.width(76.dp),
+                    )
+                    RefinedActionButton(
                         icon = Icons.Default.Delete,
                         label = "Trash",
                         onClick = onOpenTrash,
@@ -299,6 +311,11 @@ fun MainScreen(
                         enabled = searchReady && !isSelectionMode,
                         modifier = Modifier.width(76.dp),
                     )
+                }
+
+                if (limitedPhotoAccess) {
+                    Spacer(modifier = Modifier.height(14.dp))
+                    LimitedPhotoAccessBanner(onManagePhotoAccess = onManagePhotoAccess)
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -402,6 +419,9 @@ fun MainScreen(
                         IconButton(onClick = { onShareSelected(selectedPhotoIds) }) {
                             Icon(Icons.Default.Share, contentDescription = stringResource(R.string.share_selected))
                         }
+                        IconButton(onClick = { onAddSelectedToVault(selectedPhotoIds) }) {
+                            Icon(Icons.Default.Lock, contentDescription = stringResource(R.string.vault_add_selected))
+                        }
                         IconButton(
                             onClick = { onMoveSelectedToTrash(selectedPhotoIds) },
                             colors = IconButtonDefaults.iconButtonColors(contentColor = Color.Red),
@@ -500,6 +520,49 @@ private fun RefinedGlassChip(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
         )
+    }
+}
+
+@Composable
+private fun LimitedPhotoAccessBanner(
+    onManagePhotoAccess: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = Color.White.copy(alpha = 0.76f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorder),
+        tonalElevation = 1.dp,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Default.PhotoLibrary,
+                contentDescription = null,
+                tint = AccentIndigo,
+                modifier = Modifier.size(22.dp),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.limited_access_title),
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Black),
+                    color = Color(0xFF111827),
+                )
+                Text(
+                    text = stringResource(R.string.limited_access_subtitle),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF4B5563),
+                )
+            }
+            TextButton(onClick = onManagePhotoAccess) {
+                Text(text = stringResource(R.string.limited_access_action))
+            }
+        }
     }
 }
 

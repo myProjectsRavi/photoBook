@@ -1,38 +1,50 @@
-# 🤖 Claude Agent Guidelines for PhotoBook
+# Claude Agent Guidelines for PhotoBook
 
-Welcome, Claude. You are assisting with the **PhotoBook** Android application.
+PhotoBook is an offline-first Android photo manager. The product vision is private, local, free, lightweight, and fast on low-memory devices. Users should never need an account, cloud service, or app-level internet permission to use core features.
 
-This document serves as your system prompt and context anchor for this repository.
+## Non-Negotiable Rules
 
----
+1. No internet permission, telemetry, analytics, crash uploaders, cloud APIs, account systems, or remote model calls.
+2. Keep the app small. Do not add dependencies when Android, Room, WorkManager, Coil, Compose, ML Kit Play Services, or existing helpers can do the job.
+3. Treat 2 GB RAM devices as a hard design target. Prefer database prefiltering, bounded windows, sampled bitmaps, immediate bitmap recycling, and sequential background work in Lite mode.
+4. Do not silently trash or permanently delete user media. Android MediaStore trash/delete requests must use the system confirmation flow.
+5. Every Room schema change must include an explicit migration.
+6. Do not swallow crashes. Use structured `runCatching`, WorkManager failures/retries, and local diagnostics in app-private storage.
 
-## 🧭 System Context
+## Current Architecture
 
-PhotoBook is an offline-first Android application designed to index, analyze, and search through a user's local photo library without ever sending data to the cloud. Privacy and speed are paramount. The app is optimized for **2GB RAM devices** with adaptive caching and small APK size (~48MB).
+- Stack: Kotlin, Jetpack Compose, Material 3, Room/FTS, Paging 3, Coroutines/Flow, Hilt, Coil, WorkManager, ML Kit Play Services, AndroidX Security Crypto, AndroidX Biometric.
+- Main UI: `app/src/main/java/com/photobook/app/ui/screen/MainScreen.kt`
+- Main state owner: `app/src/main/java/com/photobook/app/ui/viewmodel/MainViewModel.kt`
+- Search: `app/src/main/java/com/photobook/app/search/`
+- ML/OCR: `app/src/main/java/com/photobook/app/ml/`
+- Archives: `app/src/main/java/com/photobook/app/feature/archive/`
+- PDF export: `app/src/main/java/com/photobook/app/feature/pdf/`
+- Vault: `app/src/main/java/com/photobook/app/feature/vault/`
 
-## 📜 Architectural Rules
+## Feature Facts
 
-1.  **Privacy by Design:** You must never introduce telemetry, tracking, or network API calls. The app is entirely self-contained.
-2.  **Performance Focus:** When writing SQL or Room queries, remember the scale. The app handles 100,000+ photos. Utilize FTS4. Avoid `LIKE`. Use in-memory caches (e.g., `PhotoNoteStore`) for O(1) lookups during search.
-3.  **Dependency Injection:** We use Dagger Hilt. All ViewModels must be annotated with `@HiltViewModel`. All Repositories should be injected as Singletons where appropriate.
-4.  **Jetpack Compose:** Build declarative UIs. Keep composables stateless where possible. Use `Modifier` effectively.
-5.  **Crash Resilience:** The app has a global uncaught exception handler in `PhotoBookApplication`. Wrap risky operations in `runCatching`. The app must never force-close.
-6.  **Low-RAM Optimization:** Use `ActivityManager.isLowRamDevice` to adapt image cache sizes (8% vs 15% of heap) and thumbnail resolutions (256px vs 512px).
+- The manifest intentionally has no `android.permission.INTERNET`.
+- `PhotoBookApplication` records local diagnostics and delegates uncaught exceptions to Android's default handler. Do not restore background crash swallowing.
+- ML/OCR processing has explicit status values. Do not mark a photo processed unless the relevant analyzer actually completed.
+- Search ranking may improve ordering, but search eligibility should remain stable unless the task explicitly asks to change matching behavior.
+- Android 14 limited photo access is valid but must be visible in UX because search only covers accessible media.
+- The full-screen viewer should not materialize huge visible result lists; it uses a bounded window around the active photo.
+- Vault UI is active. Opening, adding, exporting, and deleting vault items must remain behind biometric or device credential authentication. Vault UI should use `FLAG_SECURE` and lock/clear on background.
+- Archives is local detection plus user-confirmed trash/delete requests, not silent destructive cleanup.
+- PDF sharing uses Android `PdfDocument` and FileProvider cache output. Do not add a PDF library for the current one-tap export workflow.
 
-## 🔍 Code Base Mapping
+## Verification
 
-*   **ML & OCR:** Look in `com.photobook.app.ml` and `com.photobook.app.feature.copytext`.
-*   **Search Engine:** Look in `com.photobook.app.search`. Note how `FilterEngine` and `QueryParser` interact to resolve complex text into SQLite matches. Private notes are also searchable via `PhotoNoteStore.noteContains()`.
-*   **P2P QR Sharing:** Look in `com.photobook.app.feature.qrshare`. Uses single-frame compressed QR (`PB1|` protocol) for instant transfer without network.
-*   **Photo Reels:** `com.photobook.app.ui.screen.PhotoReelsScreen` — Instagram-style vertical pager for immersive browsing.
-*   **Photo Viewer:** `PhotoViewerScreen` supports 6x zoom, conditional gesture handling (pan only when zoomed, swipe at 1x), prominent share button.
-*   **Background Tagging:** `TaggingWorker` uses WorkManager expedited work. Never add battery constraints to expedited requests.
+Prefer one sequential verification run for broad Android changes:
 
-## 🛠️ Interaction Guidelines
+```bash
+./gradlew testDebugUnitTest assembleDebug bundleRelease verifyApkSize verifyReleaseBundleSize lintDebug
+```
 
-*   If tasked with a bug fix, prioritize reading the `test/` directory to see if a unit test covers the scenario.
-*   If implementing a new UI feature, adhere to the `MaterialTheme` colors and typography defined in `ui/theme/`.
-*   When proposing large refactoring, suggest an iterative plan first.
-*   Maintain the pristine, minimalistic nature of the codebase. Do not over-engineer solutions.
-*   The Vault feature UI has been removed (biometric unlock still exists for future use). Do not re-add Vault buttons.
-*   The "Utilities" tab is now labeled "Screenshots" in the UI.
+Size gates:
+
+- Generated APKs must be <= 30 MB.
+- Release AAB must be <= 20 MB.
+
+If a task is narrow, a focused `./gradlew testDebugUnitTest` pass is acceptable during iteration, but do not claim release readiness without the full gate.

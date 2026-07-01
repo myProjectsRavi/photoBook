@@ -3,6 +3,7 @@ package com.photobook.app.data.db
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.photobook.app.data.model.IntelligenceStatus
 import com.photobook.app.data.model.PhotoRecord
 
 @Entity(
@@ -46,8 +47,10 @@ data class PhotoEntity(
     val blurScore: Double?,
     val mlTagsPayload: String,
     val isMlProcessed: Boolean,
+    val mlStatus: String,
     val ocrText: String,
     val isOcrProcessed: Boolean,
+    val ocrStatus: String,
 )
 
 fun PhotoEntity.toPhotoRecord(): PhotoRecord {
@@ -81,8 +84,10 @@ fun PhotoEntity.toPhotoRecord(): PhotoRecord {
         blurScore = blurScore,
         mlTags = PhotoTagCodec.decode(mlTagsPayload),
         isMlProcessed = isMlProcessed,
+        mlStatus = IntelligenceStatus.fromStored(mlStatus, isMlProcessed),
         ocrText = ocrText,
         isOcrProcessed = isOcrProcessed,
+        ocrStatus = IntelligenceStatus.fromStored(ocrStatus, isOcrProcessed),
     )
 }
 
@@ -117,7 +122,9 @@ fun PhotoRecord.toPhotoEntity(): PhotoEntity {
         blurScore = blurScore,
         mlTagsPayload = PhotoTagCodec.encode(mlTags),
         isMlProcessed = isMlProcessed,
+        mlStatus = mlStatus.name,
         ocrText = ocrText,
         isOcrProcessed = isOcrProcessed,
+        ocrStatus = ocrStatus.name,
     )
 }

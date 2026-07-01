@@ -152,6 +152,14 @@ fun PhotoViewerScreen(
     val coroutineScope = rememberCoroutineScope()
     val safeStart = startIndex.coerceIn(0, photos.lastIndex)
     val pagerState = rememberPagerState(initialPage = safeStart, pageCount = { photos.size })
+    val firstPhotoId = photos.firstOrNull()?.id
+    val lastPhotoId = photos.lastOrNull()?.id
+
+    LaunchedEffect(safeStart, firstPhotoId, lastPhotoId) {
+        if (safeStart in photos.indices && pagerState.currentPage != safeStart) {
+            pagerState.scrollToPage(safeStart)
+        }
+    }
 
     val copyTextCoordinator = remember(context.applicationContext) {
         PhotoTextCopyCoordinator(

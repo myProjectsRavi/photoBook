@@ -1,5 +1,6 @@
 package com.photobook.app.feature.archive
 
+import com.photobook.app.data.model.IntelligenceStatus
 import com.photobook.app.data.model.PhotoRecord
 import javax.inject.Inject
 
@@ -27,7 +28,7 @@ class ArchiveClassifier @Inject constructor() {
         val transactionCueCount = TRANSACTION_CUES.count { cue -> combinedText.contains(cue) }
         val hasAmountCue = AMOUNT_REGEX.containsMatchIn(combinedText)
 
-        if (!photo.isOcrProcessed && !hasStrongMetadataPaymentCue(metadataText)) {
+        if (photo.ocrStatus != IntelligenceStatus.PROCESSED && !hasStrongMetadataPaymentCue(metadataText)) {
             return null
         }
 

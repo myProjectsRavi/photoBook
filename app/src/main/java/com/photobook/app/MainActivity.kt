@@ -5,17 +5,21 @@ import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -24,7 +28,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.paging.compose.collectAsLazyPagingItems
 import com.photobook.app.R
@@ -36,12 +45,17 @@ import com.photobook.app.feature.pdf.PdfExportResult
 import com.photobook.app.feature.pdf.PdfExportService
 import com.photobook.app.feature.trash.TrashRequestResult
 import com.photobook.app.feature.trash.TrashService
+import com.photobook.app.feature.vault.VaultExportResult
+import com.photobook.app.feature.vault.VaultItem
+import com.photobook.app.feature.vault.VaultSaveResult
+import com.photobook.app.feature.vault.VaultService
 import com.photobook.app.ui.screen.ArchivesScreen
 import com.photobook.app.ui.screen.MainScreen
 import com.photobook.app.ui.screen.OnboardingScreen
 import com.photobook.app.ui.screen.PhotoViewerScreen
 import com.photobook.app.ui.screen.MemoryStoryViewerScreen
 import com.photobook.app.ui.screen.PhotoReelsScreen
+import com.photobook.app.ui.screen.VaultBottomSheet
 import com.photobook.app.ui.theme.PhotoBookTheme
 import com.photobook.app.ui.viewmodel.MainViewModel
 import com.photobook.app.util.PermissionUtils
@@ -49,7 +63,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
 
     private val vm: MainViewModel by viewModels()
 
@@ -110,10 +124,18 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     val trashService = remember(context.applicationContext) {
         TrashService(context.applicationContext)
     }
+    val vaultService = remember(context.applicationContext) {
+        VaultService(context.applicationContext)
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
     var pendingTrashPhotoIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var pendingArchiveTrashRequest by remember { mutableStateOf(false) }
     var pendingArchiveRetentionDays by remember { mutableStateOf(30) }
     var pendingArchiveDueDeleteIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var showVault by remember { mutableStateOf(false) }
+    var vaultItems by remember { mutableStateOf<List<VaultItem>>(emptyList()) }
+    var isVaultLoading by remember { mutableStateOf(false) }
+    var isVaultBusy by remember { mutableStateOf(false) }
 
     // Trash bin state
     var showTrashScreen by remember { mutableStateOf(false) }
@@ -123,7 +145,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
-        viewModel.refreshPermissionStatus(PermissionUtils.hasPhotoPermissions(context))
+        viewModel.refreshPermissionStatus(PermissionUtils.photoAccessMode(context))
     }
     val trashRequestLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult(),
@@ -179,6 +201,157 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             isLoadingTrash = true
             trashedPhotos = trashService.listTrashed()
             isLoadingTrash = false
+        }
+    }
+
+    fun closeVault() {
+        showVault = false
+        vaultItems = emptyList()
+        isVaultLoading = false
+        isVaultBusy = false
+    }
+
+    fun refreshVault() {
+        showVault = true
+        coroutineScope.launch {
+            isVaultLoading = true
+            vaultItems = vaultService.listItems()
+            isVaultLoading = false
+        }
+    }
+
+    fun authenticateVault(onAuthenticated: () -> Unit) {
+        val activity = context as? FragmentActivity
+        if (activity == null) {
+            Toast.makeText(
+                context,
+                context.getString(R.string.vault_biometric_failed),
+                Toast.LENGTH_SHORT,
+            ).show()
+            return
+        }
+        val authenticators = vaultAuthenticators()
+        val canAuthenticate = BiometricManager.from(context).canAuthenticate(authenticators)
+        if (canAuthenticate != BiometricManager.BIOMETRIC_SUCCESS) {
+            Toast.makeText(
+                context,
+                context.getString(R.string.vault_biometric_failed),
+                Toast.LENGTH_SHORT,
+            ).show()
+            return
+        }
+
+        val prompt = BiometricPrompt(
+            activity,
+            ContextCompat.getMainExecutor(context),
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    onAuthenticated()
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    if (errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON &&
+                        errorCode != BiometricPrompt.ERROR_USER_CANCELED &&
+                        errorCode != BiometricPrompt.ERROR_CANCELED
+                    ) {
+                        Toast.makeText(context, errString, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            },
+        )
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle(context.getString(R.string.vault_biometric_title))
+            .setSubtitle(context.getString(R.string.vault_biometric_subtitle))
+            .setAllowedAuthenticators(authenticators)
+            .build()
+        prompt.authenticate(promptInfo)
+    }
+
+    fun addSelectedToVault(selectedIds: Set<Long>) {
+        if (selectedIds.isEmpty()) return
+        coroutineScope.launch {
+            val selectedPhotos = viewModel.resolvePhotosByIds(selectedIds)
+            if (selectedPhotos.isEmpty()) return@launch
+            isVaultBusy = true
+            when (val result = vaultService.addPhotos(selectedPhotos)) {
+                is VaultSaveResult.Success -> {
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.vault_add_success, result.addedCount, result.skippedCount),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    viewModel.clearSelection()
+                    refreshVault()
+                }
+
+                is VaultSaveResult.Error -> {
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.vault_add_error),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+            isVaultBusy = false
+        }
+    }
+
+    fun exportVaultItem(item: VaultItem) {
+        coroutineScope.launch {
+            isVaultBusy = true
+            when (vaultService.exportToDevice(item.id)) {
+                is VaultExportResult.Success -> Toast.makeText(
+                    context,
+                    context.getString(R.string.vault_export_success),
+                    Toast.LENGTH_SHORT,
+                ).show()
+
+                is VaultExportResult.Error -> Toast.makeText(
+                    context,
+                    context.getString(R.string.vault_export_error),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+            isVaultBusy = false
+        }
+    }
+
+    fun deleteVaultItem(item: VaultItem) {
+        coroutineScope.launch {
+            isVaultBusy = true
+            val deleted = vaultService.deleteItem(item.id)
+            if (deleted) {
+                vaultItems = vaultService.listItems()
+            } else {
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.vault_delete_error),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+            isVaultBusy = false
+        }
+    }
+
+    DisposableEffect(showVault) {
+        val activity = context as? Activity
+        if (showVault) {
+            activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+        onDispose {
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
+
+    DisposableEffect(lifecycleOwner, showVault) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (showVault && event == Lifecycle.Event.ON_STOP) {
+                closeVault()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
 
@@ -281,7 +454,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     }
 
     LaunchedEffect(Unit) {
-        viewModel.refreshPermissionStatus(PermissionUtils.hasPhotoPermissions(context))
+        viewModel.refreshPermissionStatus(PermissionUtils.photoAccessMode(context))
     }
 
     if (!uiState.hasPhotoPermission) {
@@ -320,6 +493,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         showDuplicateFinder = uiState.showDuplicateFinder,
         archiveCandidateCount = uiState.archiveCandidates.size,
         archiveDueDeleteCount = uiState.archiveDueDeleteCount,
+        limitedPhotoAccess = uiState.photoAccessMode == PermissionUtils.PhotoAccessMode.Limited,
         onQueryChange = viewModel::onQueryChanged,
         onSearchSubmitted = viewModel::onSearchSubmitted,
         onSearchFocusChanged = viewModel::onSearchFocusChanged,
@@ -352,6 +526,11 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                 )
             }
         },
+        onAddSelectedToVault = { selectedIds ->
+            authenticateVault {
+                addSelectedToVault(selectedIds)
+            }
+        },
         onCopyTextFromPhoto = { photoId ->
             // Open the viewer on this photo so the user can access Copy Text from there
             viewModel.openPhotoById(photoId)
@@ -360,6 +539,12 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         onPhotoClick = viewModel::onPhotoClicked,
         onPhotoLongClick = viewModel::onPhotoLongPressed,
         onOpenTrash = { openTrashBin() },
+        onOpenVault = {
+            authenticateVault {
+                refreshVault()
+            }
+        },
+        onManagePhotoAccess = { permissionLauncher.launch(permissions.toTypedArray()) },
         onOpenArchives = viewModel::openArchives,
         onSourceSelected = viewModel::onSourceSelected,
         onOpenDuplicateFinder = viewModel::openDuplicateFinder,
@@ -500,6 +685,39 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         )
     }
 
+    if (showVault) {
+        VaultBottomSheet(
+            items = vaultItems,
+            isLoading = isVaultLoading,
+            isBusy = isVaultBusy,
+            onDismiss = { closeVault() },
+            onRefresh = {
+                authenticateVault {
+                    refreshVault()
+                }
+            },
+            onSaveToDevice = { item ->
+                authenticateVault {
+                    exportVaultItem(item)
+                }
+            },
+            onDelete = { item ->
+                authenticateVault {
+                    deleteVaultItem(item)
+                }
+            },
+        )
+    }
+
+}
+
+private fun vaultAuthenticators(): Int {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        BiometricManager.Authenticators.BIOMETRIC_STRONG or
+            BiometricManager.Authenticators.DEVICE_CREDENTIAL
+    } else {
+        BiometricManager.Authenticators.BIOMETRIC_STRONG
+    }
 }
 
 private fun sharePhotos(context: Context, photos: List<SafeShareItem>) {
