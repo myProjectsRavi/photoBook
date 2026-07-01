@@ -208,6 +208,52 @@ class FilterEngineTest {
         assertThat(result.results.map { it.id }.toSet()).isEqualTo(records.map { it.id }.toSet())
     }
 
+    @Test
+    fun smartAlbumPropertyTokens_filterUsingExistingMetadata() = runTest {
+        val index = PhotoIndex()
+        val records = listOf(
+            samplePhoto(
+                id = 1,
+                year = 2024,
+                folderPath = "/storage/emulated/0/Pictures/Screenshots",
+                folderName = "screenshots",
+                ocrText = "paid to ravi using upi via gpay",
+                blurScore = 42.0,
+                fileSize = 7L * 1024L * 1024L,
+            ),
+            samplePhoto(
+                id = 2,
+                year = 2024,
+                folderPath = "/storage/emulated/0/DCIM/Camera",
+                folderName = "camera",
+                latitude = 17.4,
+                longitude = 78.4,
+            ),
+            samplePhoto(
+                id = 3,
+                year = 2024,
+                folderPath = "/storage/emulated/0/Download",
+                folderName = "download",
+                ocrText = "boarding pass",
+            ),
+        )
+        index.setRecords(records)
+
+        val engine = FilterEngine(
+            index = index,
+            queryParser = QueryParser(),
+            tokenClassifier = TokenClassifier(index),
+            filterFactory = FilterFactory(),
+        )
+
+        assertThat(engine.search("with_text", records).results.map { it.id }).containsExactly(1L, 3L)
+        assertThat(engine.search("with_location", records).results.map { it.id }).containsExactly(2L)
+        assertThat(engine.search("without_location", records).results.map { it.id }).containsExactly(1L, 3L)
+        assertThat(engine.search("large", records).results.map { it.id }).containsExactly(1L)
+        assertThat(engine.search("blurry", records).results.map { it.id }).containsExactly(1L)
+        assertThat(engine.search("payment", records).results.map { it.id }).containsExactly(1L)
+    }
+
     private fun samplePhoto(
         id: Long,
         year: Int,
@@ -219,6 +265,10 @@ class FilterEngineTest {
         ocrText: String = "",
         isFavorite: Boolean = false,
         dateAdded: Long = System.currentTimeMillis(),
+        latitude: Double? = null,
+        longitude: Double? = null,
+        fileSize: Long = 1024L,
+        blurScore: Double? = null,
     ): PhotoRecord {
         return PhotoRecord(
             id = id,
@@ -231,12 +281,12 @@ class FilterEngineTest {
             dayOfMonth = 1,
             dayOfWeek = 1,
             hourOfDay = 10,
-            latitude = null,
-            longitude = null,
+            latitude = latitude,
+            longitude = longitude,
             city = city,
             state = null,
             country = null,
-            fileSize = 1024L,
+            fileSize = fileSize,
             width = 1000,
             height = 1000,
             mimeType = "image/jpeg",
@@ -246,6 +296,7 @@ class FilterEngineTest {
             isFrontCamera = false,
             isHdr = false,
             isFavorite = isFavorite,
+            blurScore = blurScore,
             mlTags = mlTags,
             ocrText = ocrText,
         )

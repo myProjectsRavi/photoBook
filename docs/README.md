@@ -33,7 +33,7 @@ If you are a new developer or an AI assistant navigating the project, here is th
 | :--- | :--- |
 | `data/` | Everything related to data persistence, SQLite/Room, FTS indexing, MediaStore, and Geocoding. |
 | `di/` | Dagger Hilt module definitions. |
-| `feature/` | Self-contained feature logic (`copytext`, `duplicates`, `pdf`, `qrshare`). |
+| `feature/` | Self-contained feature logic (`archive`, `copytext`, `duplicates`, `pdf`, `qrshare`, `vault`). |
 | `ml/` | On-device ML Kit wrappers and background workers (`TaggingWorker`). |
 | `search/` | Hybrid natural language parsing and filtering engine. Private notes are searchable. |
 | `ui/` | Jetpack Compose screens (MainScreen, PhotoViewerScreen, PhotoReelsScreen, MemoryStoryViewerScreen), components, and MVVM viewmodels. |

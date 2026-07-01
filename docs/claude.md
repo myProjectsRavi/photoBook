@@ -20,6 +20,7 @@ PhotoBook is an offline-first Android photo manager. The product vision is priva
 - ML/OCR: `app/src/main/java/com/photobook/app/ml/`
 - Archives: `app/src/main/java/com/photobook/app/feature/archive/`
 - PDF export: `app/src/main/java/com/photobook/app/feature/pdf/`
+- QR transfer: `app/src/main/java/com/photobook/app/feature/qrshare/`
 - Vault: `app/src/main/java/com/photobook/app/feature/vault/`
 
 ## Feature Facts
@@ -28,11 +29,13 @@ PhotoBook is an offline-first Android photo manager. The product vision is priva
 - `PhotoBookApplication` records local diagnostics and delegates uncaught exceptions to Android's default handler. Do not restore background crash swallowing.
 - ML/OCR processing has explicit status values. Do not mark a photo processed unless the relevant analyzer actually completed.
 - Search ranking may improve ordering, but search eligibility should remain stable unless the task explicitly asks to change matching behavior.
+- Smart Albums are virtual filters/actions over existing metadata. Do not add a Smart Albums table or duplicate media files unless a future task explicitly requires persistent custom albums.
 - Android 14 limited photo access is valid but must be visible in UX because search only covers accessible media.
 - The full-screen viewer should not materialize huge visible result lists; it uses a bounded window around the active photo.
 - Vault UI is active. Opening, adding, exporting, and deleting vault items must remain behind biometric or device credential authentication. Vault UI should use `FLAG_SECURE` and lock/clear on background.
 - Archives is local detection plus user-confirmed trash/delete requests, not silent destructive cleanup.
 - PDF sharing uses Android `PdfDocument` and FileProvider cache output. Do not add a PDF library for the current one-tap export workflow.
+- QR transfer is for compressed previews and small private transfers. It may use single-frame or animated chunked frames with size limits; do not claim universal full-quality photo transfer.
 
 ## Verification
 

@@ -32,6 +32,7 @@ PhotoBook is a private, offline-first Android photo manager. The app must stay l
 - `app/src/main/java/com/photobook/app/ml/TaggingWorker.kt` - background ML/OCR indexing.
 - `app/src/main/java/com/photobook/app/feature/archive/` - Archives cleanup candidate detection.
 - `app/src/main/java/com/photobook/app/feature/pdf/PdfExportService.kt` - offline photo-to-PDF export.
+- `app/src/main/java/com/photobook/app/feature/qrshare/` - compressed offline QR preview transfer.
 - `app/src/main/java/com/photobook/app/feature/vault/VaultService.kt` - encrypted vault storage.
 
 ## Current Behavior to Preserve
@@ -39,10 +40,12 @@ PhotoBook is a private, offline-first Android photo manager. The app must stay l
 - Android 14 selected-photo access is supported and surfaced in UI as limited library mode.
 - ML/OCR processing uses explicit status fields and must not mark unavailable-model empty results as processed.
 - Search ranking improves order but must not silently broaden or shrink eligibility.
+- Smart Albums are virtual local filters/actions over existing metadata. Do not add persistent album storage for default Smart Albums.
 - Full-screen viewer opens a bounded photo window around the active item for large libraries.
 - Vault UI is active. Open, add, export, and delete operations require biometric or device credential authentication; vault UI also uses `FLAG_SECURE` and clears state on background.
 - Archives detects likely temporary transaction screenshots locally, but trash and delete still require Android confirmation.
 - Share as PDF uses Android `PdfDocument`, FileProvider cache output, EXIF orientation handling, and sampled one-bitmap-at-a-time rendering.
+- QR transfer is a compressed preview/small-transfer feature with single-frame and animated chunked modes, hash verification, estimated scan time, and hard size limits. Do not describe it as universal full-quality photo transfer.
 
 ## Verification
 

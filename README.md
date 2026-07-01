@@ -18,6 +18,12 @@ PhotoBook is a private, offline-first Android photo manager for fast local searc
 - Local ranking improves result order without changing search eligibility. OCR phrase matches, filename/folder matches, ML tags, location, favorites, token coverage, and recency all contribute to ordering.
 - Android 14 limited photo access is treated as a first-class mode. The UI shows when only selected media is accessible and offers a way to add more photos.
 
+### Smart Albums
+
+- Smart Albums are virtual, instant filters built from existing local metadata. They do not create duplicate files, new media folders, or a new database table.
+- Current albums include Screenshots, Receipts, Documents, Payment screenshots, Food, Selfies, Group photos, Blurry, Duplicates, Large files, WhatsApp media, Camera photos, Downloads, Photos with text, Photos with location, and Photos without location.
+- Duplicates opens the existing Storage optimizer; Payment screenshots opens Archives so cleanup remains strict and user-confirmed.
+
 ### ML and OCR
 
 - ML Kit image labeling, face detection, OCR, and barcode scanning use on-device Play Services models to keep the app small.
@@ -36,6 +42,12 @@ PhotoBook is a private, offline-first Android photo manager for fast local searc
 - Full-screen viewer includes one-tap Share as PDF for the current photo.
 - Multi-select Create PDF is still available from the grid.
 - PDF generation uses Android's built-in `PdfDocument`, cache-backed FileProvider sharing, sampled bitmap decoding, EXIF orientation, and fit-center white pages. No new PDF dependency is required.
+
+### Offline QR Transfer
+
+- QR transfer is a private optical transfer for small compressed photo previews.
+- The sender first tries an instant single-frame QR; larger previews use animated chunked QR frames with hash verification on the receiver.
+- The UI shows chunk count, transfer size, estimated scan time, and a hard max-size error instead of claiming universal full-quality transfer.
 
 ### Vault
 

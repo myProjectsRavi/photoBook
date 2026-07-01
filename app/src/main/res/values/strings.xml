@@ -131,8 +131,9 @@
     <string name="viewer_qr_generating_frame">Generating QR frame...</string>
     <string name="viewer_qr_frame">QR transfer frame</string>
     <string name="viewer_qr_frame_progress">Frame %1$d / %2$d</string>
-    <string name="viewer_qr_scan_hint">Ask the receiver to scan this QR stream. Size: %1$d KB • Chunks: %2$d</string>
-    <string name="viewer_qr_too_large">Photo is too large for reliable QR transfer (%1$d KB). Max supported for offline QR is %2$d KB.</string>
+    <string name="viewer_qr_scan_hint">Compressed private transfer. Size: %1$d KB • Chunks: %2$d • About %3$d sec to scan</string>
+    <string name="viewer_qr_single_hint">Tiny compressed preview. Size: %1$d KB • Instant single QR</string>
+    <string name="viewer_qr_too_large">Photo preview is too large for reliable QR transfer (%1$d KB). Max supported for offline QR is %2$d KB.</string>
     <string name="viewer_qr_error">Couldn\'t generate offline QR for this photo.</string>
     <string name="viewer_best_shot">Best shot</string>
     <string name="viewer_best_shot_jump">Jump to best shot in burst</string>
@@ -188,6 +189,7 @@
     <string name="memories_title">Memories</string>
     <string name="memories_subtitle">Auto-curated</string>
     <string name="private_reassurance">Private, secure, and fully on-device.</string>
+    <string name="smart_albums_title">Smart albums</string>
     <string name="more_actions">More</string>
     <string name="reels_browsing_action">Reel Browsing</string>
     <string name="reels_browsing_on">Reels browsing on</string>
