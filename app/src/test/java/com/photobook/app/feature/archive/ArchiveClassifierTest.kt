@@ -1,6 +1,7 @@
 package com.photobook.app.feature.archive
 
 import com.google.common.truth.Truth.assertThat
+import com.photobook.app.data.model.MLTag
 import com.photobook.app.data.model.PhotoRecord
 import org.junit.Test
 
@@ -92,6 +93,49 @@ class ArchiveClassifierTest {
         assertThat(result).isNull()
     }
 
+    @Test
+    fun paymentCategoryDisabled_rejectsPaymentScreenshot() {
+        val photo = sampleScreenshot(
+            ocrText = "PhonePe payment successful. Paid Rs. 500 to Ravi by UPI. UTR 123456789.",
+        )
+
+        val result = classifier.classify(
+            photo = photo,
+            nowMs = NOW_MS,
+            enabledCategories = setOf(ArchiveCategory.Food),
+        )
+
+        assertThat(result).isNull()
+    }
+
+    @Test
+    fun foodCategoryEnabled_matchesFoodPhoto() {
+        val photo = samplePhoto(
+            mlTags = listOf(MLTag("food", 0.86f)),
+        )
+
+        val result = classifier.classify(
+            photo = photo,
+            nowMs = NOW_MS,
+            enabledCategories = setOf(ArchiveCategory.Food),
+        )
+
+        assertThat(result).isNotNull()
+        assertThat(result!!.category).isEqualTo(ArchiveCategory.Food)
+        assertThat(result.reasons).contains("Food photo")
+    }
+
+    @Test
+    fun foodCategoryDisabled_rejectsFoodPhotoByDefault() {
+        val photo = samplePhoto(
+            mlTags = listOf(MLTag("food", 0.86f)),
+        )
+
+        val result = classifier.classify(photo, NOW_MS)
+
+        assertThat(result).isNull()
+    }
+
     private fun sampleScreenshot(
         id: Long = 1L,
         dateAdded: Long = NOW_MS - (3L * 24L * 60L * 60L * 1000L),
@@ -127,6 +171,42 @@ class ArchiveClassifierTest {
             isFavorite = isFavorite,
             ocrText = ocrText,
             isOcrProcessed = isOcrProcessed,
+        )
+    }
+
+    private fun samplePhoto(
+        id: Long = 2L,
+        dateAdded: Long = NOW_MS - (3L * 24L * 60L * 60L * 1000L),
+        mlTags: List<MLTag> = emptyList(),
+    ): PhotoRecord {
+        return PhotoRecord(
+            id = id,
+            uriString = "content://media/external/images/media/$id",
+            filePath = "/storage/emulated/0/DCIM/Camera/IMG_$id.jpg",
+            fileName = "IMG_$id.jpg",
+            dateAdded = dateAdded,
+            year = 2026,
+            month = 7,
+            dayOfMonth = 1,
+            dayOfWeek = 3,
+            hourOfDay = 10,
+            latitude = null,
+            longitude = null,
+            city = null,
+            state = null,
+            country = null,
+            fileSize = 1_512_000L,
+            width = 3000,
+            height = 2400,
+            mimeType = "image/jpeg",
+            folderName = "Camera",
+            folderPath = "DCIM/Camera/",
+            cameraModel = null,
+            isFrontCamera = false,
+            isHdr = false,
+            isFavorite = false,
+            mlTags = mlTags,
+            isMlProcessed = mlTags.isNotEmpty(),
         )
     }
 

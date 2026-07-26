@@ -35,6 +35,16 @@ object QrTransferProtocol {
     private const val DATA_TYPE = "D"
     private const val DELIMITER = "|"
 
+    const val MAX_TRANSFER_ID_LENGTH = 64
+    const val MAX_FILE_NAME_LENGTH = 120
+    const val MAX_TOTAL_CHUNKS = 512
+    const val MAX_CHUNK_PAYLOAD_LENGTH = 2_048
+    const val MAX_TRANSFER_BYTES = 120_000
+    private const val MAX_FRAME_LENGTH = 200_000
+    private val SHA256_PATTERN = Regex("[0-9a-f]{64}")
+    private val TRANSFER_ID_PATTERN = Regex("[A-Za-z0-9_-]{1,$MAX_TRANSFER_ID_LENGTH}")
+    private val ALLOWED_MIME_TYPES = setOf("image/jpeg", "image/png", "image/webp")
+
     fun encodeSingle(frame: QrTransferFrame.Single): String {
         val namePayload = Base64.getUrlEncoder()
             .withoutPadding()
@@ -78,6 +88,7 @@ object QrTransferProtocol {
     }
 
     fun parse(rawValue: String): QrTransferFrame? {
+        if (rawValue.length > MAX_FRAME_LENGTH) return null
         val parts = rawValue.split(DELIMITER)
         if (parts.size < 5 || parts[0] != PREFIX) return null
 
@@ -96,11 +107,15 @@ object QrTransferProtocol {
         val fileName = runCatching {
             String(Base64.getUrlDecoder().decode(parts[3]), Charsets.UTF_8)
         }.getOrNull() ?: return null
-        val mimeType = parts[4].trim().ifBlank { "image/webp" }
+        val mimeType = parts[4].trim().lowercase()
         val sha256 = parts[5].trim().lowercase()
         val byteSize = parts[6].toIntOrNull() ?: return null
         val payload = parts[7].trim()
-        if (transferId.isBlank() || fileName.isBlank() || payload.isBlank() || byteSize <= 0) return null
+        if (!isValidTransferId(transferId) || !isSafeFileName(fileName) ||
+            mimeType !in ALLOWED_MIME_TYPES || !SHA256_PATTERN.matches(sha256) ||
+            byteSize !in 1..MAX_TRANSFER_BYTES ||
+            payload.isBlank() || payload.length > MAX_TRANSFER_BYTES * 2
+        ) return null
 
         return QrTransferFrame.Single(
             transferId = transferId,
@@ -120,11 +135,14 @@ object QrTransferProtocol {
         val fileName = runCatching {
             String(Base64.getUrlDecoder().decode(parts[4]), Charsets.UTF_8)
         }.getOrNull() ?: return null
-        val mimeType = parts[5].trim().ifBlank { "image/jpeg" }
+        val mimeType = parts[5].trim().lowercase()
         val sha256 = parts[6].trim().lowercase()
         val byteSize = parts[7].toIntOrNull() ?: return null
 
-        if (transferId.isBlank() || totalChunks <= 0 || byteSize <= 0 || fileName.isBlank()) return null
+        if (!isValidTransferId(transferId) || totalChunks !in 1..MAX_TOTAL_CHUNKS ||
+            !isSafeFileName(fileName) || mimeType !in ALLOWED_MIME_TYPES ||
+            !SHA256_PATTERN.matches(sha256) || byteSize !in 1..MAX_TRANSFER_BYTES
+        ) return null
 
         return QrTransferFrame.Metadata(
             transferId = transferId,
@@ -141,12 +159,23 @@ object QrTransferProtocol {
         val transferId = parts[2].trim()
         val chunkIndex = parts[3].toIntOrNull() ?: return null
         val chunkPayload = parts[4].trim()
-        if (transferId.isBlank() || chunkIndex < 0 || chunkPayload.isBlank()) return null
+        if (!isValidTransferId(transferId) || chunkIndex !in 0 until MAX_TOTAL_CHUNKS ||
+            chunkPayload.isBlank() || chunkPayload.length > MAX_CHUNK_PAYLOAD_LENGTH
+        ) return null
 
         return QrTransferFrame.Data(
             transferId = transferId,
             chunkIndex = chunkIndex,
             chunkPayload = chunkPayload,
         )
+    }
+
+    private fun isValidTransferId(value: String): Boolean = TRANSFER_ID_PATTERN.matches(value)
+
+    private fun isSafeFileName(value: String): Boolean {
+        return value.isNotBlank() && value.length <= MAX_FILE_NAME_LENGTH &&
+            value != "." && value != ".." &&
+            !value.contains('/') && !value.contains('\\') &&
+            value.none { it.isISOControl() }
     }
 }

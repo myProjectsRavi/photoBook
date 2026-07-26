@@ -16,6 +16,8 @@ import kotlin.math.abs
 class DuplicatePhotoFinder @Inject constructor(
     @ApplicationContext private val context: Context,
     private val photoDao: PhotoDao,
+    private val perceptualHashComputer: PerceptualHashComputer,
+    private val blurScoreComputer: BlurScoreComputer,
 ) {
     suspend fun findDuplicates(records: List<PhotoRecord>): List<DuplicatePhotoGroup> {
         if (records.size < 2) return emptyList()
@@ -129,7 +131,9 @@ class DuplicatePhotoFinder @Inject constructor(
         val buckets = mutableMapOf<String, MutableList<HashRecord>>()
 
         records.forEach { photo ->
-            val hash = photo.perceptualHash ?: return@forEach
+            val hash = photo.perceptualHash
+                ?: perceptualHashComputer.computeFromUri(photo.uriString)
+                ?: return@forEach
             val current = HashRecord(photo.id, hash)
             unionFind.add(photo.id)
 
@@ -254,7 +258,9 @@ class DuplicatePhotoFinder @Inject constructor(
 
         val blurryCandidates = mutableListOf<Pair<PhotoRecord, Double>>()
         records.forEach { photo ->
-            val score = photo.blurScore ?: return@forEach
+            val score = photo.blurScore
+                ?: blurScoreComputer.computeFromUri(photo.uriString)
+                ?: return@forEach
             if (score <= BLUR_VARIANCE_THRESHOLD) {
                 blurryCandidates += photo to score
             }

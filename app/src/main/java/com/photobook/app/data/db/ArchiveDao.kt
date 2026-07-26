@@ -45,6 +45,14 @@ interface ArchiveDao {
     )
     suspend fun getDueDeleteItems(nowMs: Long, limit: Int): List<ArchiveDecisionEntity>
 
+    @Query(
+        """
+        SELECT photoId FROM archive_decisions
+        WHERE state IN ('trashed', 'delete_due')
+        """,
+    )
+    suspend fun getArchivedTrashPhotoIds(): List<Long>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertDecisions(decisions: List<ArchiveDecisionEntity>)
 
@@ -91,4 +99,15 @@ interface ArchiveDao {
         """,
     )
     suspend fun markStale(photoIds: List<Long>, nowMs: Long)
+
+    @Query(
+        """
+        UPDATE archive_decisions
+        SET state = 'stale',
+            lastDetectedAtMs = :nowMs
+        WHERE state = 'candidate'
+            AND lastDetectedAtMs < :scanStartedAtMs
+        """,
+    )
+    suspend fun markCandidatesStaleBefore(scanStartedAtMs: Long, nowMs: Long)
 }

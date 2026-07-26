@@ -96,7 +96,7 @@ class IndexPersistence @Inject constructor(
         }
     }
 
-    suspend fun searchByQueryText(rawQuery: String, limit: Int = 1200): List<PhotoRecord> {
+    suspend fun searchByQueryText(rawQuery: String, limit: Int = Int.MAX_VALUE): List<PhotoRecord> {
         val matchQuery = toFtsMatchQuery(rawQuery) ?: return emptyList()
         return withContext(Dispatchers.IO) {
             val ids = runCatching {

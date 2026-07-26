@@ -49,15 +49,17 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
-import com.google.mlkit.vision.barcode.BarcodeScannerOptions
-import com.google.mlkit.vision.barcode.BarcodeScanning
-import com.google.mlkit.vision.barcode.common.Barcode
-import com.google.mlkit.vision.common.InputImage
 import com.photobook.app.R
 import com.photobook.app.feature.qrshare.QrAssemblyResult
 import com.photobook.app.feature.qrshare.QrReceivedImageStore
 import com.photobook.app.feature.qrshare.QrTransferAssembler
 import java.util.concurrent.Executors
+import com.google.zxing.BinaryBitmap
+import com.google.zxing.DecodeHintType
+import com.google.zxing.MultiFormatReader
+import com.google.zxing.PlanarYUVLuminanceSource
+import com.google.zxing.common.HybridBinarizer
+import com.google.zxing.BarcodeFormat
 import kotlinx.coroutines.launch
 
 @Composable
@@ -263,19 +265,12 @@ private fun QrCameraScannerView(
         }
     }
     val analyzerExecutor = remember { Executors.newSingleThreadExecutor() }
-    val scanner = remember {
-        BarcodeScanning.getClient(
-            BarcodeScannerOptions.Builder()
-                .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
-                .build(),
-        )
-    }
+    val scanner = remember { MultiFormatReader() }
     val latestEnabled by rememberUpdatedState(enabled)
     val latestOnPayloadScanned by rememberUpdatedState(onPayloadScanned)
 
     DisposableEffect(Unit) {
         onDispose {
-            scanner.close()
             analyzerExecutor.shutdown()
         }
     }
@@ -308,18 +303,10 @@ private fun QrCameraScannerView(
                     return@setAnalyzer
                 }
 
-                val inputImage = InputImage.fromMediaImage(
-                    mediaImage,
-                    imageProxy.imageInfo.rotationDegrees,
-                )
-                scanner.process(inputImage)
-                    .addOnSuccessListener { barcodes ->
-                        barcodes.firstNotNullOfOrNull { barcode -> barcode.rawValue }
-                            ?.let(latestOnPayloadScanned)
-                    }
-                    .addOnCompleteListener {
-                        imageProxy.close()
-                    }
+                runCatching { decodeQrPayload(imageProxy, scanner) }
+                    .getOrNull()
+                    ?.let(latestOnPayloadScanned)
+                imageProxy.close()
             }
 
             cameraProvider.bindToLifecycle(
@@ -342,4 +329,50 @@ private fun QrCameraScannerView(
         factory = { previewView },
         modifier = modifier,
     )
+}
+
+@androidx.annotation.OptIn(ExperimentalGetImage::class)
+private fun decodeQrPayload(
+    imageProxy: androidx.camera.core.ImageProxy,
+    reader: MultiFormatReader,
+): String? {
+    val plane = imageProxy.planes.firstOrNull() ?: return null
+    val width = imageProxy.width
+    val height = imageProxy.height
+    val rowStride = plane.rowStride
+    val sourceBytes = plane.buffer.let { buffer ->
+        val raw = ByteArray(buffer.remaining())
+        buffer.get(raw)
+        if (rowStride == width) {
+            raw
+        } else {
+            ByteArray(width * height).also { packed ->
+                for (row in 0 until height) {
+                    val sourceOffset = row * rowStride
+                    if (sourceOffset + width <= raw.size) {
+                        raw.copyInto(packed, row * width, sourceOffset, sourceOffset + width)
+                    }
+                }
+            }
+        }
+    }
+    val source = PlanarYUVLuminanceSource(
+        sourceBytes,
+        width,
+        height,
+        0,
+        0,
+        width,
+        height,
+        false,
+    )
+    val hints = mapOf(
+        DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE),
+        DecodeHintType.TRY_HARDER to true,
+    )
+    return runCatching {
+        reader.decode(BinaryBitmap(HybridBinarizer(source)), hints).text
+    }.getOrNull().also {
+        reader.reset()
+    }
 }

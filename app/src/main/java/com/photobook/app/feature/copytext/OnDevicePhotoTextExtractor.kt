@@ -3,41 +3,50 @@ package com.photobook.app.feature.copytext
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
+import android.graphics.Paint
 import android.graphics.Rect
 import android.net.Uri
 import androidx.exifinterface.media.ExifInterface
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.TextRecognizer
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.photobook.app.util.LocalDiagnostics
+import com.photobook.app.ml.CompactLocalIntelligence
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import com.photobook.app.ml.BundledOnDeviceIntelligence
 import javax.inject.Inject
 
 class OnDevicePhotoTextExtractor @Inject constructor(
     @ApplicationContext private val context: Context,
     private val formatter: PhotoTextFormatter = PhotoTextFormatter(),
+    private val onDeviceIntelligence: BundledOnDeviceIntelligence,
 ) : PhotoTextExtractor {
-
-    private val recognizer: TextRecognizer by lazy {
-        TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-    }
 
     override suspend fun extract(photoUri: String): ExtractedTextResult {
         return withContext(Dispatchers.IO) {
             val uri = runCatching { Uri.parse(photoUri) }.getOrNull()
                 ?: return@withContext ExtractedTextResult.Error()
 
+            if (!ensureTextRecognizerReady()) {
+                return@withContext ExtractedTextResult.Error()
+            }
+
+            recognizeFromFile()?.let { rawText ->
+                val formatted = formatter.format(rawText)
+                if (formatted.isNotBlank()) {
+                    return@withContext ExtractedTextResult.Success(formatted)
+                }
+            }
+
             val bitmap = loadTextBitmap(uri, MAX_TEXT_BITMAP_DIMENSION_PX)
                 ?: return@withContext ExtractedTextResult.Error()
 
             try {
-                val image = InputImage.fromBitmap(bitmap, 0)
                 val rawText = runCatching {
-                    recognizer.process(image).await().text
+                    recognizeBitmapWithFallback(bitmap)
                 }.getOrElse { error ->
                     return@withContext ExtractedTextResult.Error(error)
                 }
@@ -67,6 +76,10 @@ class OnDevicePhotoTextExtractor @Inject constructor(
             val uri = runCatching { Uri.parse(photoUri) }.getOrNull()
                 ?: return@withContext ExtractedTextResult.Error()
 
+            if (!ensureTextRecognizerReady()) {
+                return@withContext ExtractedTextResult.Error()
+            }
+
             val bitmap = loadTextBitmap(uri, MAX_REGION_BITMAP_DIMENSION_PX)
                 ?: return@withContext ExtractedTextResult.Error()
 
@@ -80,9 +93,8 @@ class OnDevicePhotoTextExtractor @Inject constructor(
             }
 
             try {
-                val image = InputImage.fromBitmap(crop, 0)
                 val rawText = runCatching {
-                    recognizer.process(image).await().text
+                    recognizeBitmapWithFallback(crop)
                 }.getOrElse { error ->
                     return@withContext ExtractedTextResult.Error(error)
                 }
@@ -100,6 +112,50 @@ class OnDevicePhotoTextExtractor @Inject constructor(
                 }
             }
         }
+    }
+
+    private suspend fun ensureTextRecognizerReady(): Boolean {
+        return onDeviceIntelligence.ensureReady(needsMl = false, needsOcr = true).ocrReady
+    }
+
+    private suspend fun recognizeFromFile(): String? {
+        return null
+    }
+
+    private suspend fun recognizeBitmapWithFallback(bitmap: Bitmap): String {
+        return CompactLocalIntelligence.ocr(bitmap).getOrElse { error ->
+            LocalDiagnostics.record(
+                context = context,
+                area = "copy-text",
+                message = "Compact local Latin OCR is unavailable",
+                throwable = error,
+            )
+            throw error
+        }
+    }
+
+    private fun enhanceTextBitmap(source: Bitmap): Bitmap? {
+        return runCatching {
+            val output = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
+            val matrix = ColorMatrix().apply {
+                setSaturation(0f)
+                postConcat(
+                    ColorMatrix(
+                        floatArrayOf(
+                            1.35f, 0f, 0f, 0f, -28f,
+                            0f, 1.35f, 0f, 0f, -28f,
+                            0f, 0f, 1.35f, 0f, -28f,
+                            0f, 0f, 0f, 1f, 0f,
+                        ),
+                    ),
+                )
+            }
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+                colorFilter = ColorMatrixColorFilter(matrix)
+            }
+            Canvas(output).drawBitmap(source, 0f, 0f, paint)
+            output
+        }.getOrNull()
     }
 
     private fun loadTextBitmap(uri: Uri, maxDimensionPx: Int): Bitmap? {
@@ -221,7 +277,7 @@ class OnDevicePhotoTextExtractor @Inject constructor(
     }
 
     companion object {
-        private const val MAX_TEXT_BITMAP_DIMENSION_PX = 2600
+        private const val MAX_TEXT_BITMAP_DIMENSION_PX = 3600
         private const val MAX_REGION_BITMAP_DIMENSION_PX = 3200
     }
 }

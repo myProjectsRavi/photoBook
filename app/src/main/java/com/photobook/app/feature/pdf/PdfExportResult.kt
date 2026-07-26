@@ -9,6 +9,13 @@ sealed interface PdfExportResult {
         val pageCount: Int,
     ) : PdfExportResult
 
+    data class PartialSuccess(
+        val uri: Uri,
+        val fileName: String,
+        val pageCount: Int,
+        val skippedCount: Int,
+    ) : PdfExportResult
+
     data class TooManyPages(
         val requested: Int,
         val maxAllowed: Int,

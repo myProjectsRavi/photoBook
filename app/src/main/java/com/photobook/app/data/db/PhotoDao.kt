@@ -27,21 +27,83 @@ interface PhotoDao {
         SELECT * FROM photos
         WHERE isFavorite = 0
             AND mimeType LIKE 'image/%'
-            AND (
-                lower(folderName) LIKE '%screenshot%'
-                OR lower(folderPath) LIKE '%screenshot%'
-                OR lower(filePath) LIKE '%screenshot%'
-                OR lower(fileName) LIKE '%screenshot%'
-                OR lower(folderName) LIKE '%screen_shot%'
-                OR lower(folderPath) LIKE '%screen_shot%'
-                OR lower(filePath) LIKE '%screen_shot%'
-                OR lower(fileName) LIKE '%screen_shot%'
-            )
+            AND isArchiveScreenshotCandidate = 1
         ORDER BY dateAdded DESC
         LIMIT :limit
         """,
     )
     suspend fun getArchiveScreenshotCandidates(limit: Int): List<PhotoEntity>
+
+    @Query(
+        """
+        SELECT * FROM photos
+        WHERE isFavorite = 0
+            AND mimeType LIKE 'image/%'
+            AND isArchiveScreenshotCandidate = 1
+        ORDER BY dateAdded DESC
+        """,
+    )
+    suspend fun getAllArchiveScreenshotCandidates(): List<PhotoEntity>
+
+    @Query(
+        """
+        SELECT * FROM photos
+        WHERE isFavorite = 0
+            AND mimeType LIKE 'image/%'
+            AND isArchiveScreenshotCandidate = 1
+            AND (dateAdded < :beforeDateAdded OR (dateAdded = :beforeDateAdded AND id < :beforeId))
+        ORDER BY dateAdded DESC, id DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getArchiveScreenshotCandidatesAfter(
+        beforeDateAdded: Long,
+        beforeId: Long,
+        limit: Int,
+    ): List<PhotoEntity>
+
+    @Query(
+        """
+        SELECT * FROM photos
+        WHERE isFavorite = 0
+            AND mimeType LIKE 'image/%'
+            AND isMlProcessed = 1
+            AND isArchiveFoodCandidate = 1
+        ORDER BY dateAdded DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getArchiveFoodCandidates(limit: Int): List<PhotoEntity>
+
+    @Query(
+        """
+        SELECT * FROM photos
+        WHERE isFavorite = 0
+            AND mimeType LIKE 'image/%'
+            AND isMlProcessed = 1
+            AND isArchiveFoodCandidate = 1
+        ORDER BY dateAdded DESC
+        """,
+    )
+    suspend fun getAllArchiveFoodCandidates(): List<PhotoEntity>
+
+    @Query(
+        """
+        SELECT * FROM photos
+        WHERE isFavorite = 0
+            AND mimeType LIKE 'image/%'
+            AND isMlProcessed = 1
+            AND isArchiveFoodCandidate = 1
+            AND (dateAdded < :beforeDateAdded OR (dateAdded = :beforeDateAdded AND id < :beforeId))
+        ORDER BY dateAdded DESC, id DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getArchiveFoodCandidatesAfter(
+        beforeDateAdded: Long,
+        beforeId: Long,
+        limit: Int,
+    ): List<PhotoEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertPhoto(photo: PhotoEntity)

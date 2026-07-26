@@ -28,14 +28,14 @@ val releaseKeystoreProperties = Properties().apply {
 
 android {
     namespace = "com.photobook.app"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.photobook.app"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 12
-        versionName = "2.0.5"
+        targetSdk = 36
+        versionCode = 15
+        versionName = "2.0.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -180,12 +180,14 @@ dependencies {
     implementation("androidx.hilt:hilt-work:1.2.0")
     kapt("androidx.hilt:hilt-compiler:1.2.0")
 
-    implementation("com.google.android.gms:play-services-mlkit-image-labeling:16.0.8")
-    implementation("com.google.android.gms:play-services-mlkit-face-detection:17.1.0")
-    implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
-    implementation("com.google.android.gms:play-services-mlkit-barcode-scanning:18.3.1")
+    // Bundled ML Kit artifacts keep the supported intelligence paths available in
+    // airplane mode. Keep the release size gates below hard; changing to a
+    // network-delivered model is not an acceptable size optimization.
+    // Compact local image heuristics and Android's local face detector keep the
+    // APK/AAB gates hard. ZXing provides the QR-only decoder below. OCR is a
+    // deterministic local capability state until a compact Latin model that
+    // fits the gates is adopted; no network model delivery is permitted.
     implementation("com.google.zxing:core:3.5.3")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
@@ -239,6 +241,14 @@ tasks.register("verifyReleaseBundleSize") {
                 "Release bundle size gate failed for ${bundle.path}: ${sizeBytes / (1024 * 1024)} MB > 20 MB"
             }
         }
+    }
+}
+
+tasks.register("printReleaseMetadata") {
+    doLast {
+        println("versionCode=${android.defaultConfig.versionCode}")
+        println("versionName=${android.defaultConfig.versionName}")
+        println("targetSdk=${android.defaultConfig.targetSdk}")
     }
 }
 

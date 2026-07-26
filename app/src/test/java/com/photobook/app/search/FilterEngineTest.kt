@@ -209,6 +209,47 @@ class FilterEngineTest {
     }
 
     @Test
+    fun textSearch_matchesOcrIgnoringCase() = runTest {
+        val index = PhotoIndex()
+        val records = listOf(
+            samplePhoto(
+                id = 1,
+                year = 2024,
+                folderPath = "/storage/emulated/0/Pictures/Screenshots",
+                folderName = "screenshots",
+                ocrText = "BANK transfer approved",
+            ),
+            samplePhoto(
+                id = 2,
+                year = 2024,
+                folderPath = "/storage/emulated/0/Download",
+                folderName = "download",
+                ocrText = "Bank statement June",
+            ),
+            samplePhoto(
+                id = 3,
+                year = 2024,
+                folderPath = "/storage/emulated/0/DCIM/Camera",
+                folderName = "camera",
+                ocrText = "grocery receipt",
+            ),
+        )
+        index.setRecords(records)
+
+        val engine = FilterEngine(
+            index = index,
+            queryParser = QueryParser(),
+            tokenClassifier = TokenClassifier(index),
+            filterFactory = FilterFactory(),
+        )
+
+        listOf("bank", "Bank", "bANK", "baNK").forEach { query ->
+            assertThat(engine.search(query, records).results.map { it.id })
+                .containsExactly(2L, 1L)
+        }
+    }
+
+    @Test
     fun smartAlbumPropertyTokens_filterUsingExistingMetadata() = runTest {
         val index = PhotoIndex()
         val records = listOf(

@@ -47,9 +47,17 @@ object LocalDiagnostics {
     }
 
     private fun String.sanitize(): String {
-        return replace('\n', ' ')
+        return redactSensitive()
+            .replace('\n', ' ')
             .replace('\r', ' ')
             .replace('\t', ' ')
             .take(600)
+    }
+
+    private fun String.redactSensitive(): String {
+        return replace(Regex("content://[^\\s]+"), "[content-uri]")
+            .replace(Regex("file:///[^\\s]+"), "[file-uri]")
+            .replace(Regex("/storage/[^\\s]+"), "[media-path]")
+            .replace(Regex("/data/user/[^\\s]+"), "[app-path]")
     }
 }

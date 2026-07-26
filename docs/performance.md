@@ -1,52 +1,27 @@
-# ⚡ Performance Engineering in PhotoBook
+# PhotoBook performance contract
 
-Delivering a "lightning-fast" experience on mobile requires aggressive optimization at the database, memory, and UI layers. PhotoBook handles libraries of 100,000+ photos with sub-second search times.
+Performance is a measured contract, not a promise of a fixed latency on every Android device. The design target is smooth browsing on low-RAM devices and bounded work for 10k, 50k, and 100k-photo libraries.
 
----
+## Room and search
 
-## 1. 🗄️ Database & FTS4
+- Room remains authoritative for indexed photo state. The `photo_fts` FTS4 table stores normalized filename, folder, location, OCR, notes, and tag text.
+- FTS eligibility is not capped at 1,200 rows. IDs and records are fetched in bounded pages and ranked deterministically; valid matches are not dropped because of an arbitrary prefilter limit.
+- Archive metadata uses indexed boolean eligibility flags instead of unbounded wildcard metadata scans. The MIME `image/%` prefix filter is a bounded type filter, not a substitute for search ranking.
+- Search remains case-insensitive and stable-ID based. UI Paging owns visible windows; viewer/reels own only adjacent windows.
 
-Standard `LIKE '%query%'` SQL queries are strictly forbidden in this app as they require full table scans.
+## MediaStore and Archives
 
-*   **SQLite FTS4 (Full-Text Search):** 
-    *   We utilize Room's `@Fts4` annotation (`PhotoFtsEntity.kt`) to create a virtual table.
-    *   This creates an inverted index, allowing text searches against generated ML labels, location names, and dates in `O(1)` or `O(log N)` time.
-    *   We utilize the `MATCH` operator in `PhotoDao.kt`.
+- Incremental MediaStore generations are used when available; permission changes and revoked URIs trigger reconciliation.
+- A user-requested Archive refresh performs one synchronized index snapshot followed by a keyset-paged Room scan. It commits bounded decision batches, emits partial progress, observes coroutine cancellation, and reconciles candidate rows not seen in the completed scan.
+- Archive retention is battery/charging constrained but never requires device idle. Background retention only marks due rows; foreground Android confirmation owns destructive media operations.
 
-*   **Index Builder:** 
-    *   `IndexBuilder.kt` compiles multiple sources of metadata (EXIF, Geocoder, ML tags) into a single optimized search string to insert into the FTS table.
+## Intelligence maintenance
 
-## 2. 🔄 Incremental MediaStore Sync
+- Bitmap decoding is sampled and recycled immediately. Maintenance processes bounded batches, checkpoints after commits, records failures locally, and retries only retryable states.
+- The current size-constrained offline backend uses compact local image heuristics, Android's local face detector, and ZXing QR decoding. Latin OCR reports an explicit permanent capability failure until a compact bundled model meets the hard size gates; no network fallback is allowed.
 
-Scanning the user's entire photo library every time the app opens is terrible for battery and startup time.
+## UI and measurement
 
-*   **Generation Tracking:** 
-    *   Since Android 11 (API 30), MediaStore supports `MediaStore.getGeneration()`.
-    *   `MediaStoreScanner.kt` records the generation integer after a successful sync. On the next launch, we query `WHERE generation_added > last_known_generation`.
-    *   This reduces launch sync times from seconds to single-digit milliseconds.
-
-## 3. 🧠 Asynchronous ML Tagging
-
-Running ML Kit on thousands of photos is CPU-intensive.
-
-*   **WorkManager Integration:** 
-    *   `TaggingWorker.kt` schedules inference in the background. 
-    *   We use constraints: `RequiresBatteryNotLow` and `RequiresDeviceIdle` (optional) to ensure tagging doesn't drain the battery or cause jank while the user is actively using the app.
-*   **Batching:** 
-    *   We process photos in chunks to manage memory overhead and allow the worker to checkpoint its progress.
-
-## 4. 🌍 Geocoder Memory Optimization
-
-Loading a worldwide list of cities into memory could cause an `OutOfMemoryError` (OOM).
-
-*   **Asset Streaming:** 
-    *   Instead of parsing `cities_min.csv` fully into memory, `OfflineGeocoder.kt` streams the file line-by-line during the initial database seed, transferring the spatial data into an indexed SQLite table.
-
-## 5. 🎨 Jetpack Compose UI
-
-*   **Lazy Grids:** 
-    *   The `PhotoGrid.kt` uses `LazyVerticalGrid`. We carefully avoid passing complex lambdas or unstable objects to the item composables to prevent unnecessary recompositions.
-*   **Image Caching:** 
-    *   We utilize Coil (or Glide) with optimized bitmap pooling and memory caching, requesting downsampled thumbnails based on the exact density of the `PhotoThumbnail.kt` composable.
-*   **State Management:** 
-    *   `MainViewModel.kt` emits immutable data classes wrapped in `StateFlow`. UI state is heavily debounced in the `SearchBar.kt` to prevent over-querying the database as the user types.
+- Compose grids use Paging, stable keys, adjacent-page prefetch, bounded Coil memory, and Lite-tier limits on low-RAM devices.
+- Required benchmark scenarios are 10k/50k/100k synthetic libraries: cold startup, search p95, first visible thumbnail, scroll frame stability, peak heap, indexing throughput, and battery-sensitive WorkManager behavior.
+- Build gates are hard: every generated APK <=30 MB and the release AAB <=20 MB. Record device model, API level, RAM tier, library size, and airplane-mode state with every benchmark.

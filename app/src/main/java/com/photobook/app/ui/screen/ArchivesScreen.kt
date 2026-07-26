@@ -21,9 +21,9 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material3.Button
@@ -38,6 +38,10 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -60,18 +64,26 @@ fun ArchivesScreen(
     retentionDays: Int,
     dueDeleteCount: Int,
     archivesEnabled: Boolean,
+    paymentsEnabled: Boolean,
+    foodEnabled: Boolean,
     isLoading: Boolean,
     onDismiss: () -> Unit,
     onRefresh: () -> Unit,
     onArchivesEnabledChanged: (Boolean) -> Unit,
+    onPaymentsEnabledChanged: (Boolean) -> Unit,
+    onFoodEnabledChanged: (Boolean) -> Unit,
     onRetentionDaysChanged: (Int) -> Unit,
     onToggleSelection: (Long) -> Unit,
     onSelectAll: () -> Unit,
     onClearSelection: () -> Unit,
     onKeepSelected: () -> Unit,
+    onKeepCandidate: (Long) -> Unit,
+    onArchiveCandidate: (ArchiveCandidate) -> Unit,
     onMoveSelectedToTrash: () -> Unit,
     onDeleteDueItems: () -> Unit,
 ) {
+    var previewCandidate by remember(candidates) { mutableStateOf<ArchiveCandidate?>(null) }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -98,6 +110,14 @@ fun ArchivesScreen(
                 )
 
                 if (archivesEnabled) {
+                    ArchiveCategorySelector(
+                        paymentsEnabled = paymentsEnabled,
+                        foodEnabled = foodEnabled,
+                        onPaymentsEnabledChanged = onPaymentsEnabledChanged,
+                        onFoodEnabledChanged = onFoodEnabledChanged,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    )
+
                     RetentionSelector(
                         selectedDays = retentionDays,
                         onRetentionDaysChanged = onRetentionDaysChanged,
@@ -178,7 +198,8 @@ fun ArchivesScreen(
                                 ArchiveCandidateTile(
                                     candidate = candidate,
                                     selected = candidate.photo.id in selectedPhotoIds,
-                                    onClick = { onToggleSelection(candidate.photo.id) },
+                                    onPreview = { previewCandidate = candidate },
+                                    onToggleSelection = { onToggleSelection(candidate.photo.id) },
                                 )
                             }
                         }
@@ -187,6 +208,24 @@ fun ArchivesScreen(
             }
         }
     }
+
+    previewCandidate
+        ?.takeIf { candidate -> candidates.any { current -> current.photo.id == candidate.photo.id } }
+        ?.let { candidate ->
+            ArchiveCandidatePreviewDialog(
+                candidate = candidate,
+                retentionDays = retentionDays,
+                onDismiss = { previewCandidate = null },
+                onKeep = {
+                    previewCandidate = null
+                    onKeepCandidate(candidate.photo.id)
+                },
+                onArchive = {
+                    previewCandidate = null
+                    onArchiveCandidate(candidate)
+                },
+            )
+        }
 }
 
 @Composable
@@ -224,8 +263,12 @@ private fun ArchivesTopBar(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        IconButton(onClick = onRefresh, enabled = archivesEnabled && !isLoading) {
-            Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.duplicates_refresh))
+        if (isLoading) {
+            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+        } else {
+            IconButton(onClick = onRefresh, enabled = archivesEnabled) {
+                Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.duplicates_refresh))
+            }
         }
     }
 }
@@ -266,6 +309,76 @@ private fun ArchivesEnableRow(
                 onCheckedChange = onEnabledChanged,
             )
         }
+    }
+}
+
+@Composable
+private fun ArchiveCategorySelector(
+    paymentsEnabled: Boolean,
+    foodEnabled: Boolean,
+    onPaymentsEnabledChanged: (Boolean) -> Unit,
+    onFoodEnabledChanged: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.54f),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.archives_categories_title),
+                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+            )
+            ArchiveCategoryRow(
+                title = stringResource(R.string.archives_category_payments),
+                subtitle = stringResource(R.string.archives_category_payments_subtitle),
+                enabled = paymentsEnabled,
+                onEnabledChanged = onPaymentsEnabledChanged,
+            )
+            ArchiveCategoryRow(
+                title = stringResource(R.string.archives_category_food),
+                subtitle = stringResource(R.string.archives_category_food_subtitle),
+                enabled = foodEnabled,
+                onEnabledChanged = onFoodEnabledChanged,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ArchiveCategoryRow(
+    title: String,
+    subtitle: String,
+    enabled: Boolean,
+    onEnabledChanged: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(
+            checked = enabled,
+            onCheckedChange = onEnabledChanged,
+        )
     }
 }
 
@@ -333,7 +446,7 @@ private fun ArchivesActionRow(
             enabled = selectedCount > 0,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+            Icon(Icons.Default.Archive, contentDescription = null, modifier = Modifier.size(18.dp))
             Text(text = stringResource(R.string.archives_move_to_trash, selectedCount))
         }
     }
@@ -343,7 +456,8 @@ private fun ArchivesActionRow(
 private fun ArchiveCandidateTile(
     candidate: ArchiveCandidate,
     selected: Boolean,
-    onClick: () -> Unit,
+    onPreview: () -> Unit,
+    onToggleSelection: () -> Unit,
 ) {
     Box(
         modifier = Modifier
@@ -356,7 +470,7 @@ private fun ArchiveCandidateTile(
                 color = if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.72f),
                 shape = RoundedCornerShape(8.dp),
             )
-            .clickable(onClick = onClick),
+            .clickable(onClick = onPreview),
     ) {
         AsyncImage(
             model = Uri.parse(candidate.photo.uriString),
@@ -364,17 +478,30 @@ private fun ArchiveCandidateTile(
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize(),
         )
-        if (selected) {
-            Icon(
-                imageVector = Icons.Default.CheckCircle,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(6.dp)
-                    .background(MaterialTheme.colorScheme.surface, CircleShape)
-                    .size(24.dp),
-            )
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(6.dp)
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
+                .clickable(onClick = onToggleSelection),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (selected) {
+                Icon(
+                    imageVector = Icons.Default.CheckCircle,
+                    contentDescription = stringResource(R.string.archives_tile_selected),
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp),
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(18.dp)
+                        .border(2.dp, MaterialTheme.colorScheme.onSurfaceVariant, CircleShape),
+                )
+            }
         }
         Column(
             modifier = Modifier
@@ -400,6 +527,108 @@ private fun ArchiveCandidateTile(
                 color = Color.White.copy(alpha = 0.82f),
                 maxLines = 1,
             )
+        }
+    }
+}
+
+@Composable
+private fun ArchiveCandidatePreviewDialog(
+    candidate: ArchiveCandidate,
+    retentionDays: Int,
+    onDismiss: () -> Unit,
+    onKeep: () -> Unit,
+    onArchive: () -> Unit,
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background,
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = stringResource(R.string.viewer_close))
+                    }
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(
+                            text = stringResource(R.string.archives_review_title),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Text(
+                            text = candidate.photo.fileName,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Box(modifier = Modifier.size(48.dp))
+                }
+
+                AsyncImage(
+                    model = Uri.parse(candidate.photo.uriString),
+                    contentDescription = candidate.photo.fileName,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .background(Color.Black),
+                )
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = stringResource(
+                            R.string.archives_candidate_meta,
+                            (candidate.confidence * 100.0).toInt(),
+                            formatBytes(candidate.photo.fileSize),
+                        ),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = candidate.reasons.joinToString(" / "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        TextButton(
+                            onClick = onKeep,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(text = stringResource(R.string.archives_review_keep))
+                        }
+                        Button(
+                            onClick = onArchive,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(text = stringResource(R.string.archives_review_archive, retentionDays))
+                        }
+                    }
+                }
+            }
         }
     }
 }

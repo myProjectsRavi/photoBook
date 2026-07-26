@@ -24,7 +24,9 @@ class ArchiveRetentionWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         return runCatching {
-            archiveService.refreshDueDeleteState()
+            // Retention only marks items due. Media deletion must remain a
+            // foreground MediaStore confirmation flow.
+            archiveService.markDueDeleteItems()
             Result.success()
         }.getOrElse {
             if (runAttemptCount < 3) Result.retry() else Result.success()

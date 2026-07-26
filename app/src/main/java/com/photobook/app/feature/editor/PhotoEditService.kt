@@ -34,7 +34,7 @@ class PhotoEditService @Inject constructor(
                 if (rotated !== source) {
                     source?.recycleSafely()
                 }
-                cropped = applyCrop(rotated!!, state.cropPreset)
+                cropped = applyCrop(rotated!!, state)
                 if (cropped !== rotated) {
                     rotated?.recycleSafely()
                 }
@@ -123,7 +123,15 @@ class PhotoEditService @Inject constructor(
         )
     }
 
-    private fun applyCrop(source: Bitmap, preset: CropPreset): Bitmap {
+    private fun applyCrop(source: Bitmap, state: PhotoEditState): Bitmap {
+        state.customCrop?.normalized()?.takeIf { it.isUsable() }?.let { region ->
+            return applyCustomCrop(source, region)
+        }
+
+        return applyPresetCrop(source, state.cropPreset)
+    }
+
+    private fun applyPresetCrop(source: Bitmap, preset: CropPreset): Bitmap {
         if (preset == CropPreset.Original) return source
         val targetRatio = preset.ratio
         val currentRatio = source.width.toFloat() / source.height.toFloat()
@@ -139,6 +147,17 @@ class PhotoEditService @Inject constructor(
         }
         val left = ((source.width - cropWidth) / 2).coerceAtLeast(0)
         val top = ((source.height - cropHeight) / 2).coerceAtLeast(0)
+        return Bitmap.createBitmap(source, left, top, cropWidth, cropHeight)
+    }
+
+    private fun applyCustomCrop(source: Bitmap, region: NormalizedCropRegion): Bitmap {
+        val left = (region.left * source.width).toInt().coerceIn(0, source.width - 1)
+        val top = (region.top * source.height).toInt().coerceIn(0, source.height - 1)
+        val right = (region.right * source.width).toInt().coerceIn(left + 1, source.width)
+        val bottom = (region.bottom * source.height).toInt().coerceIn(top + 1, source.height)
+        val cropWidth = (right - left).coerceAtLeast(1)
+        val cropHeight = (bottom - top).coerceAtLeast(1)
+        if (cropWidth == source.width && cropHeight == source.height) return source
         return Bitmap.createBitmap(source, left, top, cropWidth, cropHeight)
     }
 
@@ -302,6 +321,7 @@ class PhotoEditService @Inject constructor(
 data class PhotoEditState(
     val rotationQuarterTurns: Int = 0,
     val cropPreset: CropPreset = CropPreset.Original,
+    val customCrop: NormalizedCropRegion? = null,
     val exposure: Float = 0f,
     val contrast: Float = 1f,
     val filter: QuickFilter = QuickFilter.Original,
@@ -309,9 +329,47 @@ data class PhotoEditState(
     fun isIdentity(): Boolean {
         return rotationQuarterTurns % 4 == 0 &&
             cropPreset == CropPreset.Original &&
+            customCrop == null &&
             exposure == 0f &&
             contrast == 1f &&
             filter == QuickFilter.Original
+    }
+}
+
+data class NormalizedCropRegion(
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+) {
+    fun normalized(): NormalizedCropRegion {
+        val safeLeft = left.coerceIn(0f, 1f)
+        val safeTop = top.coerceIn(0f, 1f)
+        val safeRight = right.coerceIn(0f, 1f)
+        val safeBottom = bottom.coerceIn(0f, 1f)
+        return NormalizedCropRegion(
+            left = minOf(safeLeft, safeRight),
+            top = minOf(safeTop, safeBottom),
+            right = maxOf(safeLeft, safeRight),
+            bottom = maxOf(safeTop, safeBottom),
+        )
+    }
+
+    fun isUsable(): Boolean {
+        val region = normalized()
+        return region.right - region.left >= MIN_SIZE &&
+            region.bottom - region.top >= MIN_SIZE
+    }
+
+    fun aspectRatioFor(photoAspectRatio: Float): Float {
+        val region = normalized()
+        val width = (region.right - region.left).coerceAtLeast(MIN_SIZE)
+        val height = (region.bottom - region.top).coerceAtLeast(MIN_SIZE)
+        return (photoAspectRatio.coerceAtLeast(0.01f) * width / height).coerceIn(0.45f, 2.2f)
+    }
+
+    companion object {
+        private const val MIN_SIZE = 0.08f
     }
 }
 

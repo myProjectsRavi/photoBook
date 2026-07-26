@@ -128,6 +128,8 @@ class MainViewModel @Inject constructor(
         val archiveRetentionDays: Int = 30,
         val archiveDueDeleteCount: Int = 0,
         val archivesEnabled: Boolean = false,
+        val archivePaymentsEnabled: Boolean = true,
+        val archiveFoodEnabled: Boolean = false,
     )
 
     val uiState = MutableStateFlow(UiState())
@@ -500,18 +502,16 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    fun onViewerPageChanged(index: Int) {
+    fun onViewerPhotoChanged(photoId: Long) {
         val state = uiState.value
-        val focusedPhotoId = state.viewerPhotos.getOrNull(index)?.id
-        if (focusedPhotoId != null) {
-            runCatching { TaggingWorker.enqueueFocusedPhoto(context, focusedPhotoId) }
-        }
+        val currentIndex = state.viewerPhotos.indexOfFirst { photo -> photo.id == photoId }
+        if (currentIndex < 0) return
+        runCatching { TaggingWorker.enqueueFocusedPhoto(context, photoId) }
         if (
-            focusedPhotoId != null &&
             state.viewerUsesVisibleWindow &&
-            shouldRecentreViewerWindow(index, state.viewerPhotos.size)
+            shouldRecentreViewerWindow(currentIndex, state.viewerPhotos.size)
         ) {
-            val window = resolveVisiblePhotoWindow(focusedPhotoId)
+            val window = resolveVisiblePhotoWindow(photoId)
             if (window != null) {
                 uiState.update {
                     it.copy(
@@ -523,7 +523,7 @@ class MainViewModel @Inject constructor(
                 return
             }
         }
-        uiState.update { it.copy(viewerStartIndex = index) }
+        uiState.update { it.copy(viewerStartIndex = currentIndex) }
     }
 
     fun closeViewer() {
@@ -591,10 +591,19 @@ class MainViewModel @Inject constructor(
     fun refreshArchives() {
         viewModelScope.launch {
             uiState.update { it.copy(isArchivesLoading = true) }
-            loadArchiveSummary(
-                refreshCandidates = true,
-                preselectCandidates = true,
-            )
+            runCatching {
+                // The explicit refresh action is the user's request for a complete local scan.
+                // Keep all MediaStore, EXIF, Room, and classifier work off the main thread.
+                syncMediaStoreIncremental(forceFullSync = true)
+                loadArchiveSummary(
+                    refreshCandidates = true,
+                    preselectCandidates = true,
+                    fullLibraryScan = true,
+                )
+            }.onFailure {
+                // A revoked/partial MediaStore permission must leave the dialog usable.
+                uiState.update { state -> state.copy(isArchivesLoading = false) }
+            }
         }
     }
 
@@ -641,6 +650,40 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    fun setArchivePaymentsEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            uiState.update { state ->
+                state.copy(
+                    archivePaymentsEnabled = enabled,
+                    isArchivesLoading = state.archivesEnabled,
+                    archiveSelectedPhotoIds = emptySet(),
+                )
+            }
+            val summary = archiveService.setPaymentsEnabled(enabled)
+            applyArchiveSummary(
+                summary = summary,
+                preselectCandidates = summary.enabled,
+            )
+        }
+    }
+
+    fun setArchiveFoodEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            uiState.update { state ->
+                state.copy(
+                    archiveFoodEnabled = enabled,
+                    isArchivesLoading = state.archivesEnabled,
+                    archiveSelectedPhotoIds = emptySet(),
+                )
+            }
+            val summary = archiveService.setFoodEnabled(enabled)
+            applyArchiveSummary(
+                summary = summary,
+                preselectCandidates = summary.enabled,
+            )
+        }
+    }
+
     fun toggleArchiveCandidateSelection(photoId: Long) {
         uiState.update { state ->
             val nextSelected = state.archiveSelectedPhotoIds.toMutableSet().apply {
@@ -669,10 +712,21 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    fun keepArchiveCandidate(photoId: Long) {
+        viewModelScope.launch {
+            archiveService.markKept(setOf(photoId))
+            loadArchiveSummary(refreshCandidates = false)
+        }
+    }
+
     fun resolveArchivePhotosByIds(photoIds: Set<Long>): List<PhotoRecord> {
         if (photoIds.isEmpty()) return emptyList()
         val byId = uiState.value.archiveCandidates.associateBy { candidate -> candidate.photo.id }
         return photoIds.mapNotNull { id -> byId[id]?.photo }
+    }
+
+    suspend fun archiveManagedTrashPhotoIds(): Set<Long> {
+        return archiveService.archivedTrashPhotoIds()
     }
 
     suspend fun resolveArchiveDueDeleteItems(): List<ArchiveDueDeleteItem> {
@@ -871,27 +925,46 @@ class MainViewModel @Inject constructor(
     private suspend fun loadArchiveSummary(
         refreshCandidates: Boolean,
         preselectCandidates: Boolean = false,
+        fullLibraryScan: Boolean = false,
     ) {
         val summary = if (refreshCandidates) {
-            archiveService.refreshCandidates()
+            if (fullLibraryScan) {
+                val finalSummary = archiveService.refreshAllCandidates { partialSummary ->
+                    applyArchiveSummary(
+                        summary = partialSummary,
+                        preselectCandidates = preselectCandidates,
+                        isLoading = true,
+                    )
+                }
+                applyArchiveSummary(
+                    summary = finalSummary,
+                    preselectCandidates = preselectCandidates,
+                    isLoading = false,
+                )
+                return
+            } else {
+                archiveService.refreshCandidates()
+            }
         } else {
             archiveService.loadSummary()
         }
         applyArchiveSummary(
             summary = summary,
             preselectCandidates = preselectCandidates,
+            isLoading = false,
         )
     }
 
     private fun applyArchiveSummary(
         summary: com.photobook.app.feature.archive.ArchiveSummary,
         preselectCandidates: Boolean,
+        isLoading: Boolean = false,
     ) {
         val candidateIds = summary.candidates.map { candidate -> candidate.photo.id }.toSet()
         uiState.update { state ->
             val clampedSelection = state.archiveSelectedPhotoIds.intersect(candidateIds)
             state.copy(
-                isArchivesLoading = false,
+                isArchivesLoading = isLoading,
                 archiveCandidates = summary.candidates,
                 archiveSelectedPhotoIds = if (preselectCandidates && summary.enabled) {
                     candidateIds
@@ -901,6 +974,8 @@ class MainViewModel @Inject constructor(
                 archiveRetentionDays = summary.retentionDays,
                 archiveDueDeleteCount = summary.dueDeleteCount,
                 archivesEnabled = summary.enabled,
+                archivePaymentsEnabled = summary.paymentsEnabled,
+                archiveFoodEnabled = summary.foodEnabled,
             )
         }
     }
@@ -979,30 +1054,34 @@ class MainViewModel @Inject constructor(
     }
 
     private suspend fun syncMediaStoreIncremental(forceFullSync: Boolean) {
-        val existing = photoIndex.snapshot()
-        val currentVersion = mediaStoreScanner.currentMediaStoreVersion()
-        val currentGeneration = mediaStoreScanner.currentGenerationOrNull()
-        val lastVersion = sharedPreferences.getString(Constants.MEDIA_STORE_VERSION_KEY, null)
-        val lastGeneration = sharedPreferences.getLong(Constants.MEDIA_STORE_GENERATION_KEY, -1L)
-            .takeIf { value -> value >= 0L }
+        withContext(Dispatchers.IO) {
+            val existing = photoIndex.snapshot()
+            val currentVersion = mediaStoreScanner.currentMediaStoreVersion()
+            val currentGeneration = mediaStoreScanner.currentGenerationOrNull()
+            val lastVersion = sharedPreferences.getString(Constants.MEDIA_STORE_VERSION_KEY, null)
+            val lastGeneration = sharedPreferences.getLong(Constants.MEDIA_STORE_GENERATION_KEY, -1L)
+                .takeIf { value -> value >= 0L }
 
-        val shouldFullSync = forceFullSync || existing.isEmpty() || lastVersion == null || currentVersion != lastVersion
-        if (shouldFullSync) {
-            rebuildEntireIndex(existing)
-            persistMediaStoreSyncState(currentVersion, currentGeneration)
-            return
-        }
+            val shouldFullSync = forceFullSync || existing.isEmpty() || lastVersion == null || currentVersion != lastVersion
+            if (shouldFullSync) {
+                rebuildEntireIndex(existing)
+                persistMediaStoreSyncState(currentVersion, currentGeneration)
+                return@withContext
+            }
 
-        if (lastGeneration != null && currentGeneration != null) {
-            if (currentGeneration > lastGeneration) {
-                processGenerationDelta(existing, lastGeneration)
+            if (!shouldFullSync && lastGeneration != null && currentGeneration != null) {
+                if (currentGeneration > lastGeneration) {
+                    processGenerationDelta(existing, lastGeneration)
+                }
+                persistMediaStoreSyncState(currentVersion, currentGeneration)
+                return@withContext
+            }
+
+            if (!shouldFullSync) {
+                processLegacyDelta(existing)
             }
             persistMediaStoreSyncState(currentVersion, currentGeneration)
-            return
         }
-
-        processLegacyDelta(existing)
-        persistMediaStoreSyncState(currentVersion, currentGeneration)
     }
 
     private suspend fun rebuildEntireIndex(existing: List<PhotoRecord>) {

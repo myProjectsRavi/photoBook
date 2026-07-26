@@ -71,12 +71,13 @@ fun PhotoReelsScreen(
             VerticalPager(
                 state = pagerState,
                 modifier = Modifier.fillMaxSize(),
+                key = { page -> photos.getOrNull(page)?.id ?: page.toLong() },
             ) { page ->
-                val photo = photos[page]
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) {
+                photos.getOrNull(page)?.let { photo ->
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) {
                     AsyncImage(
                         model = Uri.parse(photo.uriString),
                         contentDescription = photo.fileName,
@@ -151,6 +152,7 @@ fun PhotoReelsScreen(
                                 )
                             }
                         }
+                    }
                     }
                 }
             }

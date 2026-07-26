@@ -5,16 +5,25 @@ import com.photobook.app.data.model.PhotoRecord
 import javax.inject.Inject
 
 data class ArchiveClassification(
+    val category: ArchiveCategory,
     val confidence: Double,
     val reasons: List<String>,
 )
 
+enum class ArchiveCategory {
+    Payments,
+    Food,
+}
+
 class ArchiveClassifier @Inject constructor() {
 
-    fun classify(photo: PhotoRecord, nowMs: Long = System.currentTimeMillis()): ArchiveClassification? {
+    fun classify(
+        photo: PhotoRecord,
+        nowMs: Long = System.currentTimeMillis(),
+        enabledCategories: Set<ArchiveCategory> = DEFAULT_CATEGORIES,
+    ): ArchiveClassification? {
         if (photo.isFavorite) return null
         if (!photo.mimeType.startsWith("image/", ignoreCase = true)) return null
-        if (!isScreenshot(photo)) return null
         if (isFresh(photo, nowMs)) return null
 
         val metadataText = buildMetadataText(photo)
@@ -22,6 +31,12 @@ class ArchiveClassifier @Inject constructor() {
         val combinedText = "$metadataText $ocrText"
 
         if (hasSensitiveDocumentCue(combinedText)) return null
+
+        if (ArchiveCategory.Food in enabledCategories) {
+            classifyFood(photo)?.let { return it }
+        }
+        if (ArchiveCategory.Payments !in enabledCategories) return null
+        if (!isScreenshot(photo, metadataText)) return null
 
         val hasPaymentAppCue = PAYMENT_APP_CUES.any { cue -> combinedText.contains(cue) }
         val hasUpiCue = UPI_CUES.any { cue -> combinedText.contains(cue) } || UPI_ID_REGEX.containsMatchIn(combinedText)
@@ -55,15 +70,33 @@ class ArchiveClassifier @Inject constructor() {
             ).coerceAtMost(MAX_CONFIDENCE)
 
         return if (confidence >= MIN_CONFIDENCE) {
-            ArchiveClassification(confidence = confidence, reasons = reasons)
+            ArchiveClassification(
+                category = ArchiveCategory.Payments,
+                confidence = confidence,
+                reasons = reasons,
+            )
         } else {
             null
         }
     }
 
-    private fun isScreenshot(photo: PhotoRecord): Boolean {
-        val text = buildMetadataText(photo)
-        return SCREENSHOT_CUES.any { cue -> text.contains(cue) }
+    private fun classifyFood(photo: PhotoRecord): ArchiveClassification? {
+        val foodTag = photo.mlTags
+            .filter { tag -> tag.label.equals("food", ignoreCase = true) && tag.confidence >= FOOD_MIN_CONFIDENCE }
+            .maxByOrNull { tag -> tag.confidence }
+            ?: return null
+
+        val confidence = (FOOD_BASE_CONFIDENCE + foodTag.confidence * FOOD_CONFIDENCE_WEIGHT)
+            .coerceIn(FOOD_MIN_OUTPUT_CONFIDENCE, MAX_CONFIDENCE)
+        return ArchiveClassification(
+            category = ArchiveCategory.Food,
+            confidence = confidence,
+            reasons = listOf("Food photo"),
+        )
+    }
+
+    private fun isScreenshot(photo: PhotoRecord, metadataText: String = buildMetadataText(photo)): Boolean {
+        return SCREENSHOT_CUES.any { cue -> metadataText.contains(cue) }
     }
 
     private fun isFresh(photo: PhotoRecord, nowMs: Long): Boolean {
@@ -98,9 +131,14 @@ class ArchiveClassifier @Inject constructor() {
         const val DEFAULT_RETENTION_DAYS = 30
         const val MIN_RETENTION_DAYS = 7
         const val MAX_RETENTION_DAYS = 30
+        val DEFAULT_CATEGORIES = setOf(ArchiveCategory.Payments)
         private const val BASE_CONFIDENCE = 0.68
         private const val MIN_CONFIDENCE = 0.84
         private const val MAX_CONFIDENCE = 0.98
+        private const val FOOD_MIN_CONFIDENCE = 0.60f
+        private const val FOOD_BASE_CONFIDENCE = 0.64
+        private const val FOOD_CONFIDENCE_WEIGHT = 0.30
+        private const val FOOD_MIN_OUTPUT_CONFIDENCE = 0.84
         private const val FRESH_GRACE_MS = 24L * 60L * 60L * 1000L
 
         private val SCREENSHOT_CUES = listOf(

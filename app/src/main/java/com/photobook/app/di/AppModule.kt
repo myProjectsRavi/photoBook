@@ -47,6 +47,7 @@ object AppModule {
                 MIGRATION_7_8,
                 MIGRATION_8_9,
                 MIGRATION_9_10,
+                MIGRATION_10_11,
             )
             .build()
     }
@@ -247,6 +248,25 @@ object AppModule {
             db.execSQL("ALTER TABLE photos ADD COLUMN ocrStatus TEXT NOT NULL DEFAULT 'PENDING'")
             db.execSQL("UPDATE photos SET mlStatus = 'PROCESSED' WHERE isMlProcessed = 1")
             db.execSQL("UPDATE photos SET ocrStatus = 'PROCESSED' WHERE isOcrProcessed = 1")
+        }
+    }
+
+    private val MIGRATION_10_11 = object : Migration(10, 11) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "ALTER TABLE photos ADD COLUMN isArchiveScreenshotCandidate INTEGER NOT NULL DEFAULT 0",
+            )
+            db.execSQL(
+                "ALTER TABLE photos ADD COLUMN isArchiveFoodCandidate INTEGER NOT NULL DEFAULT 0",
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_photos_isArchiveScreenshotCandidate_dateAdded " +
+                    "ON photos(isArchiveScreenshotCandidate, dateAdded)",
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_photos_isArchiveFoodCandidate_dateAdded " +
+                    "ON photos(isArchiveFoodCandidate, dateAdded)",
+            )
         }
     }
 

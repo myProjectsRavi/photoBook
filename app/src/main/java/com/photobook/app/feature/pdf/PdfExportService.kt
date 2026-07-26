@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ImageDecoder
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
@@ -17,6 +18,7 @@ import android.provider.MediaStore
 import androidx.core.content.FileProvider
 import androidx.exifinterface.media.ExifInterface
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.util.LocalDiagnostics
 import com.photobook.app.util.PerformanceProfiler
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
@@ -26,6 +28,7 @@ import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 
 class PdfExportService @Inject constructor(
@@ -65,21 +68,30 @@ class PdfExportService @Inject constructor(
         return withContext(Dispatchers.IO) {
             val document = PdfDocument()
             var writtenPages = 0
+            var skippedPages = 0
             var output: PdfOutput? = null
 
             try {
-                photos.forEachIndexed { index, photo ->
+                photos.forEach { photo ->
                     val bitmap = decodeSampledBitmap(
                         uri = Uri.parse(photo.uriString),
                         maxDimensionPx = constraints.maxImageDimensionPx,
-                    ) ?: return@forEachIndexed
+                    ) ?: run {
+                        skippedPages += 1
+                        LocalDiagnostics.record(
+                            context = context,
+                            area = "pdf-export",
+                            message = "Skipped unreadable image while creating PDF: ${photo.uriString}",
+                        )
+                        return@forEach
+                    }
 
                     try {
                         val pageSpec = PdfPageLayout.pageSpecFor(bitmap.width, bitmap.height)
                         val pageInfo = PdfDocument.PageInfo.Builder(
                             pageSpec.width,
                             pageSpec.height,
-                            index + 1,
+                            writtenPages + 1,
                         ).create()
                         val page = document.startPage(pageInfo)
                         drawPage(page.canvas, bitmap, pageSpec)
@@ -100,12 +112,28 @@ class PdfExportService @Inject constructor(
                     PdfExportDestination.ShareCache -> writeDocumentToShareCache(document, fileName)
                 }
 
-                PdfExportResult.Success(
-                    uri = output.uri,
-                    fileName = fileName,
-                    pageCount = writtenPages,
-                )
+                if (skippedPages > 0) {
+                    PdfExportResult.PartialSuccess(
+                        uri = output.uri,
+                        fileName = fileName,
+                        pageCount = writtenPages,
+                        skippedCount = skippedPages,
+                    )
+                } else {
+                    PdfExportResult.Success(
+                        uri = output.uri,
+                        fileName = fileName,
+                        pageCount = writtenPages,
+                    )
+                }
             } catch (t: Throwable) {
+                if (t is CancellationException) throw t
+                LocalDiagnostics.record(
+                    context = context,
+                    area = "pdf-export",
+                    message = "PDF export failed",
+                    throwable = t,
+                )
                 output?.delete()
                 PdfExportResult.Error(t)
             } finally {
@@ -135,12 +163,28 @@ class PdfExportService @Inject constructor(
     }
 
     private fun decodeSampledBitmap(uri: Uri, maxDimensionPx: Int): Bitmap? {
+        decodeWithBitmapFactory(uri, maxDimensionPx)?.let { decoded ->
+            val normalized = applyExifOrientation(decoded, uri)
+            if (normalized !== decoded) {
+                decoded.recycleSafely()
+            }
+            return normalized
+        }
+
+        return decodeWithImageDecoder(uri, maxDimensionPx)
+    }
+
+    private fun decodeWithBitmapFactory(uri: Uri, maxDimensionPx: Int): Bitmap? {
         val bounds = BitmapFactory.Options().apply {
             inJustDecodeBounds = true
         }
-        context.contentResolver.openInputStream(uri)?.use { stream ->
-            BitmapFactory.decodeStream(stream, null, bounds)
-        } ?: return null
+        val readBounds = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, bounds)
+                true
+            }
+        }.getOrDefault(false)
+        if (readBounds != true) return null
 
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
             return null
@@ -156,15 +200,39 @@ class PdfExportService @Inject constructor(
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
 
-        val decoded = context.contentResolver.openInputStream(uri)?.use { stream ->
-            BitmapFactory.decodeStream(stream, null, decodeOptions)
-        } ?: return null
+        return runCatching {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, decodeOptions)
+            }
+        }.getOrNull()
+    }
 
-        val normalized = applyExifOrientation(decoded, uri)
-        if (normalized !== decoded) {
-            decoded.recycleSafely()
-        }
-        return normalized
+    private fun decodeWithImageDecoder(uri: Uri, maxDimensionPx: Int): Bitmap? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
+
+        return runCatching {
+            val source = ImageDecoder.createSource(context.contentResolver, uri)
+            ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                val width = info.size.width
+                val height = info.size.height
+                val largest = maxOf(width, height)
+                if (width > 0 && height > 0 && largest > maxDimensionPx) {
+                    val scale = maxDimensionPx.toFloat() / largest.toFloat()
+                    decoder.setTargetSize(
+                        (width * scale).toInt().coerceAtLeast(1),
+                        (height * scale).toInt().coerceAtLeast(1),
+                    )
+                }
+            }
+        }.onFailure { error ->
+            LocalDiagnostics.record(
+                context = context,
+                area = "pdf-export",
+                message = "ImageDecoder fallback failed for PDF image",
+                throwable = error,
+            )
+        }.getOrNull()
     }
 
     private fun applyExifOrientation(bitmap: Bitmap, uri: Uri): Bitmap {
@@ -263,10 +331,20 @@ class PdfExportService @Inject constructor(
                 outputUri?.let { uri ->
                     runCatching { context.contentResolver.delete(uri, null, null) }
                 }
-                throw t
+                LocalDiagnostics.record(
+                    context = context,
+                    area = "pdf-export",
+                    message = "MediaStore Downloads PDF write failed; falling back to app documents",
+                    throwable = t,
+                )
+                return writeDocumentToAppDocuments(document, fileName)
             }
         }
 
+        return writeDocumentToAppDocuments(document, fileName)
+    }
+
+    private fun writeDocumentToAppDocuments(document: PdfDocument, fileName: String): PdfOutput {
         val outputDir = File(
             context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: context.cacheDir,
             "PhotoBook",

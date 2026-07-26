@@ -14,6 +14,8 @@ import com.photobook.app.data.model.PhotoRecord
         Index(value = ["folderName"]),
         Index(value = ["city", "state", "country"]),
         Index(value = ["fileSize", "width", "height"]),
+        Index(value = ["isArchiveScreenshotCandidate", "dateAdded"]),
+        Index(value = ["isArchiveFoodCandidate", "dateAdded"]),
     ],
 )
 data class PhotoEntity(
@@ -51,6 +53,8 @@ data class PhotoEntity(
     val ocrText: String,
     val isOcrProcessed: Boolean,
     val ocrStatus: String,
+    val isArchiveScreenshotCandidate: Boolean,
+    val isArchiveFoodCandidate: Boolean,
 )
 
 fun PhotoEntity.toPhotoRecord(): PhotoRecord {
@@ -126,5 +130,24 @@ fun PhotoRecord.toPhotoEntity(): PhotoEntity {
         ocrText = ocrText,
         isOcrProcessed = isOcrProcessed,
         ocrStatus = ocrStatus.name,
+        isArchiveScreenshotCandidate = buildString {
+            append(folderName)
+            append(' ')
+            append(folderPath)
+            append(' ')
+            append(filePath)
+            append(' ')
+            append(fileName)
+        }.containsScreenshotCue(),
+        isArchiveFoodCandidate = mlTags.any { tag ->
+            tag.label.equals("food", ignoreCase = true)
+        },
     )
+}
+
+private fun String.containsScreenshotCue(): Boolean {
+    val normalized = lowercase()
+    return normalized.contains("screenshot") ||
+        normalized.contains("screen_shot") ||
+        normalized.contains("screen-shot")
 }

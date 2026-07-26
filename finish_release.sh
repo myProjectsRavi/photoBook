@@ -1,41 +1,69 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-echo "🚀 Starting PhotoBook Release Process..."
-cd "/Users/ravitejanekkalapu/Documents/Code Repos/Photo Book/photoBook"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+cd "$SCRIPT_DIR"
 
-echo "📦 1. Pushing to GitHub..."
-git push origin main
-if [ $? -ne 0 ]; then
-    echo "❌ Git push failed. Please check your network or authentication."
-    exit 1
-fi
-echo "✅ Pushed successfully."
-
-echo "🔨 2. Building Release AAB..."
-export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
-export PATH="$JAVA_HOME/bin:$PATH"
-./gradlew clean :app:bundleRelease
-if [ $? -ne 0 ]; then
-    echo "❌ Build failed. Please check the errors above."
-    exit 1
+if [[ ! -x "./gradlew" ]]; then
+  echo "Gradle wrapper not found at repository root: $SCRIPT_DIR" >&2
+  exit 1
 fi
 
-echo "📋 Copying AAB to outputs directory..."
-mkdir -p outputs/bundle
-cp app/build/outputs/bundle/release/app-release.aab outputs/bundle/PhotoBook-v2.0.0-glass-ui-vc7.aab
-echo "✅ Build complete. AAB is at: outputs/bundle/PhotoBook-v2.0.0-glass-ui-vc7.aab"
+echo "Building PhotoBook from $SCRIPT_DIR"
 
-echo "📂 3. Opening Play Store Assets folder..."
-# Create a local folder and copy the assets from the AI's internal brain folder so they are easy to drag and drop
-mkdir -p outputs/playstore-assets
-cp /Users/ravitejanekkalapu/.gemini/antigravity/brain/d5d07f36-2210-4867-a70d-150dfd8e6d40/*.png outputs/playstore-assets/ 2>/dev/null
-open outputs/playstore-assets
+metadata="$(./gradlew -q :app:printReleaseMetadata)"
+version_code="$(printf '%s\n' "$metadata" | awk -F= '$1 == "versionCode" { print $2 }')"
+version_name="$(printf '%s\n' "$metadata" | awk -F= '$1 == "versionName" { print $2 }')"
+if [[ -z "$version_code" || -z "$version_name" ]]; then
+  echo "Unable to derive release metadata from Gradle." >&2
+  exit 1
+fi
 
-echo "🌐 4. Opening Play Console in your browser..."
-open "https://play.google.com/console/u/0/developers/7517725463519393699/app/4975631467518652850/store-listing"
+./gradlew clean \
+  :app:assembleRelease \
+  :app:bundleRelease \
+  :app:verifyApkSize \
+  :app:verifyReleaseBundleSize \
+  :app:lintRelease
 
-echo ""
-echo "🎉 Almost there! Please complete the final manual steps:"
-echo "1. Drag and drop the screenshots from the opened folder into the Play Console."
-echo "2. Upload the AAB file from photoBook/outputs/bundle/ to a new Production release."
-echo "3. Submit for review!"
+aab="app/build/outputs/bundle/release/app-release.aab"
+if [[ ! -s "$aab" ]]; then
+  echo "Release AAB was not produced: $aab" >&2
+  exit 1
+fi
+
+apks=()
+while IFS= read -r apk; do
+  apks+=("$apk")
+done < <(find app/build/outputs/apk/release -type f -name '*.apk' -print | sort)
+if [[ "${#apks[@]}" -eq 0 ]]; then
+  echo "No release APKs were produced." >&2
+  exit 1
+fi
+
+merged_manifest="$(find app/build/intermediates/merged_manifests/release -type f -name AndroidManifest.xml -print -quit 2>/dev/null || true)"
+if [[ -z "$merged_manifest" || ! -s "$merged_manifest" ]]; then
+  echo "Merged release manifest was not found." >&2
+  exit 1
+fi
+if rg -n 'android\.permission\.INTERNET|android:name="INTERNET"' "$merged_manifest"; then
+  echo "Release manifest unexpectedly contains INTERNET permission: $merged_manifest" >&2
+  exit 1
+fi
+
+for apk in "${apks[@]}"; do
+  [[ -s "$apk" ]] || { echo "Empty release APK: $apk" >&2; exit 1; }
+done
+
+output_dir="outputs/release"
+mkdir -p "$output_dir"
+release_stem="PhotoBook-v${version_name}-vc${version_code}-production"
+cp "$aab" "$output_dir/${release_stem}.aab"
+for apk in "${apks[@]}"; do
+  cp "$apk" "$output_dir/${release_stem}-$(basename "$apk")"
+done
+
+echo "Release artifacts verified and copied to $output_dir"
+echo "AAB: $output_dir/${release_stem}.aab"
+echo "APK count: ${#apks[@]}"
+echo "Next steps are intentionally manual: inspect/signature-verify the copied artifacts, test the exact AAB/APKs on physical devices in airplane mode, then upload through Play Console."

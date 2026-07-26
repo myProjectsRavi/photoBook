@@ -11,7 +11,7 @@ class QrTransferProtocolTest {
             transferId = "one123",
             fileName = "IMG_2026_04.jpg",
             mimeType = "image/webp",
-            sha256 = "deadbeef",
+            sha256 = "0".repeat(64),
             byteSize = 1024,
             payload = "AABBCCDD",
         )
@@ -29,7 +29,7 @@ class QrTransferProtocolTest {
             totalChunks = 4,
             fileName = "IMG_2026_04.jpg",
             mimeType = "image/jpeg",
-            sha256 = "deadbeef",
+            sha256 = "0".repeat(64),
             byteSize = 2048,
         )
 
@@ -51,5 +51,20 @@ class QrTransferProtocolTest {
         val parsed = QrTransferProtocol.parse(encoded)
 
         assertThat(parsed).isEqualTo(frame)
+    }
+
+    @Test
+    fun rejectsUnsafeMetadataAndOversizedChunks() {
+        val unsafeName = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString("../private.jpg".toByteArray())
+        val unsafe = listOf(
+            "PB1", "M", "tx", "1", unsafeName, "image/jpeg", "0".repeat(64), "10",
+        ).joinToString("|")
+        val oversizedChunk = listOf(
+            "PB1", "D", "tx", "0", "A".repeat(QrTransferProtocol.MAX_CHUNK_PAYLOAD_LENGTH + 1),
+        ).joinToString("|")
+
+        assertThat(QrTransferProtocol.parse(unsafe)).isNull()
+        assertThat(QrTransferProtocol.parse(oversizedChunk)).isNull()
     }
 }

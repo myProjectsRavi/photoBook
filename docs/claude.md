@@ -1,53 +1,34 @@
 # Claude Agent Guidelines for PhotoBook
 
-PhotoBook is an offline-first Android photo manager. The product vision is private, local, free, lightweight, and fast on low-memory devices. Users should never need an account, cloud service, or app-level internet permission to use core features.
+PhotoBook is a free, private, offline-first Android gallery. Preserve the local architecture, low-RAM behavior, explicit failure states, and user-confirmed destructive actions.
 
-## Non-Negotiable Rules
+## Non-negotiable rules
 
-1. No internet permission, telemetry, analytics, crash uploaders, cloud APIs, account systems, or remote model calls.
-2. Keep the app small. Do not add dependencies when Android, Room, WorkManager, Coil, Compose, ML Kit Play Services, or existing helpers can do the job.
-3. Treat 2 GB RAM devices as a hard design target. Prefer database prefiltering, bounded windows, sampled bitmaps, immediate bitmap recycling, and sequential background work in Lite mode.
-4. Do not silently trash or permanently delete user media. Android MediaStore trash/delete requests must use the system confirmation flow.
-5. Every Room schema change must include an explicit migration.
-6. Do not swallow crashes. Use structured `runCatching`, WorkManager failures/retries, and local diagnostics in app-private storage.
+1. No `INTERNET`, accounts, telemetry, analytics, cloud APIs, crash uploaders, remote models, or deferred model downloads.
+2. Keep generated APKs <=30 MB and the release AAB <=20 MB. If a model exceeds the budget, replace it with a compact local implementation; never relax the gate.
+3. Target Android API 36, preserve Android 14 selected-photo access, and test revoked/partial permissions.
+4. Room/FTS is authoritative. Use bounded cursor/batch processing, stable IDs, cancellation, checkpoints, and explicit migrations.
+5. Never silently trash or permanently delete media. Archive retention marks due rows; foreground Android confirmation performs deletion.
+6. Preserve originals during editing/export and clean all pending/partial outputs on failure.
 
-## Current Architecture
+## Architecture facts
 
-- Stack: Kotlin, Jetpack Compose, Material 3, Room/FTS, Paging 3, Coroutines/Flow, Hilt, Coil, WorkManager, ML Kit Play Services, AndroidX Security Crypto, AndroidX Biometric.
-- Main UI: `app/src/main/java/com/photobook/app/ui/screen/MainScreen.kt`
-- Main state owner: `app/src/main/java/com/photobook/app/ui/viewmodel/MainViewModel.kt`
-- Search: `app/src/main/java/com/photobook/app/search/`
-- ML/OCR: `app/src/main/java/com/photobook/app/ml/`
-- Archives: `app/src/main/java/com/photobook/app/feature/archive/`
-- PDF export: `app/src/main/java/com/photobook/app/feature/pdf/`
-- QR transfer: `app/src/main/java/com/photobook/app/feature/qrshare/`
-- Vault: `app/src/main/java/com/photobook/app/feature/vault/`
+- Kotlin, Compose/Material 3, Room/FTS, Paging 3, WorkManager, Hilt, Coil, AndroidX Security Crypto/Biometric, Android `PdfDocument`, compact local intelligence, and ZXing QR decoding.
+- `OnDeviceIntelligence` is the shared local readiness boundary. Current compact image/face/QR capabilities are offline; Latin OCR returns an explicit unavailable/permanent failure until a model fits the size budget.
+- Archives uses indexed eligibility flags, keyset-paged Room scans, bounded decision batches, stale-candidate reconciliation, independent Payments/Food toggles, favorites/Vault/fresh-photo/sensitive-document safeguards, and foreground confirmation semantics.
+- Search uses FTS IDs without a 1,200 eligibility cap and preserves case-insensitive deterministic ranking. Limited Android 14 access is visible and never represented as a complete library.
+- Vault distinguishes newly added IDs from already protected IDs, removes partial ciphertext, sanitizes MIME/extension pairs, and clears decrypted previews on every lifecycle/security path.
 
-## Feature Facts
+## Release truth
 
-- The manifest intentionally has no `android.permission.INTERNET`.
-- `PhotoBookApplication` records local diagnostics and delegates uncaught exceptions to Android's default handler. Do not restore background crash swallowing.
-- ML/OCR processing has explicit status values. Do not mark a photo processed unless the relevant analyzer actually completed.
-- Search ranking may improve ordering, but search eligibility should remain stable unless the task explicitly asks to change matching behavior.
-- Smart Albums are virtual filters/actions over existing metadata. Do not add a Smart Albums table or duplicate media files unless a future task explicitly requires persistent custom albums.
-- Android 14 limited photo access is valid but must be visible in UX because search only covers accessible media.
-- The full-screen viewer should not materialize huge visible result lists; it uses a bounded window around the active photo.
-- Vault UI is active. Opening, adding, exporting, and deleting vault items must remain behind biometric or device credential authentication. Vault UI should use `FLAG_SECURE` and lock/clear on background.
-- Archives is local detection plus user-confirmed trash/delete requests, not silent destructive cleanup.
-- PDF sharing uses Android `PdfDocument` and FileProvider cache output. Do not add a PDF library for the current one-tap export workflow.
-- QR transfer is for compressed previews and small private transfers. It may use single-frame or animated chunked frames with size limits; do not claim universal full-quality photo transfer.
+- `app/build.gradle.kts` is the only checked-in release truth: `versionCode = 15`, `versionName = "2.0.8"`, `targetSdk = 36`.
+- Play Console consumption, track state, and upload eligibility are external preflight facts and must not be written as repository facts.
+- `finish_release.sh` is reproducible build-only: it discovers the repository root, derives metadata from Gradle, builds release artifacts, checks existence, merged manifest, sizes, and lint, and never pushes, opens a browser, or uploads.
 
 ## Verification
 
-Prefer one sequential verification run for broad Android changes:
-
 ```bash
-./gradlew testDebugUnitTest assembleDebug bundleRelease verifyApkSize verifyReleaseBundleSize lintDebug
+./gradlew clean testDebugUnitTest assembleDebug bundleRelease verifyApkSize verifyReleaseBundleSize lintDebug
 ```
 
-Size gates:
-
-- Generated APKs must be <= 30 MB.
-- Release AAB must be <= 20 MB.
-
-If a task is narrow, a focused `./gradlew testDebugUnitTest` pass is acceptable during iteration, but do not claim release readiness without the full gate.
+Separate source/build proof from physical-device proof. Required device replay includes Android 8+, Android 13, Android 14 limited/revoked access, Android 15/16 target behavior, low RAM, airplane mode, and a device without usable Play Services.

@@ -2,6 +2,7 @@ package com.photobook.app.feature.qrshare
 
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
@@ -24,13 +25,19 @@ class QrReceivedImageStore @Inject constructor(
         mimeType: String,
     ): Uri? {
         return withContext(Dispatchers.IO) {
-            if (bytes.isEmpty()) return@withContext null
-
-            val safeName = buildFileName(preferredFileName)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                return@withContext saveWithMediaStore(bytes, safeName, mimeType)
+            if (bytes.isEmpty() || bytes.size > QrTransferProtocol.MAX_TRANSFER_BYTES) {
+                return@withContext null
             }
-            saveLegacy(bytes, safeName, mimeType)
+            val normalizedMime = mimeType.trim().lowercase()
+            if (normalizedMime !in SUPPORTED_MIME_TYPES || !isImage(bytes)) {
+                return@withContext null
+            }
+
+            val safeName = buildFileName(preferredFileName, normalizedMime)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                return@withContext saveWithMediaStore(bytes, safeName, normalizedMime)
+            }
+            saveLegacy(bytes, safeName, normalizedMime)
         }
     }
 
@@ -65,7 +72,7 @@ class QrReceivedImageStore @Inject constructor(
         val targetDir = File(picturesDir, "PhotoBook")
         if (!targetDir.exists() && !targetDir.mkdirs()) return null
 
-        val target = File(targetDir, fileName)
+        val target = uniqueTarget(File(targetDir, fileName))
         return runCatching {
             FileOutputStream(target).use { output ->
                 output.write(bytes)
@@ -78,17 +85,43 @@ class QrReceivedImageStore @Inject constructor(
                 null,
             )
             Uri.fromFile(target)
-        }.getOrNull()
+        }.getOrElse {
+            runCatching { target.delete() }
+            null
+        }
     }
 
-    private fun buildFileName(input: String): String {
+    private fun buildFileName(input: String, mimeType: String): String {
         val base = input
             .replace(Regex("[^A-Za-z0-9._-]"), "_")
-            .ifBlank { "PhotoBook_Received_${System.currentTimeMillis()}.jpg" }
-        return if (base.endsWith(".jpg", ignoreCase = true) || base.endsWith(".jpeg", ignoreCase = true)) {
-            base
-        } else {
-            "$base.jpg"
-        }
+            .trim('.', ' ')
+            .take(100)
+            .ifBlank { "PhotoBook_Received_${System.currentTimeMillis()}" }
+        val withoutExtension = base.substringBeforeLast('.', base)
+        return "$withoutExtension.${extensionFor(mimeType)}"
+    }
+
+    private fun uniqueTarget(initial: File): File {
+        if (!initial.exists()) return initial
+        return File(
+            initial.parentFile,
+            "${initial.nameWithoutExtension}_${System.currentTimeMillis()}.${initial.extension}",
+        )
+    }
+
+    private fun isImage(bytes: ByteArray): Boolean {
+        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+        return options.outWidth > 0 && options.outHeight > 0
+    }
+
+    private fun extensionFor(mimeType: String): String = when (mimeType) {
+        "image/png" -> "png"
+        "image/webp" -> "webp"
+        else -> "jpg"
+    }
+
+    companion object {
+        private val SUPPORTED_MIME_TYPES = setOf("image/jpeg", "image/png", "image/webp")
     }
 }

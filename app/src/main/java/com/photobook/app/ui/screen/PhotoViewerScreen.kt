@@ -45,12 +45,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
@@ -108,13 +108,14 @@ import coil.compose.AsyncImage
 import com.photobook.app.R
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.feature.copytext.ExtractedTextResult
-import com.photobook.app.feature.copytext.NormalizedTextRegion
 import com.photobook.app.feature.copytext.OnDevicePhotoTextExtractor
 import com.photobook.app.feature.copytext.PhotoTextCopyCoordinator
 import com.photobook.app.feature.copytext.PreviewSeed
+import com.photobook.app.ml.BundledOnDeviceIntelligence
 import com.photobook.app.feature.duplicates.BestShotRecommendation
 import com.photobook.app.feature.duplicates.BurstBestShotPicker
 import com.photobook.app.feature.editor.CropPreset
+import com.photobook.app.feature.editor.NormalizedCropRegion
 import com.photobook.app.feature.editor.PhotoEditResult
 import com.photobook.app.feature.editor.PhotoEditService
 import com.photobook.app.feature.editor.PhotoEditState
@@ -138,9 +139,10 @@ fun PhotoViewerScreen(
     photos: List<PhotoRecord>,
     startIndex: Int,
     onDismiss: () -> Unit,
-    onPageChanged: (Int) -> Unit,
+    onPageChanged: (Long) -> Unit,
     onToggleFavorite: (Long) -> Unit,
     onMoveToTrash: (PhotoRecord) -> Unit,
+    onMoveToVault: (PhotoRecord) -> Unit,
     onShareAsPdf: (PhotoRecord) -> Unit,
     reelsEnabled: Boolean = false,
 ) {
@@ -152,18 +154,14 @@ fun PhotoViewerScreen(
     val coroutineScope = rememberCoroutineScope()
     val safeStart = startIndex.coerceIn(0, photos.lastIndex)
     val pagerState = rememberPagerState(initialPage = safeStart, pageCount = { photos.size })
-    val firstPhotoId = photos.firstOrNull()?.id
-    val lastPhotoId = photos.lastOrNull()?.id
-
-    LaunchedEffect(safeStart, firstPhotoId, lastPhotoId) {
-        if (safeStart in photos.indices && pagerState.currentPage != safeStart) {
-            pagerState.scrollToPage(safeStart)
-        }
-    }
+    val activePhoto = photos.getOrNull(pagerState.currentPage)
 
     val copyTextCoordinator = remember(context.applicationContext) {
         PhotoTextCopyCoordinator(
-            extractor = OnDevicePhotoTextExtractor(context.applicationContext),
+            extractor = OnDevicePhotoTextExtractor(
+                context.applicationContext,
+                onDeviceIntelligence = BundledOnDeviceIntelligence(),
+            ),
         )
     }
     val exifMetadataService = remember(context.applicationContext) {
@@ -174,11 +172,8 @@ fun PhotoViewerScreen(
         PhotoEditService(context.applicationContext)
     }
     var showCopyTextSheet by remember { mutableStateOf(false) }
-    var showTextRegionSelector by remember { mutableStateOf(false) }
     var copySheetState by remember { mutableStateOf<CopySheetState>(CopySheetState.Idle) }
     var copySheetPhotoId by remember { mutableStateOf<Long?>(null) }
-    var copySheetMode by remember { mutableStateOf(CopyTextMode.AllText) }
-    var copySheetRegion by remember { mutableStateOf<NormalizedTextRegion?>(null) }
     var autoCopyPending by remember { mutableStateOf(false) }
     var showExifSheet by remember { mutableStateOf(false) }
     var exifSheetState by remember { mutableStateOf<ExifSheetState>(ExifSheetState.Idle) }
@@ -189,6 +184,7 @@ fun PhotoViewerScreen(
     var showEditorSheet by remember { mutableStateOf(false) }
     var editorState by remember { mutableStateOf(PhotoEditState()) }
     var isApplyingEditorAction by remember { mutableStateOf(false) }
+    var showCropSelector by remember { mutableStateOf(false) }
     var showControls by remember { mutableStateOf(true) }
 
     fun resetViewerZoom() {
@@ -210,10 +206,7 @@ fun PhotoViewerScreen(
         showCopyTextSheet = false
         copySheetState = CopySheetState.Idle
         copySheetPhotoId = null
-        copySheetMode = CopyTextMode.AllText
-        copySheetRegion = null
         autoCopyPending = false
-        showTextRegionSelector = false
     }
 
     fun dismissExifSheet() {
@@ -224,7 +217,7 @@ fun PhotoViewerScreen(
     }
 
     fun openExifSheet() {
-        val active = photos[pagerState.currentPage]
+        val active = photos.getOrNull(pagerState.currentPage) ?: return
         exifSheetPhotoId = active.id
         showExifSheet = true
         exifSheetState = ExifSheetState.Loading
@@ -237,7 +230,7 @@ fun PhotoViewerScreen(
     }
 
     fun cleanMetadataCopy() {
-        val active = photos[pagerState.currentPage]
+        val active = photos.getOrNull(pagerState.currentPage) ?: return
         if (isCleaningMetadata) return
         isCleaningMetadata = true
         coroutineScope.launch {
@@ -264,6 +257,7 @@ fun PhotoViewerScreen(
 
     fun openEditorSheet() {
         editorState = PhotoEditState()
+        showCropSelector = false
         showEditorSheet = true
     }
 
@@ -313,7 +307,7 @@ fun PhotoViewerScreen(
 
     fun runEditorAction(shareAfterRender: Boolean) {
         if (isApplyingEditorAction) return
-        val active = photos[pagerState.currentPage]
+        val active = photos.getOrNull(pagerState.currentPage) ?: return
         isApplyingEditorAction = true
         coroutineScope.launch {
             when (val result = photoEditService.renderEditedCopy(active, editorState)) {
@@ -356,10 +350,8 @@ fun PhotoViewerScreen(
     }
 
     fun startCopyAllTextFlow() {
-        val active = photos[pagerState.currentPage]
+        val active = photos.getOrNull(pagerState.currentPage) ?: return
         copySheetPhotoId = active.id
-        copySheetMode = CopyTextMode.AllText
-        copySheetRegion = null
 
         coroutineScope.launch {
             when (val seed = copyTextCoordinator.previewSeed(active.id, active.ocrText)) {
@@ -399,35 +391,12 @@ fun PhotoViewerScreen(
         }
     }
 
-    fun startSelectedTextFlow(region: NormalizedTextRegion) {
-        val active = photos[pagerState.currentPage]
-        copySheetPhotoId = active.id
-        copySheetMode = CopyTextMode.SelectedArea
-        copySheetRegion = region.normalized()
-        autoCopyPending = true
-        showCopyTextSheet = true
-        copySheetState = CopySheetState.Loading
-        copyTextCoordinator.extractRegionForPhoto(
-            scope = coroutineScope,
-            photoId = active.id,
-            photoUri = active.uriString,
-            region = region,
-        ) { result ->
-            applyCopyResult(result, fallbackText = null)
-        }
-    }
-
     fun retryCopyTextFlow() {
-        val region = copySheetRegion
-        if (copySheetMode == CopyTextMode.SelectedArea && region != null) {
-            startSelectedTextFlow(region)
-        } else {
-            startCopyAllTextFlow()
-        }
+        startCopyAllTextFlow()
     }
 
     fun shareActivePhoto() {
-        val active = photos[pagerState.currentPage]
+        val active = photos.getOrNull(pagerState.currentPage) ?: return
         coroutineScope.launch {
             when (val result = exifMetadataService.createSafeShareCopies(listOf(active))) {
                 is com.photobook.app.feature.metadata.SafeShareResult.Success -> {
@@ -457,23 +426,23 @@ fun PhotoViewerScreen(
     }
 
     LaunchedEffect(pagerState.currentPage) {
-        onPageChanged(pagerState.currentPage)
-        val activeId = photos[pagerState.currentPage].id
+        val active = photos.getOrNull(pagerState.currentPage) ?: return@LaunchedEffect
+        onPageChanged(active.id)
+        val activeId = active.id
         bestShotRecommendation = withContext(Dispatchers.Default) {
             bestShotPicker.pick(photos, pagerState.currentPage)
         }
         if (copySheetPhotoId != null && copySheetPhotoId != activeId) {
             dismissCopySheet()
         }
-        if (showTextRegionSelector) {
-            showTextRegionSelector = false
-        }
+        showCropSelector = false
         if (exifSheetPhotoId != null && exifSheetPhotoId != activeId) {
             dismissExifSheet()
         }
         if (showEditorSheet) {
             showEditorSheet = false
             editorState = PhotoEditState()
+            showCropSelector = false
         }
         resetViewerZoom()
     }
@@ -503,40 +472,44 @@ fun PhotoViewerScreen(
                     // Instagram Reels-style vertical browsing: swipe up = next photo.
                     VerticalPager(
                         state = pagerState,
-                        key = { page -> photos[page].id },
+                        key = { page -> photos.getOrNull(page)?.id ?: page.toLong() },
                         userScrollEnabled = pagerScrollEnabled,
                         modifier = Modifier.fillMaxSize(),
                     ) { page ->
-                        PhotoPage(
-                            photo = photos[page],
-                            isActive = page == pagerState.currentPage,
-                            reelsEnabled = true,
-                            onZoomChanged = { currentPageZoom = it },
-                            onSingleTap = { showControls = !showControls },
-                            onDismiss = {
-                                dismissCopySheet()
-                                onDismiss()
-                            },
-                        )
+                        photos.getOrNull(page)?.let { photo ->
+                            PhotoPage(
+                                photo = photo,
+                                isActive = page == pagerState.currentPage,
+                                reelsEnabled = true,
+                                onZoomChanged = { currentPageZoom = it },
+                                onSingleTap = { showControls = !showControls },
+                                onDismiss = {
+                                    dismissCopySheet()
+                                    onDismiss()
+                                },
+                            )
+                        }
                     }
                 } else {
                     HorizontalPager(
                         state = pagerState,
-                        key = { page -> photos[page].id },
+                        key = { page -> photos.getOrNull(page)?.id ?: page.toLong() },
                         userScrollEnabled = pagerScrollEnabled,
                         modifier = Modifier.fillMaxSize(),
                     ) { page ->
-                        PhotoPage(
-                            photo = photos[page],
-                            isActive = page == pagerState.currentPage,
-                            reelsEnabled = false,
-                            onZoomChanged = { currentPageZoom = it },
-                            onSingleTap = { showControls = !showControls },
-                            onDismiss = {
-                                dismissCopySheet()
-                                onDismiss()
-                            },
-                        )
+                        photos.getOrNull(page)?.let { photo ->
+                            PhotoPage(
+                                photo = photo,
+                                isActive = page == pagerState.currentPage,
+                                reelsEnabled = false,
+                                onZoomChanged = { currentPageZoom = it },
+                                onSingleTap = { showControls = !showControls },
+                                onDismiss = {
+                                    dismissCopySheet()
+                                    onDismiss()
+                                },
+                            )
+                        }
                     }
                 }
 
@@ -579,7 +552,11 @@ fun PhotoViewerScreen(
                                 }
                             }
                             Text(
-                                text = stringResource(R.string.viewer_index, pagerState.currentPage + 1, photos.size),
+                                text = stringResource(
+                                    R.string.viewer_index,
+                                    pagerState.currentPage.coerceIn(0, photos.lastIndex) + 1,
+                                    photos.size,
+                                ),
                                 color = Color.White,
                             )
                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -652,12 +629,9 @@ fun PhotoViewerScreen(
                                     Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
                                         IconButton(
                                             modifier = Modifier.size(42.dp),
-                                            onClick = {
-                                                dismissCopySheet()
-                                                showTextRegionSelector = true
-                                            },
+                                            onClick = { onMoveToVault(active) },
                                         ) {
-                                            Icon(Icons.Default.CropFree, contentDescription = stringResource(R.string.viewer_select_text_area), tint = Color.White, modifier = Modifier.size(22.dp))
+                                            Icon(Icons.Default.Lock, contentDescription = stringResource(R.string.viewer_move_to_vault), tint = Color.White, modifier = Modifier.size(22.dp))
                                         }
                                     }
                                     Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
@@ -717,21 +691,10 @@ fun PhotoViewerScreen(
 
         if (showCopyTextSheet) {
             CopyTextBottomSheet(
-                mode = copySheetMode,
                 state = copySheetState,
                 onDismiss = ::dismissCopySheet,
                 onRetry = ::retryCopyTextFlow,
                 onCopy = { text -> copyToClipboard(text) },
-            )
-        }
-        if (showTextRegionSelector) {
-            TextRegionSelectionDialog(
-                photo = photos[pagerState.currentPage],
-                onDismiss = { showTextRegionSelector = false },
-                onRegionSelected = { region ->
-                    showTextRegionSelector = false
-                    startSelectedTextFlow(region)
-                },
             )
         }
         if (showExifSheet) {
@@ -744,36 +707,59 @@ fun PhotoViewerScreen(
             )
         }
 
-        if (showEditorSheet) {
+        if (showEditorSheet && activePhoto != null) {
             QuickEditorBottomSheet(
-                photo = photos[pagerState.currentPage],
+                photo = activePhoto,
                 state = editorState,
                 isApplying = isApplyingEditorAction,
                 onDismiss = {
                     showEditorSheet = false
+                    showCropSelector = false
                     editorState = PhotoEditState()
                 },
                 onStateChange = { next -> editorState = next },
                 onRotate = {
                     editorState = editorState.copy(rotationQuarterTurns = (editorState.rotationQuarterTurns + 1) % 4)
                 },
+                onCustomCrop = {
+                    showCropSelector = true
+                },
                 onSaveCopy = { runEditorAction(shareAfterRender = false) },
                 onShareCopy = { runEditorAction(shareAfterRender = true) },
+            )
+        }
+        if (showCropSelector && activePhoto != null) {
+            CropSelectionDialog(
+                photo = activePhoto,
+                initialRegion = editorState.customCrop,
+                onDismiss = { showCropSelector = false },
+                onCropSelected = { region ->
+                    editorState = editorState.copy(
+                        cropPreset = CropPreset.Original,
+                        customCrop = region.normalized(),
+                    )
+                    showCropSelector = false
+                },
             )
         }
     }
 }
 
 @Composable
-private fun TextRegionSelectionDialog(
+private fun CropSelectionDialog(
     photo: PhotoRecord,
+    initialRegion: NormalizedCropRegion?,
     onDismiss: () -> Unit,
-    onRegionSelected: (NormalizedTextRegion) -> Unit,
+    onCropSelected: (NormalizedCropRegion) -> Unit,
 ) {
-    var selection by remember(photo.id) {
-        mutableStateOf(TextSelectionBox(left = 0.14f, top = 0.24f, right = 0.86f, bottom = 0.58f))
+    var selection by remember(photo.id, initialRegion) {
+        mutableStateOf(
+            initialRegion?.let {
+                CropSelectionBox(it.left, it.top, it.right, it.bottom)
+            } ?: CropSelectionBox(left = 0.08f, top = 0.08f, right = 0.92f, bottom = 0.92f),
+        )
     }
-    var dragMode by remember { mutableStateOf(TextSelectionDragMode.None) }
+    var dragMode by remember { mutableStateOf(CropSelectionDragMode.None) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -800,12 +786,12 @@ private fun TextRegionSelectionDialog(
                     }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            text = stringResource(R.string.viewer_select_text_area_title),
+                            text = stringResource(R.string.viewer_custom_crop_title),
                             color = Color.White,
                             style = MaterialTheme.typography.titleMedium,
                         )
                         Text(
-                            text = stringResource(R.string.viewer_select_text_area_hint),
+                            text = stringResource(R.string.viewer_custom_crop_hint),
                             color = Color.LightGray,
                             style = MaterialTheme.typography.labelSmall,
                         )
@@ -854,11 +840,11 @@ private fun TextRegionSelectionDialog(
                                             hitSlop = hitSlop,
                                         )
                                     },
-                                    onDragEnd = { dragMode = TextSelectionDragMode.None },
-                                    onDragCancel = { dragMode = TextSelectionDragMode.None },
+                                    onDragEnd = { dragMode = CropSelectionDragMode.None },
+                                    onDragCancel = { dragMode = CropSelectionDragMode.None },
                                     onDrag = { change, dragAmount ->
                                         change.consume()
-                                        if (dragMode != TextSelectionDragMode.None) {
+                                        if (dragMode != CropSelectionDragMode.None) {
                                             selection = selection.dragged(
                                                 mode = dragMode,
                                                 deltaX = dragAmount.x / displayWidth,
@@ -924,11 +910,11 @@ private fun TextRegionSelectionDialog(
                     }
                     Button(
                         onClick = {
-                            onRegionSelected(selection.toRegion())
+                            onCropSelected(selection.toRegion())
                         },
                         modifier = Modifier.weight(2f),
                     ) {
-                        Text(text = stringResource(R.string.viewer_copy_selected_area))
+                        Text(text = stringResource(R.string.viewer_custom_crop_action))
                     }
                 }
             }
@@ -1100,7 +1086,6 @@ private fun ExifDetailRow(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CopyTextBottomSheet(
-    mode: CopyTextMode,
     state: CopySheetState,
     onDismiss: () -> Unit,
     onRetry: () -> Unit,
@@ -1119,12 +1104,7 @@ private fun CopyTextBottomSheet(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = stringResource(
-                    when (mode) {
-                        CopyTextMode.AllText -> R.string.viewer_copy_text_title
-                        CopyTextMode.SelectedArea -> R.string.viewer_select_text_area_title
-                    }
-                ),
+                text = stringResource(R.string.viewer_copy_text_title),
                 style = MaterialTheme.typography.titleMedium,
             )
 
@@ -1217,15 +1197,17 @@ private fun QuickEditorBottomSheet(
     onDismiss: () -> Unit,
     onStateChange: (PhotoEditState) -> Unit,
     onRotate: () -> Unit,
+    onCustomCrop: () -> Unit,
     onSaveCopy: () -> Unit,
     onShareCopy: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val cropAspect = if (state.cropPreset == CropPreset.Original) {
-        photo.aspectRatio.coerceIn(0.45f, 2.2f)
-    } else {
-        state.cropPreset.ratio
-    }
+    val cropAspect = state.customCrop?.aspectRatioFor(photo.aspectRatio)
+        ?: if (state.cropPreset == CropPreset.Original) {
+            photo.aspectRatio.coerceIn(0.45f, 2.2f)
+        } else {
+            state.cropPreset.ratio
+        }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1284,19 +1266,35 @@ private fun QuickEditorBottomSheet(
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                CropPreset.entries.forEach { preset ->
-                    AssistChip(
-                        onClick = { onStateChange(state.copy(cropPreset = preset)) },
-                        label = { Text(text = preset.label) },
-                        colors = AssistChipDefaults.assistChipColors(
-                            containerColor = if (preset == state.cropPreset) {
-                                MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
-                            } else {
-                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                            },
-                        ),
-                    )
-                }
+                AssistChip(
+                    onClick = {
+                        onStateChange(
+                            state.copy(
+                                cropPreset = CropPreset.Original,
+                                customCrop = null,
+                            ),
+                        )
+                    },
+                    label = { Text(text = CropPreset.Original.label) },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = if (state.customCrop == null && state.cropPreset == CropPreset.Original) {
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                        },
+                    ),
+                )
+                AssistChip(
+                    onClick = onCustomCrop,
+                    label = { Text(text = stringResource(R.string.viewer_custom_crop)) },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = if (state.customCrop != null) {
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                        },
+                    ),
+                )
             }
 
             Row(
@@ -1470,12 +1468,7 @@ private sealed interface CopySheetState {
     ) : CopySheetState
 }
 
-private enum class CopyTextMode {
-    AllText,
-    SelectedArea,
-}
-
-private enum class TextSelectionDragMode {
+private enum class CropSelectionDragMode {
     None,
     Move,
     TopLeft,
@@ -1484,14 +1477,14 @@ private enum class TextSelectionDragMode {
     BottomRight,
 }
 
-private data class TextSelectionBox(
+private data class CropSelectionBox(
     val left: Float,
     val top: Float,
     val right: Float,
     val bottom: Float,
 ) {
-    fun toRegion(): NormalizedTextRegion {
-        return NormalizedTextRegion(left, top, right, bottom).normalized()
+    fun toRegion(): NormalizedCropRegion {
+        return NormalizedCropRegion(left, top, right, bottom).normalized()
     }
 
     fun hitTest(
@@ -1499,7 +1492,7 @@ private data class TextSelectionBox(
         imageOffset: Offset,
         imageSize: Size,
         hitSlop: Float,
-    ): TextSelectionDragMode {
+    ): CropSelectionDragMode {
         val rectLeft = imageOffset.x + left * imageSize.width
         val rectTop = imageOffset.y + top * imageSize.height
         val rectRight = imageOffset.x + right * imageSize.width
@@ -1510,46 +1503,46 @@ private data class TextSelectionBox(
         }
 
         return when {
-            near(rectLeft, rectTop) -> TextSelectionDragMode.TopLeft
-            near(rectRight, rectTop) -> TextSelectionDragMode.TopRight
-            near(rectLeft, rectBottom) -> TextSelectionDragMode.BottomLeft
-            near(rectRight, rectBottom) -> TextSelectionDragMode.BottomRight
-            touch.x in rectLeft..rectRight && touch.y in rectTop..rectBottom -> TextSelectionDragMode.Move
-            else -> TextSelectionDragMode.None
+            near(rectLeft, rectTop) -> CropSelectionDragMode.TopLeft
+            near(rectRight, rectTop) -> CropSelectionDragMode.TopRight
+            near(rectLeft, rectBottom) -> CropSelectionDragMode.BottomLeft
+            near(rectRight, rectBottom) -> CropSelectionDragMode.BottomRight
+            touch.x in rectLeft..rectRight && touch.y in rectTop..rectBottom -> CropSelectionDragMode.Move
+            else -> CropSelectionDragMode.None
         }
     }
 
     fun dragged(
-        mode: TextSelectionDragMode,
+        mode: CropSelectionDragMode,
         deltaX: Float,
         deltaY: Float,
-    ): TextSelectionBox {
+    ): CropSelectionBox {
         return when (mode) {
-            TextSelectionDragMode.None -> this
-            TextSelectionDragMode.Move -> move(deltaX, deltaY)
-            TextSelectionDragMode.TopLeft -> copy(
+            CropSelectionDragMode.None -> this
+            CropSelectionDragMode.Move -> move(deltaX, deltaY)
+            CropSelectionDragMode.TopLeft -> copy(
                 left = (left + deltaX).coerceIn(0f, right - MIN_SIZE),
                 top = (top + deltaY).coerceIn(0f, bottom - MIN_SIZE),
             )
 
-            TextSelectionDragMode.TopRight -> copy(
+            CropSelectionDragMode.TopRight -> copy(
                 right = (right + deltaX).coerceIn(left + MIN_SIZE, 1f),
                 top = (top + deltaY).coerceIn(0f, bottom - MIN_SIZE),
             )
 
-            TextSelectionDragMode.BottomLeft -> copy(
+            CropSelectionDragMode.BottomLeft -> copy(
                 left = (left + deltaX).coerceIn(0f, right - MIN_SIZE),
                 bottom = (bottom + deltaY).coerceIn(top + MIN_SIZE, 1f),
             )
 
-            TextSelectionDragMode.BottomRight -> copy(
+            CropSelectionDragMode.BottomRight -> copy(
                 right = (right + deltaX).coerceIn(left + MIN_SIZE, 1f),
                 bottom = (bottom + deltaY).coerceIn(top + MIN_SIZE, 1f),
             )
         }
     }
 
-    private fun move(deltaX: Float, deltaY: Float): TextSelectionBox {
+    private fun move(deltaX: Float, deltaY: Float): CropSelectionBox {
         val width = right - left
         val height = bottom - top
         val nextLeft = (left + deltaX).coerceIn(0f, 1f - width)

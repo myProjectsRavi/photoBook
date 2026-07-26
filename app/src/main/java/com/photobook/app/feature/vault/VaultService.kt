@@ -2,6 +2,8 @@ package com.photobook.app.feature.vault
 
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -31,12 +33,15 @@ data class VaultItem(
     val mimeType: String,
     val encryptedFileName: String,
     val addedAtMs: Long,
+    val previewUri: Uri? = null,
 )
 
 sealed interface VaultSaveResult {
     data class Success(
         val addedCount: Int,
         val skippedCount: Int,
+        val addedPhotoIds: Set<Long>,
+        val protectedPhotoIds: Set<Long>,
     ) : VaultSaveResult
 
     data class Error(val throwable: Throwable? = null) : VaultSaveResult
@@ -83,13 +88,27 @@ class VaultService @Inject constructor(
         File(context.filesDir, VAULT_DIR).apply { if (!exists()) mkdirs() }
     }
 
-    suspend fun listItems(): List<VaultItem> = withContext(Dispatchers.IO) {
+    suspend fun listItems(includePreviews: Boolean = false): List<VaultItem> = withContext(Dispatchers.IO) {
         migrateLegacyItemsIfNeeded()
-        vaultDao.getAllVaultItems().map { entity -> entity.toVaultItem() }
+        vaultDao.getAllVaultItems().map { entity ->
+            val item = entity.toVaultItem()
+            if (includePreviews) {
+                item.copy(previewUri = createPreviewUri(entity))
+            } else {
+                item
+            }
+        }
     }
 
     suspend fun addPhotos(photos: List<PhotoRecord>): VaultSaveResult = withContext(Dispatchers.IO) {
-        if (photos.isEmpty()) return@withContext VaultSaveResult.Success(addedCount = 0, skippedCount = 0)
+        if (photos.isEmpty()) {
+            return@withContext VaultSaveResult.Success(
+                addedCount = 0,
+                skippedCount = 0,
+                addedPhotoIds = emptySet(),
+                protectedPhotoIds = emptySet(),
+            )
+        }
         runCatching {
             migrateLegacyItemsIfNeeded()
             val photoIds = photos.map { photo -> photo.id }
@@ -97,9 +116,12 @@ class VaultService @Inject constructor(
 
             var added = 0
             var skipped = 0
+            val addedPhotoIds = linkedSetOf<Long>()
+            val protectedPhotoIds = linkedSetOf<Long>()
             photos.forEach { photo ->
                 if (photo.id in existingByPhotoId) {
                     skipped += 1
+                    protectedPhotoIds += photo.id
                     return@forEach
                 }
                 val sourceUri = runCatching { Uri.parse(photo.uriString) }.getOrNull()
@@ -108,7 +130,10 @@ class VaultService @Inject constructor(
                 val targetFile = File(vaultDir, encryptedName)
                 val encryptedFile = buildEncryptedFile(targetFile)
                 val copied = copyIntoEncryptedFile(sourceUri, encryptedFile)
-                if (!copied) return@forEach
+                if (!copied) {
+                    runCatching { targetFile.delete() }
+                    return@forEach
+                }
 
                 val entity = VaultEntity(
                     id = UUID.randomUUID().toString(),
@@ -128,15 +153,24 @@ class VaultService @Inject constructor(
                     runCatching { targetFile.delete() }
                     existingByPhotoId += photo.id
                     skipped += 1
+                    protectedPhotoIds += photo.id
                 } else {
                     existingByPhotoId += photo.id
                     added += 1
+                    addedPhotoIds += photo.id
+                    protectedPhotoIds += photo.id
                 }
+            }
+
+            if (photos.isNotEmpty() && protectedPhotoIds.isEmpty()) {
+                return@runCatching VaultSaveResult.Error()
             }
 
             VaultSaveResult.Success(
                 addedCount = added,
                 skippedCount = skipped,
+                addedPhotoIds = addedPhotoIds,
+                protectedPhotoIds = protectedPhotoIds,
             )
         }.getOrElse { error ->
             VaultSaveResult.Error(error)
@@ -204,8 +238,15 @@ class VaultService @Inject constructor(
             val deletedRows = vaultDao.deleteVaultItemById(itemId)
             if (deletedRows <= 0) return@runCatching false
             runCatching { File(vaultDir, item.encryptedFileName).delete() }
+            deletePreviewFile(item.id)
             true
         }.getOrDefault(false)
+    }
+
+    fun clearPreviewCache() {
+        runCatching {
+            File(context.cacheDir, VAULT_PREVIEW_DIR).deleteRecursively()
+        }
     }
 
     private fun buildEncryptedFile(file: File): EncryptedFile {
@@ -227,6 +268,63 @@ class VaultService @Inject constructor(
             }
             true
         }.getOrDefault(false)
+    }
+
+    private fun createPreviewUri(entity: VaultEntity): Uri? {
+        val encryptedSource = File(vaultDir, entity.encryptedFileName)
+        if (!encryptedSource.exists()) return null
+
+        val previewFile = previewFile(entity.id)
+        if (previewFile.exists() && previewFile.length() > 0L) {
+            return Uri.fromFile(previewFile)
+        }
+
+        return runCatching {
+            val encryptedFile = buildEncryptedFile(encryptedSource)
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            encryptedFile.openFileInput().use { input ->
+                BitmapFactory.decodeStream(input, null, bounds)
+            }
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+                return@runCatching null
+            }
+
+            val options = BitmapFactory.Options().apply {
+                inPreferredConfig = Bitmap.Config.RGB_565
+                inSampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, PREVIEW_MAX_EDGE_PX)
+            }
+            val bitmap = encryptedFile.openFileInput().use { input ->
+                BitmapFactory.decodeStream(input, null, options)
+            } ?: return@runCatching null
+
+            previewFile.parentFile?.mkdirs()
+            previewFile.outputStream().use { output ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, PREVIEW_JPEG_QUALITY, output)
+            }
+            bitmap.recycle()
+            Uri.fromFile(previewFile)
+        }.getOrNull()
+    }
+
+    private fun previewFile(itemId: String): File {
+        val safeName = itemId.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        return File(File(context.cacheDir, VAULT_PREVIEW_DIR), "$safeName.jpg")
+    }
+
+    private fun deletePreviewFile(itemId: String) {
+        runCatching { previewFile(itemId).delete() }
+    }
+
+    private fun calculateInSampleSize(width: Int, height: Int, maxEdge: Int): Int {
+        var sampleSize = 1
+        var sampledWidth = width
+        var sampledHeight = height
+        while (sampledWidth / 2 >= maxEdge || sampledHeight / 2 >= maxEdge) {
+            sampleSize *= 2
+            sampledWidth /= 2
+            sampledHeight /= 2
+        }
+        return sampleSize.coerceAtLeast(1)
     }
 
     private suspend fun migrateLegacyItemsIfNeeded() {
@@ -299,7 +397,10 @@ class VaultService @Inject constructor(
         private const val PREFS_NAME = "vault_secure_prefs"
         private const val KEY_ITEMS = "vault_items"
         private const val VAULT_DIR = "vault_store"
+        private const val VAULT_PREVIEW_DIR = "vault_preview"
         private const val INSERT_CONFLICT = -1L
+        private const val PREVIEW_MAX_EDGE_PX = 960
+        private const val PREVIEW_JPEG_QUALITY = 82
     }
 }
 

@@ -13,11 +13,8 @@ import android.os.Environment
 import android.provider.MediaStore
 import androidx.exifinterface.media.ExifInterface
 import androidx.core.content.FileProvider
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.face.FaceDetection
-import com.google.mlkit.vision.face.FaceDetector
-import com.google.mlkit.vision.face.FaceDetectorOptions
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.ml.CompactLocalIntelligence
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.FileOutputStream
@@ -27,7 +24,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 
 sealed interface ExifDetailsResult {
@@ -88,14 +84,6 @@ data class ExifDetails(
 class ExifMetadataService @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
-    private val faceDetector: FaceDetector by lazy {
-        FaceDetection.getClient(
-            FaceDetectorOptions.Builder()
-                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-                .build(),
-        )
-    }
-
     suspend fun loadDetails(photo: PhotoRecord): ExifDetailsResult {
         return withContext(Dispatchers.IO) {
             val uri = runCatching { Uri.parse(photo.uriString) }.getOrNull()
@@ -494,13 +482,8 @@ class ExifMetadataService @Inject constructor(
         }
     }
 
-    private suspend fun detectFaces(bitmap: Bitmap): List<Rect> {
-        val image = InputImage.fromBitmap(bitmap, 0)
-        return runCatching {
-            faceDetector.process(image)
-                .await()
-                .map { face -> face.boundingBox }
-        }.getOrDefault(emptyList())
+    private fun detectFaces(bitmap: Bitmap): List<Rect> {
+        return CompactLocalIntelligence.detectFaces(bitmap)
     }
 
     private fun pixelateRect(

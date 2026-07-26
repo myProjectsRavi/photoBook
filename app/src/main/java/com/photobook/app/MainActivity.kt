@@ -187,24 +187,32 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         if (result.resultCode == Activity.RESULT_OK && dueDeleteIds.isNotEmpty()) {
             viewModel.onArchiveDueItemsDeleted(dueDeleteIds)
         }
-        // After any system action, re-query trash list.
         coroutineScope.launch {
             isLoadingTrash = true
+            val archiveManagedIds = viewModel.archiveManagedTrashPhotoIds()
             trashedPhotos = trashService.listTrashed()
+                .filterNot { photo -> photo.id in archiveManagedIds }
+            isLoadingTrash = false
+        }
+    }
+
+    fun refreshTrashBin() {
+        coroutineScope.launch {
+            isLoadingTrash = true
+            val archiveManagedIds = viewModel.archiveManagedTrashPhotoIds()
+            trashedPhotos = trashService.listTrashed()
+                .filterNot { photo -> photo.id in archiveManagedIds }
             isLoadingTrash = false
         }
     }
 
     fun openTrashBin() {
         showTrashScreen = true
-        coroutineScope.launch {
-            isLoadingTrash = true
-            trashedPhotos = trashService.listTrashed()
-            isLoadingTrash = false
-        }
+        refreshTrashBin()
     }
 
     fun closeVault() {
+        vaultService.clearPreviewCache()
         showVault = false
         vaultItems = emptyList()
         isVaultLoading = false
@@ -215,7 +223,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         showVault = true
         coroutineScope.launch {
             isVaultLoading = true
-            vaultItems = vaultService.listItems()
+            vaultItems = vaultService.listItems(includePreviews = true)
             isVaultLoading = false
         }
     }
@@ -267,21 +275,52 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         prompt.authenticate(promptInfo)
     }
 
-    fun addSelectedToVault(selectedIds: Set<Long>) {
-        if (selectedIds.isEmpty()) return
+    fun requestMoveToTrash(photos: List<PhotoRecord>, archiveRetentionDays: Int? = null) {
+        if (photos.isEmpty()) return
+        when (val request = trashService.createTrashRequest(photos)) {
+            is TrashRequestResult.Ready -> {
+                pendingTrashPhotoIds = photos.map { photo -> photo.id }.toSet()
+                pendingArchiveTrashRequest = archiveRetentionDays != null
+                pendingArchiveRetentionDays = archiveRetentionDays ?: 30
+                val intentRequest = IntentSenderRequest.Builder(request.intentSender).build()
+                trashRequestLauncher.launch(intentRequest)
+            }
+
+            TrashRequestResult.UnsupportedAndroid -> {
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.trash_not_supported),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+
+            is TrashRequestResult.Error -> {
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.trash_request_error),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+    }
+
+    fun movePhotosToVault(photos: List<PhotoRecord>) {
+        if (photos.isEmpty()) return
         coroutineScope.launch {
-            val selectedPhotos = viewModel.resolvePhotosByIds(selectedIds)
-            if (selectedPhotos.isEmpty()) return@launch
             isVaultBusy = true
-            when (val result = vaultService.addPhotos(selectedPhotos)) {
+            when (val result = vaultService.addPhotos(photos)) {
                 is VaultSaveResult.Success -> {
+                    val protectedPhotos = photos.filter { photo -> photo.id in result.addedPhotoIds }
                     Toast.makeText(
                         context,
-                        context.getString(R.string.vault_add_success, result.addedCount, result.skippedCount),
+                        context.getString(R.string.vault_move_success, protectedPhotos.size),
                         Toast.LENGTH_SHORT,
                     ).show()
                     viewModel.clearSelection()
-                    refreshVault()
+                    vaultItems = vaultService.listItems(includePreviews = true)
+                    if (protectedPhotos.isNotEmpty()) {
+                        requestMoveToTrash(protectedPhotos)
+                    }
                 }
 
                 is VaultSaveResult.Error -> {
@@ -296,15 +335,33 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         }
     }
 
-    fun exportVaultItem(item: VaultItem) {
+    fun addSelectedToVault(selectedIds: Set<Long>) {
+        if (selectedIds.isEmpty()) return
+        coroutineScope.launch {
+            val selectedPhotos = viewModel.resolvePhotosByIds(selectedIds)
+            movePhotosToVault(selectedPhotos)
+        }
+    }
+
+    fun moveVaultItemOut(item: VaultItem) {
         coroutineScope.launch {
             isVaultBusy = true
             when (vaultService.exportToDevice(item.id)) {
-                is VaultExportResult.Success -> Toast.makeText(
-                    context,
-                    context.getString(R.string.vault_export_success),
-                    Toast.LENGTH_SHORT,
-                ).show()
+                is VaultExportResult.Success -> {
+                    val removedFromVault = vaultService.deleteItem(item.id)
+                    vaultItems = vaultService.listItems(includePreviews = true)
+                    Toast.makeText(
+                        context,
+                        context.getString(
+                            if (removedFromVault) {
+                                R.string.vault_move_out_success
+                            } else {
+                                R.string.vault_export_success
+                            },
+                        ),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
 
                 is VaultExportResult.Error -> Toast.makeText(
                     context,
@@ -321,7 +378,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             isVaultBusy = true
             val deleted = vaultService.deleteItem(item.id)
             if (deleted) {
-                vaultItems = vaultService.listItems()
+                vaultItems = vaultService.listItems(includePreviews = true)
             } else {
                 Toast.makeText(
                     context,
@@ -352,35 +409,6 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-        }
-    }
-
-    fun requestMoveToTrash(photos: List<PhotoRecord>, archiveRetentionDays: Int? = null) {
-        if (photos.isEmpty()) return
-        when (val request = trashService.createTrashRequest(photos)) {
-            is TrashRequestResult.Ready -> {
-                pendingTrashPhotoIds = photos.map { photo -> photo.id }.toSet()
-                pendingArchiveTrashRequest = archiveRetentionDays != null
-                pendingArchiveRetentionDays = archiveRetentionDays ?: 30
-                val intentRequest = IntentSenderRequest.Builder(request.intentSender).build()
-                trashRequestLauncher.launch(intentRequest)
-            }
-
-            TrashRequestResult.UnsupportedAndroid -> {
-                Toast.makeText(
-                    context,
-                    context.getString(R.string.trash_not_supported),
-                    Toast.LENGTH_SHORT,
-                ).show()
-            }
-
-            is TrashRequestResult.Error -> {
-                Toast.makeText(
-                    context,
-                    context.getString(R.string.trash_request_error),
-                    Toast.LENGTH_SHORT,
-                ).show()
-            }
         }
     }
 
@@ -428,6 +456,22 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                     context,
                     context.getString(R.string.create_pdf_success, result.pageCount),
                     Toast.LENGTH_SHORT,
+                ).show()
+                sharePdf(context, result.uri, result.fileName)
+                if (clearSelectionOnSuccess) {
+                    viewModel.clearSelection()
+                }
+            }
+
+            is PdfExportResult.PartialSuccess -> {
+                Toast.makeText(
+                    context,
+                    context.getString(
+                        R.string.create_pdf_partial_success,
+                        result.pageCount,
+                        result.skippedCount,
+                    ),
+                    Toast.LENGTH_LONG,
                 ).show()
                 sharePdf(context, result.uri, result.fileName)
                 if (clearSelectionOnSuccess) {
@@ -562,10 +606,15 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             photos = viewerPhotos,
             startIndex = viewerIndex,
             onDismiss = viewModel::closeViewer,
-            onPageChanged = viewModel::onViewerPageChanged,
+            onPageChanged = viewModel::onViewerPhotoChanged,
             onToggleFavorite = viewModel::onToggleFavorite,
             onMoveToTrash = { photo ->
                 requestMoveToTrash(listOf(photo))
+            },
+            onMoveToVault = { photo ->
+                authenticateVault {
+                    movePhotosToVault(listOf(photo))
+                }
             },
             onShareAsPdf = { photo ->
                 coroutineScope.launch {
@@ -645,15 +694,26 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             retentionDays = uiState.archiveRetentionDays,
             dueDeleteCount = uiState.archiveDueDeleteCount,
             archivesEnabled = uiState.archivesEnabled,
+            paymentsEnabled = uiState.archivePaymentsEnabled,
+            foodEnabled = uiState.archiveFoodEnabled,
             isLoading = uiState.isArchivesLoading,
             onDismiss = viewModel::dismissArchives,
             onRefresh = viewModel::refreshArchives,
             onArchivesEnabledChanged = viewModel::setArchivesEnabled,
+            onPaymentsEnabledChanged = viewModel::setArchivePaymentsEnabled,
+            onFoodEnabledChanged = viewModel::setArchiveFoodEnabled,
             onRetentionDaysChanged = viewModel::setArchiveRetentionDays,
             onToggleSelection = viewModel::toggleArchiveCandidateSelection,
             onSelectAll = viewModel::selectAllArchiveCandidates,
             onClearSelection = viewModel::clearArchiveCandidateSelection,
             onKeepSelected = viewModel::keepSelectedArchiveCandidates,
+            onKeepCandidate = viewModel::keepArchiveCandidate,
+            onArchiveCandidate = { candidate ->
+                requestMoveToTrash(
+                    photos = listOf(candidate.photo),
+                    archiveRetentionDays = uiState.archiveRetentionDays,
+                )
+            },
             onMoveSelectedToTrash = {
                 coroutineScope.launch {
                     val photos = viewModel.resolveArchivePhotosByIds(uiState.archiveSelectedPhotoIds)
@@ -696,9 +756,9 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                     refreshVault()
                 }
             },
-            onSaveToDevice = { item ->
+            onMoveOut = { item ->
                 authenticateVault {
-                    exportVaultItem(item)
+                    moveVaultItemOut(item)
                 }
             },
             onDelete = { item ->

@@ -10,7 +10,7 @@ import androidx.room.RoomDatabase
         VaultEntity::class,
         ArchiveDecisionEntity::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = false,
 )
 abstract class PhotoBookDatabase : RoomDatabase() {
