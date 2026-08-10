@@ -32,6 +32,7 @@ data class PhotoRecord(
     val perceptualHash: Long? = null,
     val blurScore: Double? = null,
     val mlTags: List<MLTag> = emptyList(),
+    val isArchiveFoodCandidate: Boolean = false,
     val isMlProcessed: Boolean = false,
     val mlStatus: IntelligenceStatus = if (isMlProcessed) {
         IntelligenceStatus.PROCESSED

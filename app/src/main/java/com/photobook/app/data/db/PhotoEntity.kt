@@ -86,6 +86,7 @@ fun PhotoEntity.toPhotoRecord(): PhotoRecord {
         isFavorite = isFavorite,
         perceptualHash = perceptualHash,
         blurScore = blurScore,
+        isArchiveFoodCandidate = isArchiveFoodCandidate,
         mlTags = PhotoTagCodec.decode(mlTagsPayload),
         isMlProcessed = isMlProcessed,
         mlStatus = IntelligenceStatus.fromStored(mlStatus, isMlProcessed),
@@ -139,9 +140,7 @@ fun PhotoRecord.toPhotoEntity(): PhotoEntity {
             append(' ')
             append(fileName)
         }.containsScreenshotCue(),
-        isArchiveFoodCandidate = mlTags.any { tag ->
-            tag.label.equals("food", ignoreCase = true)
-        },
+        isArchiveFoodCandidate = isMlProcessed && isArchiveFoodCandidate,
     )
 }
 

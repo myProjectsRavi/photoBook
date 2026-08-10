@@ -1209,6 +1209,7 @@ class MainViewModel @Inject constructor(
                 perceptualHash = existing.perceptualHash,
                 blurScore = existing.blurScore,
                 mlTags = existing.mlTags,
+                isArchiveFoodCandidate = existing.isArchiveFoodCandidate,
                 isMlProcessed = existing.isMlProcessed,
                 mlStatus = existing.mlStatus,
                 ocrText = existing.ocrText,

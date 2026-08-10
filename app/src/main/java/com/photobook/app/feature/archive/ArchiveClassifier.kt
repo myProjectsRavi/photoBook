@@ -2,6 +2,7 @@ package com.photobook.app.feature.archive
 
 import com.photobook.app.data.model.IntelligenceStatus
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.ml.ArchiveFoodSignals
 import javax.inject.Inject
 
 data class ArchiveClassification(
@@ -81,12 +82,13 @@ class ArchiveClassifier @Inject constructor() {
     }
 
     private fun classifyFood(photo: PhotoRecord): ArchiveClassification? {
-        val foodTag = photo.mlTags
-            .filter { tag -> tag.label.equals("food", ignoreCase = true) && tag.confidence >= FOOD_MIN_CONFIDENCE }
-            .maxByOrNull { tag -> tag.confidence }
-            ?: return null
+        if (!photo.isMlProcessed || !photo.isArchiveFoodCandidate) return null
+        if (ArchiveFoodSignals.containsLiveSubject(photo.mlTags)) return null
 
-        val confidence = (FOOD_BASE_CONFIDENCE + foodTag.confidence * FOOD_CONFIDENCE_WEIGHT)
+        val confidence = (
+            FOOD_BASE_CONFIDENCE +
+                ArchiveFoodSignals.MIN_SEMANTIC_FOOD_CONFIDENCE * FOOD_CONFIDENCE_WEIGHT
+            )
             .coerceIn(FOOD_MIN_OUTPUT_CONFIDENCE, MAX_CONFIDENCE)
         return ArchiveClassification(
             category = ArchiveCategory.Food,
@@ -135,7 +137,6 @@ class ArchiveClassifier @Inject constructor() {
         private const val BASE_CONFIDENCE = 0.68
         private const val MIN_CONFIDENCE = 0.84
         private const val MAX_CONFIDENCE = 0.98
-        private const val FOOD_MIN_CONFIDENCE = 0.60f
         private const val FOOD_BASE_CONFIDENCE = 0.64
         private const val FOOD_CONFIDENCE_WEIGHT = 0.30
         private const val FOOD_MIN_OUTPUT_CONFIDENCE = 0.84

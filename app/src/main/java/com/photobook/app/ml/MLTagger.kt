@@ -19,9 +19,11 @@ import kotlinx.coroutines.withContext
 class MLTagger @Inject constructor(
     @ApplicationContext private val context: Context,
     private val onDeviceIntelligence: BundledOnDeviceIntelligence,
+    private val semanticImageLabeler: LocalSemanticImageLabeler,
 ) {
     data class AnalysisResult(
         val tags: List<MLTag>,
+        val archiveFoodCandidate: Boolean,
         val ocrText: String,
         val mlStatus: IntelligenceStatus,
         val ocrStatus: IntelligenceStatus,
@@ -41,6 +43,7 @@ class MLTagger @Inject constructor(
         withContext(Dispatchers.IO) {
             val bitmap = loadIntelligenceBitmap(uriString) ?: return@withContext AnalysisResult(
                 tags = emptyList(),
+                archiveFoodCandidate = false,
                 ocrText = "",
                 mlStatus = IntelligenceStatus.FAILED_RETRYABLE,
                 ocrStatus = IntelligenceStatus.FAILED_RETRYABLE,
@@ -77,7 +80,7 @@ class MLTagger @Inject constructor(
         analyzeBitmapInternal(bitmap, isFrontCamera, analyzeMl, analyzeOcr)
     }
 
-    private fun analyzeBitmapInternal(
+    private suspend fun analyzeBitmapInternal(
         bitmap: Bitmap,
         isFrontCamera: Boolean,
         analyzeMl: Boolean = true,
@@ -85,6 +88,7 @@ class MLTagger @Inject constructor(
     ): AnalysisResult {
         val faces = if (analyzeMl) CompactLocalIntelligence.detectFaces(bitmap) else emptyList()
         val tagMap = linkedMapOf<String, MLTag>()
+        val archiveSignals = mutableListOf<MLTag>()
         if (analyzeMl) {
             CompactLocalIntelligence.labels(bitmap).forEach { label ->
                 val canonical = LabelMapping.map(label.label) ?: return@forEach
@@ -92,8 +96,25 @@ class MLTagger @Inject constructor(
                     tagMap[canonical] = MLTag(canonical, label.confidence)
                 }
             }
-            if (faces.size == 1 && isFrontCamera) tagMap["selfie"] = MLTag("selfie", 0.90f)
-            if (faces.size >= 2) tagMap["people"] = MLTag("people", 0.90f)
+
+            semanticLabels(bitmap).forEach { label ->
+                val canonical = label.label
+                if (label.confidence >= LabelMapping.taggingThreshold(canonical)) {
+                    archiveSignals += MLTag(canonical, label.confidence)
+                    if (label.isPreparedFood) {
+                        archiveSignals += MLTag("prepared_food", label.confidence)
+                    }
+                }
+            }
+
+            if (faces.size == 1 && isFrontCamera) {
+                tagMap["selfie"] = MLTag("selfie", 0.90f)
+                archiveSignals += MLTag("selfie", 0.90f)
+            }
+            if (faces.size >= 2) {
+                tagMap["people"] = MLTag("people", 0.90f)
+                archiveSignals += MLTag("people", 0.90f)
+            }
         }
 
         val ocrResult = if (analyzeOcr) CompactLocalIntelligence.ocr(bitmap) else Result.success("")
@@ -108,6 +129,7 @@ class MLTagger @Inject constructor(
 
         return AnalysisResult(
             tags = tagMap.values.toList(),
+            archiveFoodCandidate = analyzeMl && ArchiveFoodSignals.isEligible(archiveSignals),
             ocrText = normalizedOcrText,
             mlStatus = if (analyzeMl) IntelligenceStatus.PROCESSED else IntelligenceStatus.PENDING,
             ocrStatus = when {
@@ -117,6 +139,9 @@ class MLTagger @Inject constructor(
             },
         )
     }
+
+    private suspend fun semanticLabels(bitmap: Bitmap): List<LocalSemanticLabel> =
+        semanticImageLabeler.labels(bitmap)
 
     private fun decodeSampledBitmap(uri: Uri, maxDimensionPx: Int): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

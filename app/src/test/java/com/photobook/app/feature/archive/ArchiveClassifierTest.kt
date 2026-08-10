@@ -109,9 +109,10 @@ class ArchiveClassifierTest {
     }
 
     @Test
-    fun foodCategoryEnabled_matchesFoodPhoto() {
+    fun foodCategoryEnabled_matchesSemanticFoodPhoto() {
         val photo = samplePhoto(
             mlTags = listOf(MLTag("food", 0.86f)),
+            archiveFoodCandidate = true,
         )
 
         val result = classifier.classify(
@@ -129,9 +130,78 @@ class ArchiveClassifierTest {
     fun foodCategoryDisabled_rejectsFoodPhotoByDefault() {
         val photo = samplePhoto(
             mlTags = listOf(MLTag("food", 0.86f)),
+            archiveFoodCandidate = true,
         )
 
         val result = classifier.classify(photo, NOW_MS)
+
+        assertThat(result).isNull()
+    }
+
+    @Test
+    fun colorHeuristicFoodTag_isRejectedForArchive() {
+        val photo = samplePhoto(
+            mlTags = listOf(MLTag("food", 0.91f)),
+        )
+
+        val result = classifier.classify(
+            photo = photo,
+            nowMs = NOW_MS,
+            enabledCategories = setOf(ArchiveCategory.Food),
+        )
+
+        assertThat(result).isNull()
+    }
+
+    @Test
+    fun birdWithFoodSignal_isRejectedForArchive() {
+        val photo = samplePhoto(
+            mlTags = listOf(
+                MLTag("food", 0.91f),
+                MLTag("bird", 0.88f),
+            ),
+            archiveFoodCandidate = true,
+        )
+
+        val result = classifier.classify(
+            photo = photo,
+            nowMs = NOW_MS,
+            enabledCategories = setOf(ArchiveCategory.Food),
+        )
+
+        assertThat(result).isNull()
+    }
+
+    @Test
+    fun personWithFoodSignal_isRejectedForArchive() {
+        val photo = samplePhoto(
+            mlTags = listOf(
+                MLTag("food", 0.91f),
+                MLTag("people", 0.90f),
+            ),
+            archiveFoodCandidate = true,
+        )
+
+        val result = classifier.classify(
+            photo = photo,
+            nowMs = NOW_MS,
+            enabledCategories = setOf(ArchiveCategory.Food),
+        )
+
+        assertThat(result).isNull()
+    }
+
+    @Test
+    fun weakSemanticFoodSignal_isRejectedForArchive() {
+        val photo = samplePhoto(
+            mlTags = listOf(MLTag("food", 0.69f)),
+        )
+
+        val result = classifier.classify(
+            photo = photo,
+            nowMs = NOW_MS,
+            enabledCategories = setOf(ArchiveCategory.Food),
+        )
 
         assertThat(result).isNull()
     }
@@ -178,6 +248,7 @@ class ArchiveClassifierTest {
         id: Long = 2L,
         dateAdded: Long = NOW_MS - (3L * 24L * 60L * 60L * 1000L),
         mlTags: List<MLTag> = emptyList(),
+        archiveFoodCandidate: Boolean = false,
     ): PhotoRecord {
         return PhotoRecord(
             id = id,
@@ -206,6 +277,7 @@ class ArchiveClassifierTest {
             isHdr = false,
             isFavorite = false,
             mlTags = mlTags,
+            isArchiveFoodCandidate = archiveFoodCandidate,
             isMlProcessed = mlTags.isNotEmpty(),
         )
     }

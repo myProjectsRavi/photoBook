@@ -201,6 +201,11 @@ class IndexPersistence @Inject constructor(
                 )
             }
         }
+        // Legacy JSON predates the semantic Food/live-subject pass. Reopen ML for every
+        // imported record so the new archive flag is populated even when the old color
+        // heuristic never emitted a Food tag. Existing tags and OCR fields are preserved.
+        val effectiveMlProcessed = false
+        val effectiveMlStatus = IntelligenceStatus.PENDING
 
         return PhotoRecord(
             id = optLong("id"),
@@ -231,11 +236,8 @@ class IndexPersistence @Inject constructor(
             perceptualHash = if (isNull("perceptualHash")) null else optLong("perceptualHash"),
             blurScore = if (isNull("blurScore")) null else optDouble("blurScore"),
             mlTags = tags,
-            isMlProcessed = optBoolean("isMlProcessed", tags.isNotEmpty()),
-            mlStatus = IntelligenceStatus.fromStored(
-                optNullableString("mlStatus"),
-                optBoolean("isMlProcessed", tags.isNotEmpty()),
-            ),
+            isMlProcessed = effectiveMlProcessed,
+            mlStatus = effectiveMlStatus,
             ocrText = optString("ocrText", ""),
             isOcrProcessed = optBoolean("isOcrProcessed", false),
             ocrStatus = IntelligenceStatus.fromStored(

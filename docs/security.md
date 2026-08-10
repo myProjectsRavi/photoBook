@@ -4,7 +4,8 @@ PhotoBook is local-first by construction. The app has no app-level `INTERNET` pe
 
 ## Local intelligence
 
-- Compact image heuristics and Android's local face detector run in-process.
+- The bundled ML Kit image-labeling model, compact image heuristics, and Android's local face detector run in-process. The Food Archive gate requires semantic food plus prepared/served/packaged context and applies a live-subject veto; color or a generic legacy tag cannot classify a person, animal, bird, pet, or wildlife photo as Food.
+- Room migration 11-to-12 resets only the derived ML/Food decision state for reevaluation while retaining user-visible tags and OCR, avoiding stale or overly broad archive classifications after upgrade.
 - QR transfer uses ZXing's QR-only decoder and validates transfer ID, frame count, chunk length, byte size, SHA-256, MIME type, filename, duplicate/late frames, four-session limit, and two-minute session lifetime.
 - Latin OCR currently has a deterministic capability-unavailable result because the available bundled model exceeds the hard size gates. It never contacts a service or marks a photo processed when unavailable.
 
@@ -24,3 +25,4 @@ PhotoBook is local-first by construction. The app has no app-level `INTERNET` pe
 
 - Diagnostics are local, redacted for paths/URIs, bounded in size/count, and never uploaded.
 - Every release must verify the merged manifest contains no `INTERNET`, signatures are valid, APK/AAB size gates pass, target SDK is 36, and the exact artifacts pass an airplane-mode device replay. Build success alone is not release readiness.
+- The Play upload must use the exact signed `app/build/outputs/bundle/release/app-release.aab` after package/version, signing, size, and bundled-model checks pass.

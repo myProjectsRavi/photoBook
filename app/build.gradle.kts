@@ -26,6 +26,43 @@ val releaseKeystoreProperties = Properties().apply {
     }
 }
 
+val bundledLabelModelDependency = "com.google.mlkit:image-labeling:17.0.9"
+
+// Resolve the pinned model artifact only to extract its bundled model asset. The
+// ML Kit runtime is intentionally not packaged; the standalone LiteRT runtime
+// executes the app-local model without deferred model delivery or cloud calls.
+val bundledLabelModel = configurations.create("bundledLabelModel") {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    isTransitive = false
+}
+val extractBundledLabelModel = tasks.register("extractBundledLabelModel") {
+    val outputDirectory = layout.buildDirectory.dir("generated/assets/bundledLabelModel")
+    inputs.property("modelArtifact", bundledLabelModelDependency)
+    outputs.file(
+        outputDirectory.map { directory ->
+            directory.file("photobook/food_live_label_model.tflite")
+        },
+    )
+    doLast {
+        project.delete(outputDirectory)
+        project.sync {
+            from(project.zipTree(bundledLabelModel.resolve().single())) {
+                include("assets/mlkit_label_default_model/mobile_ica_8bit_with_metadata_tflite")
+                eachFile { path = "photobook/food_live_label_model.tflite" }
+                includeEmptyDirs = false
+            }
+            into(outputDirectory)
+        }
+    }
+}
+tasks.matching { task ->
+    (task.name.startsWith("merge") && task.name.endsWith("Assets")) ||
+        task.name.contains("Lint", ignoreCase = true)
+}.configureEach {
+    dependsOn(extractBundledLabelModel)
+}
+
 android {
     namespace = "com.photobook.app"
     compileSdk = 36
@@ -34,8 +71,8 @@ android {
         applicationId = "com.photobook.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 15
-        versionName = "2.0.8"
+        versionCode = 16
+        versionName = "2.0.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -97,6 +134,12 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    sourceSets {
+        getByName("main").assets.srcDir(
+            layout.buildDirectory.dir("generated/assets/bundledLabelModel"),
+        )
     }
 
     composeOptions {
@@ -180,13 +223,11 @@ dependencies {
     implementation("androidx.hilt:hilt-work:1.2.0")
     kapt("androidx.hilt:hilt-compiler:1.2.0")
 
-    // Bundled ML Kit artifacts keep the supported intelligence paths available in
-    // airplane mode. Keep the release size gates below hard; changing to a
-    // network-delivered model is not an acceptable size optimization.
-    // Compact local image heuristics and Android's local face detector keep the
-    // APK/AAB gates hard. ZXing provides the QR-only decoder below. OCR is a
-    // deterministic local capability state until a compact Latin model that
-    // fits the gates is adopted; no network model delivery is permitted.
+    // Keep the model app-local and use the standalone on-device LiteRT runtime;
+    // no cloud inference or deferred model delivery is allowed.
+    add("bundledLabelModel", bundledLabelModelDependency)
+    implementation("org.tensorflow:tensorflow-lite:2.17.0")
+    implementation("org.tensorflow:tensorflow-lite-metadata:0.1.0-rc2")
     implementation("com.google.zxing:core:3.5.3")
 
     testImplementation("junit:junit:4.13.2")

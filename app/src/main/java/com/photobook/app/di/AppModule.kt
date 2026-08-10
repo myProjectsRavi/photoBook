@@ -48,6 +48,7 @@ object AppModule {
                 MIGRATION_8_9,
                 MIGRATION_9_10,
                 MIGRATION_10_11,
+                MIGRATION_11_12,
             )
             .build()
     }
@@ -266,6 +267,31 @@ object AppModule {
             db.execSQL(
                 "CREATE INDEX IF NOT EXISTS index_photos_isArchiveFoodCandidate_dateAdded " +
                     "ON photos(isArchiveFoodCandidate, dateAdded)",
+            )
+        }
+    }
+
+    private val MIGRATION_11_12 = object : Migration(11, 12) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            // The old Food flag was based on a color-only heuristic. Re-evaluate every
+            // existing photo once so semantic Food can discover photos the old heuristic
+            // missed as well as remove its false positives. Persisted tags and OCR state
+            // remain intact; only the ML completion bit is reopened.
+            db.execSQL(
+                """
+                UPDATE photos
+                SET isMlProcessed = 0,
+                    mlStatus = 'PENDING',
+                    isArchiveFoodCandidate = 0
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                UPDATE archive_decisions
+                SET state = 'stale'
+                WHERE state = 'candidate'
+                    AND reasons = 'Food photo'
+                """.trimIndent(),
             )
         }
     }

@@ -124,6 +124,7 @@ class TaggingWorker @AssistedInject constructor(
                 pendingIndexUpdates += PhotoIndex.PhotoIntelligenceUpdate(
                     id = photo.id,
                     tags = if (needsMl) analysis?.tags else null,
+                    archiveFoodCandidate = if (needsMl) analysis?.archiveFoodCandidate else null,
                     isMlProcessed = mlStatus?.let { it == IntelligenceStatus.PROCESSED },
                     mlStatus = mlStatus,
                     ocrText = if (needsOcr) analysis?.ocrText else null,

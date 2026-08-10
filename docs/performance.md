@@ -18,7 +18,8 @@ Performance is a measured contract, not a promise of a fixed latency on every An
 ## Intelligence maintenance
 
 - Bitmap decoding is sampled and recycled immediately. Maintenance processes bounded batches, checkpoints after commits, records failures locally, and retries only retryable states.
-- The current size-constrained offline backend uses compact local image heuristics, Android's local face detector, and ZXing QR decoding. Latin OCR reports an explicit permanent capability failure until a compact bundled model meets the hard size gates; no network fallback is allowed.
+- The current size-constrained offline backend uses bundled semantic image labeling, compact local image heuristics, Android's local face detector, and ZXing QR decoding. Latin OCR reports an explicit permanent capability failure until a compact bundled model meets the hard size gates; no network fallback is allowed. Archive Food eligibility is stored as an indexed flag after tagging, so archive refreshes do not decode an additional bitmap.
+- Food eligibility is computed once during tagging from semantic food plus prepared/served/packaged context and a live-subject veto, then persisted as the indexed `isArchiveFoodCandidate` flag. Existing photos are reopened by migration 11-to-12; tags and OCR remain available while the stricter decision is recomputed.
 
 ## UI and measurement
 

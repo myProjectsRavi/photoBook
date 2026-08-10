@@ -85,6 +85,7 @@ class PhotoIndex @Inject constructor() {
 
                 val nextRecord = record.copy(
                     mlTags = nextTags,
+                    isArchiveFoodCandidate = update.archiveFoodCandidate ?: record.isArchiveFoodCandidate,
                     isMlProcessed = update.isMlProcessed ?: record.isMlProcessed,
                     mlStatus = update.mlStatus ?: record.mlStatus,
                     ocrText = update.ocrText ?: record.ocrText,
@@ -237,6 +238,7 @@ class PhotoIndex @Inject constructor() {
     data class PhotoIntelligenceUpdate(
         val id: Long,
         val tags: List<MLTag>? = null,
+        val archiveFoodCandidate: Boolean? = null,
         val isMlProcessed: Boolean? = null,
         val mlStatus: IntelligenceStatus? = null,
         val ocrText: String? = null,

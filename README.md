@@ -5,7 +5,7 @@ PhotoBook is a private, offline-first Android photo manager for fast local searc
 ## Privacy Position
 
 - The app does not request `android.permission.INTERNET`.
-- Photo indexing, compact image labels/face signals, search ranking, Archives detection, PDF export, QR sharing, and vault operations run on-device. OCR has an explicit local-unavailable state until a Latin model fits the hard size budget; it never downloads a model or reports a false success.
+- Photo indexing, bundled semantic image labels, compact face signals, search ranking, Archives detection, PDF export, QR sharing, and vault operations run on-device. OCR has an explicit local-unavailable state until a Latin model fits the hard size budget; it never downloads a model or reports a false success.
 - `android:allowBackup="false"` is set for the application.
 - Vault files are stored in app-private encrypted storage; vault metadata is stored in Room.
 - Local diagnostics are written only to app-private storage and are not uploaded.
@@ -26,7 +26,8 @@ PhotoBook is a private, offline-first Android photo manager for fast local searc
 
 ### Offline intelligence
 
-- Compact local image heuristics, Android's local face detector, and the ZXing QR-only decoder are bundled in the app. There is no Play Services model installation, deferred download, or ML manifest metadata.
+- The bundled ML Kit image-labeling model provides semantic Food/live-subject signals offline; compact local image heuristics, Android's local face detector, and the ZXing QR-only decoder remain bundled in the app. There is no Play Services model installation, deferred download, or ML manifest metadata.
+- Archive Food is deliberately conservative: a photo must have semantic food evidence plus prepared, served, or packaged-food context, and live people, animals, birds, pets, wildlife, and similar subjects veto the candidate. A generic legacy `food` tag is not sufficient by itself.
 - Latin OCR currently fails deterministically as a local capability-unavailable result because the available bundled vendor model exceeds the hard APK/AAB gates. This limitation is visible to callers and never falls back to network delivery.
 - Indexing tracks ML/OCR state explicitly: pending, model preparing, processed, retryable failure, or permanent failure.
 - A photo is not marked processed when an analyzer is unavailable or fails.
@@ -36,6 +37,7 @@ PhotoBook is a private, offline-first Android photo manager for fast local searc
 - Archives is a lightweight, local cleanup queue for likely temporary transaction screenshots.
 - Detection is strict: candidates must look like screenshots, be older than the grace period, not be favorites, not be protected by Vault, and contain high-confidence payment/UPI evidence from metadata or OCR.
 - Candidate discovery uses indexed archive flags and bounded Room/MediaStore pages. A complete scan reconciles stale decisions and supports cancellation without allowing an older scan to overwrite newer choices.
+- The Room 11-to-12 migration reopens ML analysis for existing photos, preserves tags and OCR, and stales old Food decisions so the stricter semantic gate can be applied without requiring a library re-import.
 - Retention workers only mark items due. Android media trash/delete operations still use Android's system confirmation flow; PhotoBook does not silently trash or permanently delete user media.
 - Users can choose Archives retention of 7, 14, or 30 days for Archives-managed trashed items.
 
@@ -72,7 +74,7 @@ PhotoBook must stay lightweight. The current Gradle gates are:
 
 - `verifyApkSize`: every generated APK must be <= 30 MB.
 - `verifyReleaseBundleSize`: release AAB output must be <= 20 MB.
-- `compileSdk` and `targetSdk` are 36 for the current Play requirement. Source-controlled release truth is `versionCode = 15`, `versionName = "2.0.8"`; Play Console consumption is an external preflight, not a repository fact.
+- `compileSdk` and `targetSdk` are 36 for the current Play requirement. Source-controlled release truth is `versionCode = 16`, `versionName = "2.0.9"`; Play Console consumption is an external preflight, not a repository fact.
 
 CI runs the same verification command used locally:
 
@@ -102,3 +104,4 @@ CI runs the same verification command used locally:
 - Keep destructive media operations behind Android system confirmation.
 - Preserve explicit migrations for Room schema changes.
 - Verify changes with unit tests, debug build, lint, and size gates before release.
+- For Play upload, use the signed release bundle at `app/build/outputs/bundle/release/app-release.aab` only after verifying its package, version code/name, signature, size, and bundled local model asset.
