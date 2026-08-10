@@ -74,7 +74,7 @@ PhotoBook must stay lightweight. The current Gradle gates are:
 
 - `verifyApkSize`: every generated APK must be <= 30 MB.
 - `verifyReleaseBundleSize`: release AAB output must be <= 20 MB.
-- `compileSdk` and `targetSdk` are 36 for the current Play requirement. Source-controlled release truth is `versionCode = 16`, `versionName = "2.0.9"`; Play Console consumption is an external preflight, not a repository fact.
+- `compileSdk` and `targetSdk` are 36 for the current Play requirement. Source-controlled release truth is `versionCode = 17`, `versionName = "2.0.10"`; Play Console consumption is an external preflight, not a repository fact.
 
 CI runs the same verification command used locally:
 

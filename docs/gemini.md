@@ -21,7 +21,7 @@ Archive Food must remain conservative and purpose-specific: require semantic foo
 
 ## Release truth and workflow
 
-`app/build.gradle.kts` is authoritative for checked-in metadata: `versionCode = 16`, `versionName = "2.0.9"`, `targetSdk = 36`. Play Console state is external and must be verified at upload time, not documented as fact. `finish_release.sh` only builds and verifies; it does not push, open browsers, or upload.
+`app/build.gradle.kts` is authoritative for checked-in metadata: `versionCode = 17`, `versionName = "2.0.10"`, `targetSdk = 36`. Play Console state is external and must be verified at upload time, not documented as fact. `finish_release.sh` only builds and verifies; it does not push, open browsers, or upload.
 
 The signed bundle intended for Play upload is `app/build/outputs/bundle/release/app-release.aab`. Confirm its package, version code/name, signature, size gate, and bundled model asset from the exact built file.
 

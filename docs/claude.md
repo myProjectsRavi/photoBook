@@ -22,7 +22,7 @@ PhotoBook is a free, private, offline-first Android gallery. Preserve the local 
 
 ## Release truth
 
-- `app/build.gradle.kts` is the only checked-in release truth: `versionCode = 16`, `versionName = "2.0.9"`, `targetSdk = 36`.
+- `app/build.gradle.kts` is the only checked-in release truth: `versionCode = 17`, `versionName = "2.0.10"`, `targetSdk = 36`.
 - Play Console consumption, track state, and upload eligibility are external preflight facts and must not be written as repository facts.
 - `finish_release.sh` is reproducible build-only: it discovers the repository root, derives metadata from Gradle, builds release artifacts, checks existence, merged manifest, sizes, and lint, and never pushes, opens a browser, or uploads.
 - The signed Play upload artifact is `app/build/outputs/bundle/release/app-release.aab`; verify package/version, signing, size, and the bundled local semantic-label model before upload.
