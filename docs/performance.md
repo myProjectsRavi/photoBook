@@ -26,3 +26,4 @@ Performance is a measured contract, not a promise of a fixed latency on every An
 - Compose grids use Paging, stable keys, adjacent-page prefetch, bounded Coil memory, and Lite-tier limits on low-RAM devices.
 - Required benchmark scenarios are 10k/50k/100k synthetic libraries: cold startup, search p95, first visible thumbnail, scroll frame stability, peak heap, indexing throughput, and battery-sensitive WorkManager behavior.
 - Build gates are hard: every generated APK <=30 MB and the release AAB <=20 MB. Record device model, API level, RAM tier, library size, and airplane-mode state with every benchmark.
+- Release packaging enables R8 optimization and resource shrinking; performance and size claims must be made from the signed, minified AAB rather than from a debug build.
