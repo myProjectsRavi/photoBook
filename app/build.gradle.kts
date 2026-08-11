@@ -71,8 +71,8 @@ android {
         applicationId = "com.photobook.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 18
-        versionName = "2.0.11"
+        versionCode = 19
+        versionName = "2.0.12"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -226,7 +226,9 @@ dependencies {
     // Keep the model app-local and use the standalone on-device LiteRT runtime;
     // no cloud inference or deferred model delivery is allowed.
     add("bundledLabelModel", bundledLabelModelDependency)
-    implementation("org.tensorflow:tensorflow-lite:2.17.0")
+    // LiteRT 1.4.1 keeps the InterpreterApi surface used by LocalSemanticImageLabeler
+    // and ships 16 KB ELF-aligned native libraries for Play's Android 15 requirement.
+    implementation("com.google.ai.edge.litert:litert:1.4.1")
     implementation("org.tensorflow:tensorflow-lite-metadata:0.1.0-rc2")
     implementation("com.google.zxing:core:3.5.3")
 

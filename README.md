@@ -26,7 +26,7 @@ PhotoBook is a private, offline-first Android photo manager for fast local searc
 
 ### Offline intelligence
 
-- The bundled ML Kit image-labeling model provides semantic Food/live-subject signals offline; compact local image heuristics, Android's local face detector, and the ZXing QR-only decoder remain bundled in the app. There is no Play Services model installation, deferred download, or ML manifest metadata.
+- The bundled ML Kit image-labeling model provides semantic Food/live-subject signals offline; compact local image heuristics, Android's local face detector, and the ZXing QR-only decoder remain bundled in the app. LiteRT 1.4.1 runs the local model with 16 KB-aligned native libraries. There is no Play Services model installation, deferred download, or ML manifest metadata.
 - Archive Food is deliberately conservative: a photo must have semantic food evidence plus prepared, served, or packaged-food context, and live people, animals, birds, pets, wildlife, and similar subjects veto the candidate. A generic legacy `food` tag is not sufficient by itself.
 - Latin OCR currently fails deterministically as a local capability-unavailable result because the available bundled vendor model exceeds the hard APK/AAB gates. This limitation is visible to callers and never falls back to network delivery.
 - Indexing tracks ML/OCR state explicitly: pending, model preparing, processed, retryable failure, or permanent failure.
@@ -74,7 +74,7 @@ PhotoBook must stay lightweight. The current Gradle gates are:
 
 - `verifyApkSize`: every generated APK must be <= 30 MB.
 - `verifyReleaseBundleSize`: release AAB output must be <= 20 MB.
-- `compileSdk` and `targetSdk` are 36 for the current Play requirement. Source-controlled release truth is `versionCode = 18`, `versionName = "2.0.11"`; Play Console consumption is an external preflight, not a repository fact.
+- `compileSdk` and `targetSdk` are 36 for the current Play requirement. Source-controlled release truth is `versionCode = 19`, `versionName = "2.0.12"`; Play Console consumption is an external preflight, not a repository fact.
 - Release builds use R8 with the optimized Android defaults and resource shrinking (`isMinifyEnabled = true`, `isShrinkResources = true`) to reduce memory, code, and resource overhead without changing the debug build.
 
 CI runs the same verification command used locally:

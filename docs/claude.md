@@ -14,7 +14,7 @@ PhotoBook is a free, private, offline-first Android gallery. Preserve the local 
 ## Architecture facts
 
 - Kotlin, Compose/Material 3, Room/FTS, Paging 3, WorkManager, Hilt, Coil, AndroidX Security Crypto/Biometric, Android `PdfDocument`, bundled semantic image labeling, compact local intelligence, and ZXing QR decoding.
-- `OnDeviceIntelligence` is the shared local readiness boundary. Bundled image labeling and compact image/face/QR capabilities are offline; Latin OCR returns an explicit unavailable/permanent failure until a model fits the size budget.
+- `OnDeviceIntelligence` is the shared local readiness boundary. Bundled image labeling and compact image/face/QR capabilities are offline; LiteRT 1.4.1 supplies the 16 KB-aligned local interpreter; Latin OCR returns an explicit unavailable/permanent failure until a model fits the size budget.
 - Archives uses indexed eligibility flags, keyset-paged Room scans, bounded decision batches, stale-candidate reconciliation, independent Payments/Food toggles, favorites/Vault/fresh-photo/sensitive-document safeguards, and foreground confirmation semantics. Food additionally requires semantic food plus prepared/served/packaged context; live-subject labels veto it, so generic legacy tags cannot create Food candidates.
 - Room migration 11-to-12 reopens ML analysis for existing photos, preserves tags/OCR, and invalidates prior Food decisions for conservative reevaluation.
 - Search uses FTS IDs without a 1,200 eligibility cap and preserves case-insensitive deterministic ranking. Limited Android 14 access is visible and never represented as a complete library.
@@ -22,7 +22,7 @@ PhotoBook is a free, private, offline-first Android gallery. Preserve the local 
 
 ## Release truth
 
-- `app/build.gradle.kts` is the only checked-in release truth: `versionCode = 18`, `versionName = "2.0.11"`, `targetSdk = 36`.
+- `app/build.gradle.kts` is the only checked-in release truth: `versionCode = 19`, `versionName = "2.0.12"`, `targetSdk = 36`.
 - Release uses R8 optimization and resource shrinking with `proguard-android-optimize.txt`; keep the release shrinker enabled and validate the signed output after any keep-rule change.
 - Play Console consumption, track state, and upload eligibility are external preflight facts and must not be written as repository facts.
 - `finish_release.sh` is reproducible build-only: it discovers the repository root, derives metadata from Gradle, builds release artifacts, checks existence, merged manifest, sizes, and lint, and never pushes, opens a browser, or uploads.
