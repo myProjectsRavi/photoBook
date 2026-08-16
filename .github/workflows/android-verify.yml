@@ -26,6 +26,9 @@ jobs:
           java-version: "17"
           cache: gradle
 
+      - name: Verify Phase-0 host tooling
+        run: python3 -m unittest tools/benchmark/test_phase0_tools.py
+
       - name: Verify app and benchmark sources
         run: |
           chmod +x ./gradlew
