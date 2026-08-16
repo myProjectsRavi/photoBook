@@ -43,6 +43,22 @@ jobs:
             :app:verifyReleaseBundleSize \
             :baselineprofile:assembleBenchmark
 
+      - name: Verify release-like APK requests no Internet permission
+        shell: bash
+        run: |
+          set -euo pipefail
+          AAPT="$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -type f -name aapt -print | sort -V | tail -n 1)"
+          test -n "$AAPT"
+          mapfile -t benchmark_apks < <(find app/build/outputs/apk/benchmark -type f -name '*.apk' -print | sort)
+          test "${#benchmark_apks[@]}" -gt 0
+          for apk in "${benchmark_apks[@]}"; do
+            if "$AAPT" dump permissions "$apk" | grep -Fq 'android.permission.INTERNET'; then
+              echo "FAIL: $apk requests android.permission.INTERNET" >&2
+              exit 1
+            fi
+            echo "PASS: $apk has no android.permission.INTERNET"
+          done
+
       - name: Generate deterministic Phase-0 fixture smoke corpus
         run: |
           python3 tools/benchmark/generate_media_fixtures.py \
