@@ -103,6 +103,9 @@ class MLTagger @Inject constructor(
                     archiveSignals += MLTag(canonical, label.confidence)
                     if (label.isPreparedFood) {
                         archiveSignals += MLTag("prepared_food", label.confidence)
+                        if (label.confidence >= ArchiveFoodSignals.MIN_PREPARED_FOOD_CONFIDENCE) {
+                            tagMap["prepared_food"] = MLTag("prepared_food", label.confidence)
+                        }
                     }
                 }
             }

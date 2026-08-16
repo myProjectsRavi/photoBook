@@ -67,6 +67,36 @@ class ArchiveFoodSignalsTest {
     }
 
     @Test
+    fun everyDeclaredLivestockSubject_isRejected() {
+        val livestock = listOf(
+            "cow",
+            "buffalo",
+            "goat",
+            "sheep",
+            "lamb",
+            "cattle",
+            "bull",
+            "horse",
+            "hen",
+            "rooster",
+            "chicken",
+            "livestock",
+        )
+
+        livestock.forEach { subject ->
+            assertThat(
+                ArchiveFoodSignals.isEligible(
+                    listOf(
+                        MLTag("food", 0.95f),
+                        MLTag("prepared_food", 0.95f),
+                        MLTag(subject, 0.90f),
+                    ),
+                ),
+            ).isFalse()
+        }
+    }
+
+    @Test
     fun weakFood_isRejected() {
         assertThat(
             ArchiveFoodSignals.isEligible(
@@ -80,12 +110,41 @@ class ArchiveFoodSignalsTest {
 
     @Test
     fun modelLiveSubjectAliases_areCanonicalizedForTheArchiveGate() {
-        assertThat(LabelMapping.map("Bird")).isEqualTo("bird")
-        assertThat(LabelMapping.map("Person")).isEqualTo("people")
-        assertThat(LabelMapping.map("Animal")).isEqualTo("animal")
-        assertThat(LabelMapping.map("Hen")).isEqualTo("bird")
-        assertThat(LabelMapping.map("Cattle")).isEqualTo("animal")
-        assertThat(LabelMapping.map("Bull")).isEqualTo("animal")
-        assertThat(LabelMapping.map("Horse")).isEqualTo("animal")
+        val aliases = mapOf(
+            "Bird" to "bird",
+            "Person" to "people",
+            "Animal" to "animal",
+            "Hen" to "bird",
+            "Cattle" to "animal",
+            "Bull" to "animal",
+            "Horse" to "animal",
+            "Cow" to "animal",
+            "Buffalo" to "animal",
+            "Goat" to "animal",
+            "Sheep" to "animal",
+            "Lamb" to "animal",
+            "Livestock" to "animal",
+            "Chicken" to "bird",
+        )
+
+        aliases.forEach { (raw, expected) ->
+            assertThat(LabelMapping.map(raw)).isEqualTo(expected)
+        }
+    }
+
+    @Test
+    fun aliasFallback_usesPhraseBoundariesInsteadOfSubstringCollisions() {
+        assertThat(LabelMapping.map("pizza on serving tray")).isEqualTo("food")
+        assertThat(LabelMapping.map("cow in pasture")).isEqualTo("animal")
+        assertThat(LabelMapping.map("kitchen interior")).isNull()
+        assertThat(LabelMapping.map("cardboard box")).isNull()
+    }
+
+    @Test
+    fun genericObjects_doNotCountAsPreparedFood() {
+        listOf("product", "plate", "bowl", "steaming").forEach { label ->
+            assertThat(LabelMapping.isPreparedFoodLabel(label)).isFalse()
+            assertThat(LabelMapping.map(label)).isNull()
+        }
     }
 }

@@ -45,10 +45,6 @@ object LabelMapping {
         "lunch" to "food",
         "supper" to "food",
         "juice" to "food",
-        "steaming" to "food",
-        "product" to "food",
-        "plate" to "food",
-        "bowl" to "food",
         "food" to "food",
 
         "bird" to "bird",
@@ -60,11 +56,22 @@ object LabelMapping {
         "hen" to "bird",
         "rooster" to "bird",
         "chick" to "bird",
+        "chicken" to "bird",
+        "poultry" to "bird",
         "penguin" to "bird",
         "waterfowl" to "bird",
         "duck" to "bird",
 
         "bear" to "animal",
+        "cow" to "animal",
+        "buffalo" to "animal",
+        "goat" to "animal",
+        "sheep" to "animal",
+        "lamb" to "animal",
+        "livestock" to "animal",
+        "calf" to "animal",
+        "ox" to "animal",
+        "oxen" to "animal",
         "cattle" to "animal",
         "crocodile" to "animal",
         "dinosaur" to "animal",
@@ -178,7 +185,7 @@ object LabelMapping {
         rawToCanonical[normalized]?.let { return it }
 
         return rawToCanonical.entries.firstOrNull { (raw, _) ->
-            normalized.contains(raw)
+            containsPhrase(normalized, raw)
         }?.value
     }
 
@@ -211,6 +218,20 @@ object LabelMapping {
         }
     }
 
+    private fun containsPhrase(text: String, phrase: String): Boolean {
+        var fromIndex = 0
+        while (fromIndex <= text.length - phrase.length) {
+            val index = text.indexOf(phrase, startIndex = fromIndex)
+            if (index < 0) return false
+            val beforeIsBoundary = index == 0 || !text[index - 1].isLetterOrDigit()
+            val afterIndex = index + phrase.length
+            val afterIsBoundary = afterIndex == text.length || !text[afterIndex].isLetterOrDigit()
+            if (beforeIsBoundary && afterIsBoundary) return true
+            fromIndex = index + 1
+        }
+        return false
+    }
+
     private val LIVE_SUBJECT_CANONICAL_LABELS = setOf(
         "animal",
         "bird",
@@ -237,10 +258,6 @@ object LabelMapping {
         "lunch",
         "supper",
         "juice",
-        "steaming",
-        "product",
-        "plate",
-        "bowl",
     )
 
     private const val LIVE_SUBJECT_MIN_CONFIDENCE = 0.50f
