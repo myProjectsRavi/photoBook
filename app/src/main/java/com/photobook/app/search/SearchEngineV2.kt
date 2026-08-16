@@ -18,7 +18,7 @@ class SearchEngineV2 @Inject constructor(
     data class SearchResult(
         val orderedIds: List<Long>,
         val tokens: List<QueryToken>,
-        /** False means a supplied candidate ID was missing from the in-memory index; callers fall back. */
+        /** False means the v2 result cannot be proven complete/consistent; callers fall back. */
         val complete: Boolean = true,
     )
 
@@ -26,20 +26,27 @@ class SearchEngineV2 @Inject constructor(
         query: String,
         candidateIds: List<Long>? = null,
         context: SearchContext = SearchContext(),
+        expectedIndexVersion: Long? = null,
     ): SearchResult {
+        if (!versionMatches(expectedIndexVersion)) {
+            return SearchResult(emptyList(), emptyList(), complete = false)
+        }
         val normalized = queryParser.normalize(query)
 
         if (normalized.isBlank()) {
-            if (candidateIds == null) {
-                return SearchResult(
-                    orderedIds = index.snapshot().map { record -> record.id },
-                    tokens = emptyList(),
-                )
+            val orderedIds = if (candidateIds == null) {
+                index.snapshot().map { record -> record.id }
+            } else {
+                if (candidateIds.any { id -> index.getById(id) == null }) {
+                    return SearchResult(emptyList(), emptyList(), complete = false)
+                }
+                candidateIds.toList()
             }
-            if (candidateIds.any { id -> index.getById(id) == null }) {
-                return SearchResult(emptyList(), emptyList(), complete = false)
+            return if (versionMatches(expectedIndexVersion)) {
+                SearchResult(orderedIds = orderedIds, tokens = emptyList())
+            } else {
+                SearchResult(emptyList(), emptyList(), complete = false)
             }
-            return SearchResult(candidateIds.toList(), emptyList())
         }
 
         val tokens = queryParser.tokenize(normalized).map(tokenClassifier::classify)
@@ -50,21 +57,20 @@ class SearchEngineV2 @Inject constructor(
         val hits = ArrayList<SearchHit>(hitCapacity)
 
         val complete = forEachSource(candidateIds) { ordinal, photo ->
-            if (filters.isNotEmpty() && !filters.all { filter -> filter(photo) }) {
-                return@forEachSource
+            if (filters.isEmpty() || filters.all { filter -> filter(photo) }) {
+                hits += SearchHit(
+                    id = photo.id,
+                    dateAdded = photo.dateAdded,
+                    score = if (tokens.isEmpty() || isOldest || isRecent) {
+                        0.0
+                    } else {
+                        searchRanker.score(photo, tokens, normalized, context)
+                    },
+                    ordinal = ordinal,
+                )
             }
-            hits += SearchHit(
-                id = photo.id,
-                dateAdded = photo.dateAdded,
-                score = if (tokens.isEmpty() || isOldest || isRecent) {
-                    0.0
-                } else {
-                    searchRanker.score(photo, tokens, normalized, context)
-                },
-                ordinal = ordinal,
-            )
         }
-        if (!complete) {
+        if (!complete || !versionMatches(expectedIndexVersion)) {
             return SearchResult(emptyList(), tokens, complete = false)
         }
 
@@ -88,6 +94,9 @@ class SearchEngineV2 @Inject constructor(
             }
         }
 
+        if (!versionMatches(expectedIndexVersion)) {
+            return SearchResult(emptyList(), tokens, complete = false)
+        }
         val orderedIds = if (isRecent && hits.size > RECENT_RESULT_LIMIT) {
             List(RECENT_RESULT_LIMIT) { index -> hits[index].id }
         } else {
@@ -113,6 +122,10 @@ class SearchEngineV2 @Inject constructor(
             action(ordinal, photo)
         }
         return true
+    }
+
+    private fun versionMatches(expectedIndexVersion: Long?): Boolean {
+        return expectedIndexVersion == null || index.version() == expectedIndexVersion
     }
 
     private data class SearchHit(
