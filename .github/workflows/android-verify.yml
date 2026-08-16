@@ -33,6 +33,7 @@ jobs:
             testDebugUnitTest \
             lintDebug \
             assembleDebug \
+            assembleDebugAndroidTest \
             bundleRelease \
             verifyApkSize \
             verifyReleaseBundleSize \
