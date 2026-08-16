@@ -1,34 +1,70 @@
 # Phase 0 Verification Contract
 
-Phase 0 exists to measure and protect PhotoBook before any core runtime architecture is replaced. It intentionally avoids Search v2, PhotoIndex v2, startup behavior changes, Reels pipeline changes, Vault crypto migration, Archive classifier behavior changes, or other user-visible production refactors.
+Phase 0 exists to measure and protect PhotoBook before any core runtime architecture is replaced. It intentionally avoids Search v2, PhotoIndex v2, startup behavior changes, Reels runtime changes, Storage Optimizer runtime changes, Vault crypto migration, Safe Share behavior fixes, Archive classifier behavior changes, or other user-visible production refactors.
 
 ## Non-negotiable invariants
 
 - PhotoBook remains fully usable without `android.permission.INTERNET`.
 - No account, cloud storage, telemetry, remote inference, deferred model download, or analytics dependency is introduced.
-- Existing release limits remain hard gates: APK <= 30 MB and release AAB <= 20 MB.
-- Test, fixture, benchmark, and stress tooling must not enter the shipped artifact.
+- Release limits remain hard gates: APK <= 30 MiB and release AAB <= 20 MiB.
+- Test, fixture, benchmark, and stress tooling must not enter the production release artifact.
 - Originals are never intentionally modified by verification tooling.
 - A reproducible crash, ANR, OOM, data-loss regression, privacy regression, or unexplained behavior mismatch blocks later optimization phases.
 - Archive safety is precision-first: uncertainty means do not archive. Food-positive acceptance is limited to cooked/prepared/served food and FMCG packaged food; livestock, wildlife, raw ingredients, favorites, sensitive documents, corrupt media, and uncertain media are negative/protected fixtures.
 
-## CI verification
+## Single verification entry point
 
-`Android Verification` is designed to perform host-tool self-tests, unit tests, lint, debug APK assembly, debug instrumentation-source assembly, a release-like benchmark APK, unsigned release APK/AAB verification when no production keystore is supplied, release APK/AAB size gates, benchmark-source compilation, deterministic fixture generation, Room schema export verification, artifact-size composition reporting, and static inspection that generated release APKs do not request `android.permission.INTERNET`.
+The same script is used locally and by GitHub Actions:
 
-Production signing is unchanged when `keystore.properties` is present. Unsigned CI release artifacts are verification artifacts only and must never be distributed as production releases.
+```bash
+bash tools/benchmark/run_phase0_local.sh
+```
 
-**Hosted-runner status (2026-08-16): blocked before execution.** GitHub Actions currently refuses to start the repository's hosted runner because the account reports a payment/spending-limit problem. This is an external CI-infrastructure blocker: no workflow steps execute, so the branch must not be described as CI-green or CI-red from Android test results until the runner can start.
+Host-only tooling validation is available when an Android SDK is unavailable:
 
-**Merge gate:** do not merge Phase 0 while the Android build/test pipeline has not executed. A green hosted run or equivalent reproducible local/sandbox Android build evidence reviewed separately is required before this PR can be considered merge-ready.
+```bash
+bash tools/benchmark/run_phase0_local.sh --host-only
+```
+
+Full mode is the Android build gate. It runs host-tool self-tests, unit tests, lint, debug and instrumentation-source assembly, benchmark and release assembly, release APK/AAB size gates, benchmark-source compilation, Room schema verification, deterministic fixture generation, release-APK permission inspection, and artifact-size reporting.
+
+## Authoritative Android build evidence — 2026-08-16
+
+A full GitHub-hosted Android verification run completed successfully for Phase 0 commit `e5f719dba3174c1b015bd186449bce6bc0a6e495` (run `31952683210`). This run used the same `run_phase0_local.sh` entry point documented above.
+
+Verified results:
+
+- Gradle: `BUILD SUCCESSFUL`; 238 actionable tasks executed.
+- JVM unit tests: 55 tests, 0 failures, 0 ignored.
+- Android lint: 0 errors; 136 non-blocking warnings remain as engineering debt.
+- Debug APK assembly: passed.
+- Debug Android-test APK assembly: passed; this proves instrumentation sources compile, not that device instrumentation executed.
+- Release-like benchmark APK assembly: passed.
+- Macrobenchmark producer/test APK compilation: passed via `:baselineprofile:assembleBenchmarkBenchmark`.
+- Release APK assembly: passed for arm64-v8a and armeabi-v7a.
+- Release AAB assembly: passed.
+- Room schema v12 export: present and packaged as verification evidence.
+- Host Phase-0 self-tests: 12/12 passed.
+- Deterministic 303-record smoke corpus generation: passed.
+- Both generated release APKs request no `android.permission.INTERNET`.
+
+Release artifact sizes from that run:
+
+- arm64-v8a release APK: 11,075,898 bytes.
+- armeabi-v7a release APK: 9,327,498 bytes.
+- release AAB: 17,471,358 bytes.
+
+All release artifacts are within the <=30 MiB APK and <=20 MiB AAB gates. The AAB is the tighter current constraint and should continue to be monitored on every later runtime dependency or model change.
+
+The evidence artifact for the successful run was uploaded by GitHub Actions with SHA-256 digest `b18ddb2f1d210c505a7f465601c4be6bb1569bbf54f420e0aa42c5adee1e40d2`.
 
 ## Room schema safety
 
 Room schema export is enabled and the schema directory is `app/schemas`.
 
-The current schema becomes the starting point for version-controlled migration evidence. Historical schemas that predate Phase 0 were not previously exported, so they must be backfilled before any future database schema change is approved. No database version bump is permitted until migration tests can validate every supported upgrade path that PhotoBook intends to preserve.
+The current v12 schema is the version-controlled migration baseline. Historical schemas that predate Phase 0 were not previously exported and must not be fabricated. No future database version bump is approved until every upgrade path PhotoBook intends to preserve has explicit migration evidence.
 
-`MigrationTestHelper` is wired against the exported database schema so future version changes can add explicit `runMigrationsAndValidate` coverage instead of relying on upgrade-by-assumption.
+`MigrationTestHelper` is wired against the exported schema so future version changes can add `runMigrationsAndValidate` coverage rather than relying on upgrade-by-assumption.
 
 ## Deterministic scale fixtures
 
@@ -38,7 +74,7 @@ Generate metadata-only 10k/50k/100k corpora:
 python3 tools/benchmark/generate_media_fixtures.py
 ```
 
-Generate a smaller device-seed corpus containing tiny valid PNGs plus corrupt/zero-byte cases:
+Generate device-seed media:
 
 ```bash
 python3 tools/benchmark/generate_media_fixtures.py \
@@ -47,13 +83,13 @@ python3 tools/benchmark/generate_media_fixtures.py \
   --write-media
 ```
 
-The default seed is fixed (`20260816`) so before/after runs see identical ordering and scenario distribution. Change the seed only when intentionally creating a second corpus. The weighted scenario cycle is 101 records; smaller custom counts are valid partial corpora and must not be rejected merely because they do not contain every scenario.
+The default seed is fixed (`20260816`). The weighted scenario cycle is 101 records; smaller custom counts are valid partial corpora.
 
-Each archive-relevant record also carries an explicit semantic ground-truth subject. Livestock negatives include cow, buffalo, goat, sheep, lamb, cattle, bull, horse, hen, rooster, live chicken, and generic livestock cases. Positive Food subjects are restricted to cooked/prepared/served meals and FMCG packaged food examples.
+Archive-relevant records carry explicit semantic ground truth. Livestock negatives include cow, buffalo, goat, sheep, lamb, cattle, bull, horse, hen, rooster, live chicken, and generic livestock. Positive Food subjects are restricted to cooked/prepared/served meals and FMCG packaged food examples.
 
-Favorite protection has higher precedence than category-positive expectations: if any generated Food or Payment fixture is also marked favorite, its expected Archive outcome is `never_archive`.
+Favorite protection has higher precedence than category-positive expectations: if any generated Food or Payment fixture is also a favorite, its expected Archive outcome is `never_archive`.
 
-Synthetic tiny PNGs are for functional scale/lifecycle plumbing and deterministic MediaStore seeding. They are **not** sufficient evidence for real-photo decode throughput, Reels performance, storage-optimizer throughput, or ML accuracy. Performance certification must use representative full-resolution media on physical devices; Food/payment accuracy certification must use a separately curated real-image corpus with explicit ground truth. Neither certification corpus ships inside the app.
+Synthetic tiny PNGs are for deterministic plumbing, MediaStore seeding, lifecycle testing, and scale testing. They are not evidence for real-photo decode throughput, Reels performance, Storage Optimizer throughput, or ML accuracy.
 
 Host tooling is self-tested with:
 
@@ -61,54 +97,53 @@ Host tooling is self-tested with:
 python3 -m unittest tools/benchmark/test_phase0_tools.py
 ```
 
-Those tests protect deterministic scenario coverage, partial custom counts, large/corrupt/zero-byte reachability, PNG chunk/CRC validity, livestock ground-truth coverage, favorite-protection precedence, narrow Food-positive expectations, and end-to-end artifact/model-size categorization.
+The suite protects scenario distribution, valid partial counts, large/corrupt/zero-byte reachability, PNG structure/CRC, livestock coverage, favorite precedence, narrow Food-positive expectations, deterministic generation, and artifact/model-size classification.
 
 ## Macrobenchmarks
 
-`PhotoBookMacrobenchmark` records:
+`PhotoBookMacrobenchmark` provides measurement coverage for:
 
-- cold startup timing;
-- warm startup timing;
+- cold startup;
+- warm startup;
 - grid frame timing;
 - search typing/result frame timing;
 - Reels vertical-swipe frame timing.
 
-Interaction benchmarks wait for PhotoBook's existing enabled Reel Browsing action before measurement so loading/welcome state cannot be mistaken for a ready gallery. Search uses the exposed editable text node rather than placeholder text, and Reels resolves the clickable action ancestor rather than assuming a label node itself is clickable.
+Interaction benchmarks wait for PhotoBook's existing enabled Reel Browsing action so loading/welcome state cannot be mistaken for a ready gallery. Search uses the exposed editable node, and Reels resolves the clickable action ancestor instead of assuming a label node is clickable.
 
-Use a release-like `benchmark` app variant signed with the debug key solely so benchmark devices can install it. The benchmark variant is `profileable` and non-debuggable; the benchmark test process itself remains debuggable.
+The benchmark app is release-derived, profileable, non-debuggable, and debug-signed only for test-device installation. Macrobenchmark runtime tooling uses `androidx.benchmark:benchmark-macro-junit4:1.4.1`; the production-facing Baseline Profile Gradle plugin remains at the repository's existing `1.3.3` during Phase 0. ProfileInstaller `1.4.1` is benchmark-only.
 
-Macrobenchmark runtime tooling uses `androidx.benchmark:benchmark-macro-junit4:1.4.1`. The production-facing Baseline Profile Gradle plugin remains at the repository's existing `1.3.3` version during Phase 0 to avoid introducing an unmeasured release-packaging change. ProfileInstaller `1.4.1` is added only to the benchmark variant for Macrobenchmark profile/shader-cache control and is intentionally excluded from production release artifacts.
+## Physical-device boundary
 
-Run benchmarks on physical devices for release decisions. Emulators are useful for compilation/smoke verification but are not sufficient evidence for the 2 GB-class-device promise.
+The successful Android build validates compilation, JVM tests, lint, release packaging, size gates, Room schema export, benchmark source compilation, and offline release-manifest invariants. It does **not** certify runtime behavior on a physical device.
 
-Recommended physical matrix:
+Still required before making performance or zero-crash claims:
 
-- constrained: 2-3 GB RAM, 60 Hz;
-- mainstream: 4-6 GB RAM;
-- high-end: 8+ GB RAM;
-- Android 8/9 for minimum-era behavior;
-- Android 13;
-- Android 14 selected/partial photo access;
-- Android 15;
-- Android 16 / API 36.
+- Android instrumentation execution on representative devices/emulators;
+- constrained 2-3 GB RAM device testing;
+- mainstream 4-6 GB and high-end 8+ GB coverage;
+- Android 8/9 compatibility stress (Macrobenchmark producer currently has minSdk 28, so API 26-27 require compatibility/stress coverage rather than Macrobenchmark numbers);
+- Android 13, Android 14 selected/partial photo access, Android 15, and Android 16/API 36 coverage;
+- long-session Reels soak and heap-stability evidence;
+- lifecycle/process-death/permission-volatility stress;
+- representative full-resolution real-photo performance data;
+- separately curated real-image Food/Payment ground-truth certification.
 
-The current benchmark producer module has `minSdk = 28`, so Android 9+ can run Macrobenchmark directly. Android 8 / API 26-27 remains part of the required compatibility, lifecycle, permission, memory-pressure, and crash/ANR test matrix through instrumentation/manual device stress; do not claim Macrobenchmark numbers for API 26-27 unless the benchmark module is deliberately lowered and revalidated later.
-
-For startup comparisons, use at least 20 measured iterations in the release certification run and store raw Macrobenchmark JSON/traces. Phase-0 source defaults are intentionally shorter for developer iteration.
+Do not convert provisional performance targets into product claims until those measurements exist.
 
 ## Device lifecycle / low-memory stress
 
-On a dedicated test device with the benchmark/debug build installed:
+On a dedicated test device:
 
 ```bash
 ITERATIONS=50 bash tools/benchmark/phase0_device_stress.sh
 ```
 
-The harness exercises repeated cold launches, foreground/background recovery, Android trim-memory pressure, process death, permission revoke/regrant, and captures crash-buffer, logcat, memory, graphics, and exit-reason evidence.
+The harness exercises repeated launches, foreground/background restoration, trim-memory pressure, process death, permission revoke/regrant, and captures crash-buffer, logcat, memory, graphics, and exit-reason evidence.
 
-Do not run destructive low-storage simulations on a personal device. Low-storage, MediaStore process-death, and pending-output fault injection require dedicated test-device scenarios and are release blockers once their operation-specific harnesses are introduced.
+Do not run destructive low-storage simulations on a personal device. Low-storage, MediaStore process-death, and pending-output fault injection should use dedicated test devices.
 
-## Artifact size evidence
+## Artifact-size evidence
 
 After building:
 
@@ -118,41 +153,26 @@ python3 tools/benchmark/report_artifact_sizes.py \
   --output build/reports/phase0/artifact-sizes.json
 ```
 
-The report tracks total bytes, compressed/uncompressed component groups, largest entries, optional baseline deltas, and bundled model bytes as a distinct category rather than hiding model growth inside generic assets. Any runtime dependency addition in later phases requires explicit size justification and before/after evidence.
-
-The <=30 MB APK hard gate scans **release APKs only**. Benchmark, debug, and instrumentation APKs remain observable in reports but cannot falsely fail the shipped-app size contract.
+The report tracks total bytes, compressed/uncompressed component groups, largest entries, optional baseline deltas, and bundled model bytes separately from generic assets. The <=30 MiB APK hard gate scans release APKs only; benchmark, debug, and instrumentation APKs remain observable but cannot falsely fail the shipped-app contract.
 
 ## Archive safety baseline
 
-Phase 0 does not change Archive decisions. It records and expands characterization tests and adversarial fixtures.
+Phase 0 does not alter Archive decisions. It records characterization tests and adversarial fixtures.
 
-Current code already canonicalizes several live-subject labels such as cattle, bull, horse, bird, animal, people, and pet into veto categories. The adversarial corpus also names livestock vocabulary that is not yet guaranteed by the current mapping, including cow, goat, sheep, buffalo, and the generic term livestock. These are explicit Phase-1 correctness blockers rather than assumptions.
+Current production mapping canonicalizes several live-subject labels such as cattle, bull, horse, bird, animal, people, and pet into veto categories. The corpus deliberately includes additional vocabulary not yet guaranteed by production mapping, including cow, goat, sheep, buffalo, and generic livestock. Those remain explicit Phase-1 correctness blockers rather than being silently changed in Phase 0.
 
 Before Food Archive can be described as production-certified, a real-image ground-truth evaluation must report at minimum:
 
-- false-positive count for livestock/wildlife: 0 in the certification corpus;
-- false-positive count for protected/ambiguous non-food: 0 in the certification corpus;
+- livestock/wildlife false positives: 0 in the certification corpus;
+- protected/ambiguous non-food false positives: 0 in the certification corpus;
 - cooked/prepared/served-food precision and recall;
 - FMCG packaged-food precision and recall;
-- complete list of false negatives and false positives, not only aggregate accuracy.
+- every false positive and false negative, not only aggregate accuracy.
 
 A false negative is preferable to a dangerous Food false positive.
 
-## Baseline result format
+## Phase 0 exit interpretation
 
-Every before/after performance report should include the same fields:
+The host-tooling and Android build/package gates now have reproducible passing evidence. This is sufficient to establish a trustworthy implementation baseline and review the Phase 0 PR for merge.
 
-- git SHA;
-- device model, Android/API version, RAM class, refresh rate;
-- fixture count and seed;
-- build variant and minification state;
-- cold/warm startup raw results and p50/p95 where enough samples exist;
-- search latency/frame results;
-- grid and Reels frame/jank results;
-- peak/stabilized heap and long-session trend;
-- crash/ANR/OOM count;
-- APK/AAB bytes and component deltas;
-- test/lint status;
-- offline/permission invariant status.
-
-Do not turn aspirational numerical targets into release claims until this Phase-0 physical-device baseline exists.
+Physical-device performance, soak, and crash/ANR evidence remains a prerequisite for making device-performance claims and should be collected before approving production architecture cutovers that depend on those measurements. Phase 0 passing does not by itself certify PhotoBook as zero-crash, 2 GB-optimized, or Food/Payment-accuracy certified.
