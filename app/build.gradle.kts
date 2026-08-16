@@ -254,6 +254,10 @@ dependencies {
     androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
     androidTestImplementation("androidx.room:room-testing:2.6.1")
 
+    // Required by current Macrobenchmark tooling for profile/shader-cache control,
+    // but intentionally excluded from production release artifacts.
+    add("benchmarkImplementation", "androidx.profileinstaller:profileinstaller:1.4.1")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
     baselineProfile(project(":baselineprofile"))
