@@ -64,6 +64,15 @@ fun PhotoThumbnail(
             .precision(Precision.EXACT)
             .build()
     }
+    val accessibleLabels = remember(photo.mlTags, photo.fileName) {
+        photo.mlTags
+            .asSequence()
+            .map { tag -> tag.label.trim() }
+            .filter { label -> label.isNotBlank() && label != INTERNAL_PREPARED_FOOD_TAG }
+            .distinct()
+            .joinToString()
+            .ifBlank { photo.fileName }
+    }
 
     Card(
         modifier = modifier
@@ -82,7 +91,7 @@ fun PhotoThumbnail(
         Box(modifier = Modifier.fillMaxSize()) {
             AsyncImage(
                 model = imageRequest,
-                contentDescription = photo.mlTags.joinToString { it.label }.ifBlank { photo.fileName },
+                contentDescription = accessibleLabels,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
             )
@@ -109,3 +118,5 @@ fun PhotoThumbnail(
         }
     }
 }
+
+private const val INTERNAL_PREPARED_FOOD_TAG = "prepared_food"
