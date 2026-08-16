@@ -1,6 +1,9 @@
 name: Phase 1 Device Verification
 
 on:
+  push:
+    branches:
+      - "agent/phase1-correctness-privacy"
   workflow_dispatch:
 
 permissions:
