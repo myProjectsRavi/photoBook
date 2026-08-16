@@ -20,6 +20,8 @@ Production signing is unchanged when `keystore.properties` is present. An unsign
 
 **Hosted-runner status (2026-08-16): blocked before execution.** GitHub Actions currently refuses to start the repository's hosted runner because the account reports a payment/spending-limit problem. This is an external CI-infrastructure blocker: no workflow steps execute, so the branch must not be described as CI-green or CI-red from Android test results until the runner can start. Keep the Phase-0 PR in draft and rerun the full workflow after the account-level blocker is resolved.
 
+**Merge gate:** do not merge Phase 0 while hosted verification has not executed. A green full Android Verification run (or equivalent reproducible local/physical-device evidence reviewed separately) is required before this PR can be considered merge-ready.
+
 ## Room schema safety
 
 Room schema export is enabled and the schema directory is `app/schemas`.
