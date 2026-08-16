@@ -31,8 +31,6 @@ class PhotoIndex internal constructor(
 
     internal constructor(strategy: PhotoIndexStrategy) : this(createBackend(strategy))
 
-    fun records(): StateFlow<List<PhotoRecord>> = backend.records()
-
     fun changes(): StateFlow<Long> = backend.changes()
 
     fun snapshot(): List<PhotoRecord> = backend.snapshot()
@@ -136,7 +134,6 @@ class PhotoIndex internal constructor(
 }
 
 internal interface PhotoIndexBackend {
-    fun records(): StateFlow<List<PhotoRecord>>
     fun changes(): StateFlow<Long>
     fun snapshot(): List<PhotoRecord>
     fun getById(id: Long): PhotoRecord?
@@ -166,7 +163,6 @@ internal class LegacyPhotoIndexBackend : PhotoIndexBackend {
     @Volatile private var cityKeywords: Set<String> = emptySet()
     @Volatile private var mlKeywords: Set<String> = emptySet()
 
-    override fun records(): StateFlow<List<PhotoRecord>> = recordsFlow.asStateFlow()
     override fun changes(): StateFlow<Long> = changeFlow.asStateFlow()
     override fun snapshot(): List<PhotoRecord> = recordsFlow.value
     override fun getById(id: Long): PhotoRecord? = recordsFlow.value.firstOrNull { record -> record.id == id }
@@ -301,7 +297,6 @@ internal class OverlayPhotoIndexBackend : PhotoIndexBackend {
     // recordsMap is writer-only under mutex. Readers use immutable snapshots exclusively.
     private val recordsMap = LinkedHashMap<Long, PhotoRecord>()
     @Volatile private var snapshot = OverlayPhotoList.empty()
-    private val recordsFlow = MutableStateFlow<List<PhotoRecord>>(snapshot)
     private val changeFlow = MutableStateFlow(0L)
 
     @Volatile private var version = 0L
@@ -309,7 +304,6 @@ internal class OverlayPhotoIndexBackend : PhotoIndexBackend {
     @Volatile private var cityKeywords: Set<String> = emptySet()
     @Volatile private var mlKeywords: Set<String> = emptySet()
 
-    override fun records(): StateFlow<List<PhotoRecord>> = recordsFlow.asStateFlow()
     override fun changes(): StateFlow<Long> = changeFlow.asStateFlow()
     override fun snapshot(): List<PhotoRecord> = snapshot
     override fun getById(id: Long): PhotoRecord? = snapshot.getById(id)
@@ -440,7 +434,6 @@ internal class OverlayPhotoIndexBackend : PhotoIndexBackend {
     private fun publishSnapshot(nextSnapshot: OverlayPhotoList, publicationVersion: Long) {
         check(version == publicationVersion) { "PhotoIndex publication generation changed unexpectedly" }
         snapshot = nextSnapshot
-        recordsFlow.value = nextSnapshot
         changeFlow.value = publicationVersion
     }
 
@@ -452,11 +445,7 @@ internal class OverlayPhotoIndexBackend : PhotoIndexBackend {
     }
 }
 
-/**
- * Immutable List view with O(1) ID-to-position lookup and a bounded point-update overlay.
- * Identity equality is intentional: MutableStateFlow otherwise performs structural List equality,
- * turning an otherwise O(1) favorite update back into an O(n) scan before emission.
- */
+/** Immutable List view with O(1) ID-to-position lookup and a bounded point-update overlay. */
 internal class OverlayPhotoList private constructor(
     private val base: List<PhotoRecord>,
     private val indexById: Map<Long, Int>,
@@ -497,10 +486,6 @@ internal class OverlayPhotoList private constructor(
         }
         return OverlayPhotoList(base, indexById, nextOverrides)
     }
-
-    // StateFlow conflation must be identity-based for this immutable snapshot wrapper.
-    override fun equals(other: Any?): Boolean = this === other
-    override fun hashCode(): Int = System.identityHashCode(this)
 
     companion object {
         private const val MAX_OVERLAY_ENTRIES = 2048
