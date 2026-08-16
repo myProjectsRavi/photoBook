@@ -17,7 +17,6 @@ import java.util.UUID
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -69,6 +68,25 @@ class ExifMetadataServiceInstrumentedTest {
         assertEquals(0, pending)
         assertTrue(success.fileName.contains("_clean_"))
         assertTrue(success.fileName.endsWith(".jpg"))
+    }
+
+    @Test
+    fun createCleanCopy_stripsExtendedGpsOnExifFastPath() = runBlocking {
+        assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+        val source = createSensitiveJpeg(includeXmp = false)
+        val sourceExif = ExifInterface(source.absolutePath)
+        assertTrue(!sourceExif.getAttribute(ExifInterface.TAG_GPS_DEST_LATITUDE).isNullOrBlank())
+        assertTrue(!sourceExif.getAttribute(ExifInterface.TAG_GPS_DEST_LONGITUDE).isNullOrBlank())
+        assertTrue(!sourceExif.getAttribute(ExifInterface.TAG_GPS_MAP_DATUM).isNullOrBlank())
+        assertTrue(!sourceExif.getAttribute(ExifInterface.TAG_GPS_SPEED).isNullOrBlank())
+        val service = ExifMetadataService(context)
+
+        val result = service.createCleanCopy(photoFor(source))
+
+        assertTrue(result is MetadataCleanResult.Success)
+        val success = result as MetadataCleanResult.Success
+        createdMediaUris += success.uri
+        assertSensitiveMetadataRemoved(success.uri)
     }
 
     @Test
@@ -145,6 +163,7 @@ class ExifMetadataServiceInstrumentedTest {
         width: Int = 96,
         height: Int = 96,
         orientation: Int = ExifInterface.ORIENTATION_NORMAL,
+        includeXmp: Boolean = true,
     ): File {
         val file = File(context.cacheDir, "phase1-${UUID.randomUUID()}.jpg")
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
@@ -158,7 +177,9 @@ class ExifMetadataServiceInstrumentedTest {
             setAttribute(ExifInterface.TAG_MODEL, "Phase1SensitiveCamera")
             setAttribute(ExifInterface.TAG_MAKE, "Phase1SensitiveMaker")
             setAttribute(ExifInterface.TAG_USER_COMMENT, "private-comment")
-            setAttribute(ExifInterface.TAG_XMP, "<x:xmpmeta>private-xmp</x:xmpmeta>")
+            if (includeXmp) {
+                setAttribute(ExifInterface.TAG_XMP, "<x:xmpmeta>private-xmp</x:xmpmeta>")
+            }
             setAttribute(ExifInterface.TAG_ORIENTATION, orientation.toString())
             setAttribute(ExifInterface.TAG_SUBSEC_TIME_ORIGINAL, "123")
             setAttribute(ExifInterface.TAG_GPS_MAP_DATUM, "WGS-84")
