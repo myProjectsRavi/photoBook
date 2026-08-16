@@ -53,11 +53,18 @@ jobs:
           SYSTEM_IMAGE="system-images;android-35;google_apis;x86_64"
           AVD_NAME="photobook-phase1-api35"
 
+          # Keep AVD creation and emulator lookup on one explicit, disposable path.
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+
           test -x "$SDKMANAGER"
           test -x "$AVDMANAGER"
           test -x "$ADB"
 
           echo "Android SDK: $SDK_ROOT"
+          echo "Android AVD home: $ANDROID_AVD_HOME"
           echo "Installing emulator + API-35 Google APIs x86_64 image"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" --channel=0 \
@@ -70,7 +77,14 @@ jobs:
             --force \
             --name "$AVD_NAME" \
             --package "$SYSTEM_IMAGE" \
-            --device "pixel_2"
+            --device "pixel_2" \
+            --path "$ANDROID_AVD_HOME/$AVD_NAME.avd"
+
+          # Fail before QEMU launch if creation and lookup disagree.
+          test -f "$ANDROID_AVD_HOME/$AVD_NAME.ini"
+          test -d "$ANDROID_AVD_HOME/$AVD_NAME.avd"
+          "$EMULATOR" -list-avds | tee "$RUNNER_TEMP/phase1-avd-list.txt"
+          grep -Fxq "$AVD_NAME" "$RUNNER_TEMP/phase1-avd-list.txt"
 
           if [[ ! -e /dev/kvm ]]; then
             echo "GitHub Linux runner does not expose /dev/kvm; refusing a software-emulated false gate."
@@ -155,6 +169,7 @@ jobs:
             echo "No ready ADB device was available during diagnostics." > build/reports/phase1-device/adb-status.txt
           fi
           cp "$RUNNER_TEMP/phase1-emulator.log" build/reports/phase1-device/emulator.log 2>/dev/null || true
+          cp "$RUNNER_TEMP/phase1-avd-list.txt" build/reports/phase1-device/avd-list.txt 2>/dev/null || true
 
       - name: Upload Phase 1 device evidence
         if: always()
