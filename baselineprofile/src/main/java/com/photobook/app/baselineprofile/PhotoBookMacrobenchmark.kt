@@ -1,5 +1,6 @@
 package com.photobook.app.baselineprofile
 
+import android.os.SystemClock
 import android.view.KeyEvent
 import androidx.benchmark.macro.FrameTimingMetric
 import androidx.benchmark.macro.MacrobenchmarkScope
@@ -58,6 +59,7 @@ class PhotoBookMacrobenchmark {
                 pressHome()
                 startActivityAndWait()
                 requireAppWindow()
+                requireReadyLibrary()
             },
         ) {
             repeat(8) {
@@ -84,6 +86,7 @@ class PhotoBookMacrobenchmark {
                 pressHome()
                 startActivityAndWait()
                 requireAppWindow()
+                requireReadyLibrary()
                 val search = device.findObject(By.textContains("Search"))
                     ?: error("Search field was not exposed to UI Automator")
                 search.click()
@@ -112,9 +115,7 @@ class PhotoBookMacrobenchmark {
                 pressHome()
                 startActivityAndWait()
                 requireAppWindow()
-
-                val reelsToggle = device.findObject(By.text("Reel Browsing"))
-                    ?: error("Reel Browsing action was not exposed to UI Automator")
+                val reelsToggle = requireReadyLibrary()
                 reelsToggle.click()
                 device.waitForIdle()
 
@@ -157,10 +158,28 @@ class PhotoBookMacrobenchmark {
         check(visible) { "PhotoBook window did not become visible" }
     }
 
+    private fun MacrobenchmarkScope.requireReadyLibrary(): androidx.test.uiautomator.UiObject2 {
+        val deadlineMs = SystemClock.elapsedRealtime() + READY_TIMEOUT_MS
+        while (SystemClock.elapsedRealtime() < deadlineMs) {
+            val action = device.findObject(By.text(REELS_ACTION_TEXT))
+            if (action?.isEnabled == true) {
+                return action
+            }
+            device.waitForIdle()
+            SystemClock.sleep(100)
+        }
+        error(
+            "PhotoBook did not reach its ready state before benchmark measurement; " +
+                "the seeded fixture library may still be indexing",
+        )
+    }
+
     companion object {
         private const val TARGET_PACKAGE = "com.photobook.app"
+        private const val REELS_ACTION_TEXT = "Reel Browsing"
         private const val STARTUP_ITERATIONS = 10
         private const val INTERACTION_ITERATIONS = 5
         private const val UI_TIMEOUT_MS = 8_000L
+        private const val READY_TIMEOUT_MS = 30_000L
     }
 }
