@@ -116,6 +116,28 @@ class PhotoIndexV2ParityTest {
         assertParity(legacy, v2, "post-compaction")
     }
 
+    @Test
+    fun v2_previousSnapshotRemainsImmutableAndCompletedGenerationTracksCurrentView() = runBlocking {
+        val v2 = PhotoIndex(PhotoIndexStrategy.V2)
+        v2.setRecords(deterministicRecords(1_000))
+
+        val before = v2.snapshot()
+        val beforeVersion = v2.version()
+        val id = 23L
+        val beforeFavorite = checkNotNull(v2.getByIdFromSnapshot(before, id)).isFavorite
+        assertEquals(beforeVersion, v2.changes().value)
+
+        v2.toggleFavorite(id)
+
+        val after = v2.snapshot()
+        assertNotSame(before, after)
+        assertEquals(beforeFavorite, checkNotNull(v2.getByIdFromSnapshot(before, id)).isFavorite)
+        assertEquals(!beforeFavorite, checkNotNull(v2.getByIdFromSnapshot(after, id)).isFavorite)
+        assertEquals(beforeVersion + 1L, v2.version())
+        assertEquals(v2.version(), v2.changes().value)
+        assertEquals(before.map { it.id }, after.map { it.id })
+    }
+
     private fun assertParity(legacy: PhotoIndex, v2: PhotoIndex, label: String) {
         assertEquals("size mismatch at $label", legacy.size(), v2.size())
         assertEquals("version mismatch at $label", legacy.version(), v2.version())
