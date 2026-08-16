@@ -130,31 +130,52 @@ class ArchiveService @Inject constructor(
     ): ArchiveSummary {
         val scanStartedAtMs = System.currentTimeMillis()
         val enabledCategories = enabledCategories()
-        var beforeDateAdded = Long.MAX_VALUE
-        var beforeId = Long.MAX_VALUE
+        val retentionDays = retentionDays()
+        var paymentCursor = ArchiveKeysetCursor()
+        var foodCursor = ArchiveKeysetCursor()
 
         while (enabledCategories.isNotEmpty()) {
-            val page = buildList {
-                if (ArchiveCategory.Payments in enabledCategories) {
-                    addAll(
-                        photoDao.getArchiveScreenshotCandidatesAfter(
-                            beforeDateAdded = beforeDateAdded,
-                            beforeId = beforeId,
-                            limit = ARCHIVE_PAGE_SIZE,
-                        ),
-                    )
-                }
-                if (ArchiveCategory.Food in enabledCategories) {
-                    addAll(
-                        photoDao.getArchiveFoodCandidatesAfter(
-                            beforeDateAdded = beforeDateAdded,
-                            beforeId = beforeId,
-                            limit = ARCHIVE_PAGE_SIZE,
-                        ),
-                    )
-                }
-            }.distinctBy { entity -> entity.id }
+            val paymentPage = if (
+                ArchiveCategory.Payments in enabledCategories && !paymentCursor.exhausted
+            ) {
+                photoDao.getArchiveScreenshotCandidatesAfter(
+                    beforeDateAdded = paymentCursor.beforeDateAdded,
+                    beforeId = paymentCursor.beforeId,
+                    limit = ARCHIVE_PAGE_SIZE,
+                )
+            } else {
+                emptyList()
+            }
+            if (ArchiveCategory.Payments in enabledCategories && !paymentCursor.exhausted) {
+                paymentCursor = paymentCursor.advance(
+                    page = paymentPage.map { entity ->
+                        ArchivePageKey(dateAdded = entity.dateAdded, id = entity.id)
+                    },
+                    pageSize = ARCHIVE_PAGE_SIZE,
+                )
+            }
 
+            val foodPage = if (
+                ArchiveCategory.Food in enabledCategories && !foodCursor.exhausted
+            ) {
+                photoDao.getArchiveFoodCandidatesAfter(
+                    beforeDateAdded = foodCursor.beforeDateAdded,
+                    beforeId = foodCursor.beforeId,
+                    limit = ARCHIVE_PAGE_SIZE,
+                )
+            } else {
+                emptyList()
+            }
+            if (ArchiveCategory.Food in enabledCategories && !foodCursor.exhausted) {
+                foodCursor = foodCursor.advance(
+                    page = foodPage.map { entity ->
+                        ArchivePageKey(dateAdded = entity.dateAdded, id = entity.id)
+                    },
+                    pageSize = ARCHIVE_PAGE_SIZE,
+                )
+            }
+
+            val page = (paymentPage + foodPage).distinctBy { entity -> entity.id }
             if (page.isEmpty()) break
 
             val pageIds = page.map { entity -> entity.id }
@@ -178,7 +199,7 @@ class ArchiveService @Inject constructor(
                     firstDetectedAtMs = existing?.firstDetectedAtMs ?: scanStartedAtMs,
                     lastDetectedAtMs = scanStartedAtMs,
                     trashedAtMs = existing?.trashedAtMs,
-                    retentionDays = existing?.retentionDays ?: retentionDays(),
+                    retentionDays = existing?.retentionDays ?: retentionDays,
                 )
             }
             nextDecisions.chunked(ARCHIVE_DECISION_BATCH_SIZE).forEach { batch ->
@@ -186,11 +207,9 @@ class ArchiveService @Inject constructor(
             }
             onBatchCommitted(loadSummaryInternal(scanStartedAtMs))
 
-            val oldest = page.minWithOrNull(
-                compareBy<PhotoEntity> { it.dateAdded }.thenBy { it.id },
-            ) ?: break
-            beforeDateAdded = oldest.dateAdded
-            beforeId = oldest.id
+            val paymentsComplete = ArchiveCategory.Payments !in enabledCategories || paymentCursor.exhausted
+            val foodComplete = ArchiveCategory.Food !in enabledCategories || foodCursor.exhausted
+            if (paymentsComplete && foodComplete) break
         }
 
         archiveDao.markCandidatesStaleBefore(scanStartedAtMs, System.currentTimeMillis())
