@@ -5,15 +5,15 @@ path = Path("app/src/main/java/com/photobook/app/data/index/PhotoIndex.kt")
 text = path.read_text()
 
 
-def replace_once(old: str, new: str) -> None:
+def replace_exact(old: str, new: str, expected: int = 1) -> None:
     global text
     count = text.count(old)
-    if count != 1:
-        raise SystemExit(f"expected one match, found {count}: {old[:120]!r}")
-    text = text.replace(old, new, 1)
+    if count != expected:
+        raise SystemExit(f"expected {expected} match(es), found {count}: {old[:120]!r}")
+    text = text.replace(old, new, expected)
 
 
-replace_once(
+replace_exact(
 '''    fun records(): StateFlow<List<PhotoRecord>> = backend.records()
 
     fun changes(): StateFlow<Long> = backend.changes()
@@ -22,7 +22,7 @@ replace_once(
 ''',
 )
 
-replace_once(
+replace_exact(
 '''internal interface PhotoIndexBackend {
     fun records(): StateFlow<List<PhotoRecord>>
     fun changes(): StateFlow<Long>
@@ -32,15 +32,17 @@ replace_once(
 ''',
 )
 
-replace_once(
+# Both legacy and v2 implement the same obsolete exposed records flow.
+replace_exact(
 '''    override fun records(): StateFlow<List<PhotoRecord>> = recordsFlow.asStateFlow()
     override fun changes(): StateFlow<Long> = changeFlow.asStateFlow()
 ''',
 '''    override fun changes(): StateFlow<Long> = changeFlow.asStateFlow()
 ''',
+    expected=2,
 )
 
-replace_once(
+replace_exact(
 '''    @Volatile private var snapshot = OverlayPhotoList.empty()
     private val recordsFlow = MutableStateFlow<List<PhotoRecord>>(snapshot)
     private val changeFlow = MutableStateFlow(0L)
@@ -50,16 +52,7 @@ replace_once(
 ''',
 )
 
-# The remaining records() override is the v2 backend.
-replace_once(
-'''    override fun records(): StateFlow<List<PhotoRecord>> = recordsFlow.asStateFlow()
-    override fun changes(): StateFlow<Long> = changeFlow.asStateFlow()
-''',
-'''    override fun changes(): StateFlow<Long> = changeFlow.asStateFlow()
-''',
-)
-
-replace_once(
+replace_exact(
 '''        snapshot = nextSnapshot
         recordsFlow.value = nextSnapshot
         changeFlow.value = publicationVersion
@@ -69,7 +62,7 @@ replace_once(
 ''',
 )
 
-replace_once(
+replace_exact(
 '''/**
  * Immutable List view with O(1) ID-to-position lookup and a bounded point-update overlay.
  * Identity equality is intentional: MutableStateFlow otherwise performs structural List equality,
@@ -80,7 +73,7 @@ replace_once(
 ''',
 )
 
-replace_once(
+replace_exact(
 '''    // StateFlow conflation must be identity-based for this immutable snapshot wrapper.
     override fun equals(other: Any?): Boolean = this === other
     override fun hashCode(): Int = System.identityHashCode(this)
