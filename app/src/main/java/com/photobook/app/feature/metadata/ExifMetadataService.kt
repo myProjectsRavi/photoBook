@@ -588,33 +588,35 @@ class ExifMetadataService @Inject constructor(
 
     private fun queryPendingState(uri: Uri): Int? {
         return runCatching {
-            context.contentResolver.query(
+            val cursor = context.contentResolver.query(
                 uri,
                 arrayOf(MediaStore.MediaColumns.IS_PENDING),
                 null,
                 null,
                 null,
-            )?.use { cursor ->
-                if (!cursor.moveToFirst()) PENDING_ROW_MISSING else cursor.getInt(0)
-            } ?: PENDING_ROW_MISSING
+            ) ?: error("MediaStore returned no cursor for pending-row query")
+            cursor.use {
+                if (!it.moveToFirst()) PENDING_ROW_MISSING else it.getInt(0)
+            }
         }.getOrNull()
     }
 
     private fun reconcilePendingCleanCopyByName(displayName: String): Boolean {
         val pendingUris = runCatching {
-            buildList {
-                context.contentResolver.query(
-                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                    arrayOf(MediaStore.Images.Media._ID),
-                    "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.IS_PENDING} = 1",
-                    arrayOf(displayName),
-                    null,
-                )?.use { cursor ->
-                    while (cursor.moveToNext()) {
+            val cursor = context.contentResolver.query(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.Images.Media._ID),
+                "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.IS_PENDING} = 1",
+                arrayOf(displayName),
+                null,
+            ) ?: error("MediaStore returned no cursor for pending-name reconciliation")
+            cursor.use {
+                buildList {
+                    while (it.moveToNext()) {
                         add(
                             ContentUris.withAppendedId(
                                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                                cursor.getLong(0),
+                                it.getLong(0),
                             ),
                         )
                     }
