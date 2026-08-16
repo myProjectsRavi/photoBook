@@ -39,8 +39,12 @@ object PhotoTagCodec {
     fun toSearchableText(tags: List<MLTag>): String {
         return tags.asSequence()
             .map { it.label.lowercase().trim() }
-            .filter { it.isNotBlank() }
+            .filter { it.isNotBlank() && it !in INTERNAL_EVIDENCE_LABELS }
             .distinct()
             .joinToString(" ")
     }
+
+    private val INTERNAL_EVIDENCE_LABELS = setOf(
+        "prepared_food",
+    )
 }
