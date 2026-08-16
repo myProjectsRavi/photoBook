@@ -25,6 +25,9 @@ val releaseKeystoreProperties = Properties().apply {
         keystorePropsFile.inputStream().use(::load)
     }
 }
+val releaseKeystorePath = releaseKeystoreProperties.getProperty("storeFile")
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
 
 val bundledLabelModelDependency = "com.google.mlkit:image-labeling:17.0.9"
 
@@ -83,15 +86,10 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            val keystorePath = releaseKeystoreProperties.getProperty("storeFile")
-                ?.trim()
-                ?.takeIf { it.isNotEmpty() }
-
-
-            if (keystorePath != null) {
-                val candidate = File(keystorePath).let { file ->
-                    if (file.isAbsolute) file else rootProject.file(keystorePath)
+        if (releaseKeystorePath != null) {
+            create("release") {
+                val candidate = File(releaseKeystorePath).let { file ->
+                    if (file.isAbsolute) file else rootProject.file(releaseKeystorePath)
                 }
                 if (!candidate.exists()) {
                     throw GradleException("Release keystore not found at: ${candidate.absolutePath}")
@@ -112,7 +110,9 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("release")
+            if (releaseKeystorePath != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             ndk {
                 debugSymbolLevel = "SYMBOL_TABLE"
             }
@@ -140,6 +140,7 @@ android {
         getByName("main").assets.srcDir(
             layout.buildDirectory.dir("generated/assets/bundledLabelModel"),
         )
+        getByName("androidTest").assets.srcDir("$projectDir/schemas")
     }
 
     composeOptions {
@@ -182,6 +183,10 @@ android {
 
 kapt {
     correctErrorTypes = true
+    arguments {
+        arg("room.schemaLocation", file("$projectDir/schemas").path)
+        arg("room.incremental", "true")
+    }
 }
 
 dependencies {
@@ -235,6 +240,12 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
     testImplementation("com.google.truth:truth:1.4.2")
+
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
+    androidTestImplementation("androidx.room:room-testing:2.6.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
