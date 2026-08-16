@@ -254,7 +254,7 @@ class ArchiveClassifierTest {
                 enabledCategories = setOf(ArchiveCategory.Food),
             )
 
-            assertThat(result).named(subject).isNull()
+            assertThat(result).isNull()
         }
     }
 
