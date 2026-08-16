@@ -126,7 +126,9 @@ class ExifMetadataServiceInstrumentedTest {
     }
 
     private fun assertSensitiveMetadataRemoved(uri: Uri) {
-        val exif = context.contentResolver.openInputStream(uri)?.use(::ExifInterface)
+        val exif = context.contentResolver.openInputStream(uri)?.use { input ->
+            ExifInterface(input)
+        }
         checkNotNull(exif)
         assertThat(exif.getAttribute(ExifInterface.TAG_MODEL)).isNull()
         assertThat(exif.getAttribute(ExifInterface.TAG_MAKE)).isNull()
