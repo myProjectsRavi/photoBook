@@ -14,13 +14,13 @@ Phase 0 exists to measure and protect PhotoBook before any core runtime architec
 
 ## CI verification
 
-`Android Verification` is designed to perform host-tool self-tests, unit tests, lint, debug APK assembly, debug instrumentation-source assembly, a release-like benchmark APK, unsigned release-bundle verification when no production keystore is supplied, APK/AAB size gates, benchmark-source compilation, deterministic fixture generation, Room schema export verification, artifact-size composition reporting, and static inspection that the release-like APK does not request `android.permission.INTERNET`.
+`Android Verification` is designed to perform host-tool self-tests, unit tests, lint, debug APK assembly, debug instrumentation-source assembly, a release-like benchmark APK, unsigned release APK/AAB verification when no production keystore is supplied, release APK/AAB size gates, benchmark-source compilation, deterministic fixture generation, Room schema export verification, artifact-size composition reporting, and static inspection that generated release APKs do not request `android.permission.INTERNET`.
 
-Production signing is unchanged when `keystore.properties` is present. An unsigned CI bundle is a verification artifact only and must never be distributed as a production release.
+Production signing is unchanged when `keystore.properties` is present. Unsigned CI release artifacts are verification artifacts only and must never be distributed as production releases.
 
-**Hosted-runner status (2026-08-16): blocked before execution.** GitHub Actions currently refuses to start the repository's hosted runner because the account reports a payment/spending-limit problem. This is an external CI-infrastructure blocker: no workflow steps execute, so the branch must not be described as CI-green or CI-red from Android test results until the runner can start. Keep the Phase-0 PR in draft and rerun the full workflow after the account-level blocker is resolved.
+**Hosted-runner status (2026-08-16): blocked before execution.** GitHub Actions currently refuses to start the repository's hosted runner because the account reports a payment/spending-limit problem. This is an external CI-infrastructure blocker: no workflow steps execute, so the branch must not be described as CI-green or CI-red from Android test results until the runner can start.
 
-**Merge gate:** do not merge Phase 0 while hosted verification has not executed. A green full Android Verification run (or equivalent reproducible local/physical-device evidence reviewed separately) is required before this PR can be considered merge-ready.
+**Merge gate:** do not merge Phase 0 while the Android build/test pipeline has not executed. A green hosted run or equivalent reproducible local/sandbox Android build evidence reviewed separately is required before this PR can be considered merge-ready.
 
 ## Room schema safety
 
@@ -47,11 +47,13 @@ python3 tools/benchmark/generate_media_fixtures.py \
   --write-media
 ```
 
-The default seed is fixed (`20260816`) so before/after runs see identical ordering and scenario distribution. Change the seed only when intentionally creating a second corpus.
+The default seed is fixed (`20260816`) so before/after runs see identical ordering and scenario distribution. Change the seed only when intentionally creating a second corpus. The weighted scenario cycle is 101 records; smaller custom counts are valid partial corpora and must not be rejected merely because they do not contain every scenario.
 
 Each archive-relevant record also carries an explicit semantic ground-truth subject. Livestock negatives include cow, buffalo, goat, sheep, lamb, cattle, bull, horse, hen, rooster, live chicken, and generic livestock cases. Positive Food subjects are restricted to cooked/prepared/served meals and FMCG packaged food examples.
 
-Synthetic pixels are for scale/lifecycle testing, not ML accuracy claims. Food/payment accuracy certification must also use a separately curated real-image corpus with explicit ground truth. That corpus must include livestock and ambiguous negatives and must not be shipped inside the app.
+Favorite protection has higher precedence than category-positive expectations: if any generated Food or Payment fixture is also marked favorite, its expected Archive outcome is `never_archive`.
+
+Synthetic tiny PNGs are for functional scale/lifecycle plumbing and deterministic MediaStore seeding. They are **not** sufficient evidence for real-photo decode throughput, Reels performance, storage-optimizer throughput, or ML accuracy. Performance certification must use representative full-resolution media on physical devices; Food/payment accuracy certification must use a separately curated real-image corpus with explicit ground truth. Neither certification corpus ships inside the app.
 
 Host tooling is self-tested with:
 
@@ -59,7 +61,7 @@ Host tooling is self-tested with:
 python3 -m unittest tools/benchmark/test_phase0_tools.py
 ```
 
-Those tests protect deterministic scenario coverage, large/corrupt/zero-byte reachability, livestock ground-truth coverage, narrow Food-positive expectations, and artifact model-size categorization.
+Those tests protect deterministic scenario coverage, partial custom counts, large/corrupt/zero-byte reachability, PNG chunk/CRC validity, livestock ground-truth coverage, favorite-protection precedence, narrow Food-positive expectations, and end-to-end artifact/model-size categorization.
 
 ## Macrobenchmarks
 
@@ -75,7 +77,7 @@ Interaction benchmarks wait for PhotoBook's existing enabled Reel Browsing actio
 
 Use a release-like `benchmark` app variant signed with the debug key solely so benchmark devices can install it. The benchmark variant is `profileable` and non-debuggable; the benchmark test process itself remains debuggable.
 
-The benchmark/Baseline Profile tooling is pinned to stable `1.4.1`. ProfileInstaller `1.4.1` is added only to the benchmark variant for Macrobenchmark profile/shader-cache control; it is intentionally excluded from production release artifacts to protect shipped size.
+Macrobenchmark runtime tooling uses `androidx.benchmark:benchmark-macro-junit4:1.4.1`. The production-facing Baseline Profile Gradle plugin remains at the repository's existing `1.3.3` version during Phase 0 to avoid introducing an unmeasured release-packaging change. ProfileInstaller `1.4.1` is added only to the benchmark variant for Macrobenchmark profile/shader-cache control and is intentionally excluded from production release artifacts.
 
 Run benchmarks on physical devices for release decisions. Emulators are useful for compilation/smoke verification but are not sufficient evidence for the 2 GB-class-device promise.
 
@@ -99,7 +101,7 @@ For startup comparisons, use at least 20 measured iterations in the release cert
 On a dedicated test device with the benchmark/debug build installed:
 
 ```bash
-ITERATIONS=50 tools/benchmark/phase0_device_stress.sh
+ITERATIONS=50 bash tools/benchmark/phase0_device_stress.sh
 ```
 
 The harness exercises repeated cold launches, foreground/background recovery, Android trim-memory pressure, process death, permission revoke/regrant, and captures crash-buffer, logcat, memory, graphics, and exit-reason evidence.
@@ -117,6 +119,8 @@ python3 tools/benchmark/report_artifact_sizes.py \
 ```
 
 The report tracks total bytes, compressed/uncompressed component groups, largest entries, optional baseline deltas, and bundled model bytes as a distinct category rather than hiding model growth inside generic assets. Any runtime dependency addition in later phases requires explicit size justification and before/after evidence.
+
+The <=30 MB APK hard gate scans **release APKs only**. Benchmark, debug, and instrumentation APKs remain observable in reports but cannot falsely fail the shipped-app size contract.
 
 ## Archive safety baseline
 
