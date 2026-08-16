@@ -18,7 +18,7 @@ Phase 0 exists to measure and protect PhotoBook before any core runtime architec
 
 Production signing is unchanged when `keystore.properties` is present. An unsigned CI bundle is a verification artifact only and must never be distributed as a production release.
 
-Current repository CI execution must not be described as green until GitHub can start hosted runners successfully. A runner/billing failure is infrastructure evidence, not a passing or failing Android build.
+**Hosted-runner status (2026-08-16): blocked before execution.** GitHub Actions currently refuses to start the repository's hosted runner because the account reports a payment/spending-limit problem. This is an external CI-infrastructure blocker: no workflow steps execute, so the branch must not be described as CI-green or CI-red from Android test results until the runner can start. Keep the Phase-0 PR in draft and rerun the full workflow after the account-level blocker is resolved.
 
 ## Room schema safety
 
