@@ -11,12 +11,12 @@ import com.photobook.app.data.model.IntelligenceStatus
 import com.photobook.app.data.model.MLTag
 import com.photobook.app.data.model.PhotoRecord
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
+import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
-import javax.inject.Inject
 
 class IndexPersistence @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -96,21 +96,28 @@ class IndexPersistence @Inject constructor(
         }
     }
 
-    suspend fun searchByQueryText(rawQuery: String, limit: Int = Int.MAX_VALUE): List<PhotoRecord> {
+    /**
+     * Phase-2 candidate path: return only compact row IDs from FTS. Full records are resolved from
+     * the in-memory index during ranking and materialized from Room only for visible Paging pages.
+     */
+    suspend fun searchIdsByQueryText(rawQuery: String, limit: Int = Int.MAX_VALUE): List<Long> {
         val matchQuery = toFtsMatchQuery(rawQuery) ?: return emptyList()
         return withContext(Dispatchers.IO) {
-            val ids = runCatching {
+            runCatching {
                 photoDao.searchIdsByText(matchQuery, limit)
             }.getOrDefault(emptyList())
-            if (ids.isEmpty()) {
-                return@withContext emptyList()
-            }
+        }
+    }
 
+    /** Retained unchanged as the Search-v1 rollback path until Phase-2 parity is certified. */
+    suspend fun searchByQueryText(rawQuery: String, limit: Int = Int.MAX_VALUE): List<PhotoRecord> {
+        val ids = searchIdsByQueryText(rawQuery, limit)
+        if (ids.isEmpty()) return emptyList()
+        return withContext(Dispatchers.IO) {
             val entities = photoDao.getByIds(ids)
             if (entities.isEmpty()) {
                 return@withContext emptyList()
             }
-
             val byId = entities.associateBy { it.id }
             ids.mapNotNull { id -> byId[id]?.toPhotoRecord() }
         }
