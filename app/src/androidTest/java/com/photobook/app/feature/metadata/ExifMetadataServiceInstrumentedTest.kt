@@ -1,6 +1,7 @@
 package com.photobook.app.feature.metadata
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.net.Uri
 import android.os.Build
@@ -8,13 +9,16 @@ import android.provider.MediaStore
 import androidx.exifinterface.media.ExifInterface
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.google.common.truth.Truth.assertThat
 import com.photobook.app.data.model.PhotoRecord
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -46,7 +50,7 @@ class ExifMetadataServiceInstrumentedTest {
 
         val result = service.createCleanCopy(photoFor(source))
 
-        assertThat(result).isInstanceOf(MetadataCleanResult.Success::class.java)
+        assertTrue(result is MetadataCleanResult.Success)
         val success = result as MetadataCleanResult.Success
         createdMediaUris += success.uri
         assertSensitiveMetadataRemoved(success.uri)
@@ -61,9 +65,29 @@ class ExifMetadataServiceInstrumentedTest {
             check(cursor.moveToFirst())
             cursor.getInt(0)
         }
-        assertThat(pending).isEqualTo(0)
-        assertThat(success.fileName).contains("_clean_")
-        assertThat(success.fileName).endsWith(".jpg")
+        assertEquals(0, pending)
+        assertTrue(success.fileName.contains("_clean_"))
+        assertTrue(success.fileName.endsWith(".jpg"))
+    }
+
+    @Test
+    fun createCleanCopy_forcedRewritePhysicallyPreservesExifRotation() = runBlocking {
+        assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+        val source = createSensitiveJpeg(width = 48, height = 96, orientation = ExifInterface.ORIENTATION_ROTATE_90)
+        val service = ExifMetadataService(context)
+
+        val result = service.createCleanCopy(photoFor(source, width = 48, height = 96))
+
+        assertTrue(result is MetadataCleanResult.Success)
+        val success = result as MetadataCleanResult.Success
+        createdMediaUris += success.uri
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(success.uri)?.use { input ->
+            BitmapFactory.decodeStream(input, null, bounds)
+        }
+        assertEquals(96, bounds.outWidth)
+        assertEquals(48, bounds.outHeight)
+        assertSensitiveMetadataRemoved(success.uri)
     }
 
     @Test
@@ -78,10 +102,10 @@ class ExifMetadataServiceInstrumentedTest {
             options = SafeShareOptions(stripMetadata = true, blurFaces = false),
         )
 
-        assertThat(result).isInstanceOf(SafeShareResult.Success::class.java)
+        assertTrue(result is SafeShareResult.Success)
         val item = (result as SafeShareResult.Success).items.single()
         assertSensitiveMetadataRemoved(item.uri)
-        assertThat(item.mimeType).isEqualTo("image/jpeg")
+        assertEquals("image/jpeg", item.mimeType)
     }
 
     @Test
@@ -100,13 +124,17 @@ class ExifMetadataServiceInstrumentedTest {
             options = SafeShareOptions(stripMetadata = true, blurFaces = false),
         )
 
-        assertThat(result).isInstanceOf(SafeShareResult.Error::class.java)
-        assertThat(safeShareDir.listFiles().orEmpty().filter { it.isFile }).isEmpty()
+        assertTrue(result is SafeShareResult.Error)
+        assertTrue(safeShareDir.listFiles().orEmpty().none { it.isFile })
     }
 
-    private fun createSensitiveJpeg(): File {
+    private fun createSensitiveJpeg(
+        width: Int = 96,
+        height: Int = 96,
+        orientation: Int = ExifInterface.ORIENTATION_NORMAL,
+    ): File {
         val file = File(context.cacheDir, "phase1-${UUID.randomUUID()}.jpg")
-        val bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         bitmap.eraseColor(Color.rgb(90, 140, 210))
         FileOutputStream(file).use { output ->
             check(bitmap.compress(Bitmap.CompressFormat.JPEG, 95, output))
@@ -118,6 +146,7 @@ class ExifMetadataServiceInstrumentedTest {
             setAttribute(ExifInterface.TAG_MAKE, "Phase1SensitiveMaker")
             setAttribute(ExifInterface.TAG_USER_COMMENT, "private-comment")
             setAttribute(ExifInterface.TAG_XMP, "<x:xmpmeta>private-xmp</x:xmpmeta>")
+            setAttribute(ExifInterface.TAG_ORIENTATION, orientation.toString())
             setLatLong(17.3850, 78.4867)
             saveAttributes()
         }
@@ -130,14 +159,27 @@ class ExifMetadataServiceInstrumentedTest {
             ExifInterface(input)
         }
         checkNotNull(exif)
-        assertThat(exif.getAttribute(ExifInterface.TAG_MODEL)).isNull()
-        assertThat(exif.getAttribute(ExifInterface.TAG_MAKE)).isNull()
-        assertThat(exif.getAttribute(ExifInterface.TAG_USER_COMMENT)).isNull()
-        assertThat(exif.getAttributeBytes(ExifInterface.TAG_XMP)).isNull()
-        assertThat(exif.latLong).isNull()
+        assertNull(exif.getAttribute(ExifInterface.TAG_MODEL))
+        assertNull(exif.getAttribute(ExifInterface.TAG_MAKE))
+        assertNull(exif.getAttribute(ExifInterface.TAG_USER_COMMENT))
+        assertNull(exif.getAttributeBytes(ExifInterface.TAG_XMP))
+        assertNull(exif.latLong)
+        val orientation = exif.getAttributeInt(
+            ExifInterface.TAG_ORIENTATION,
+            ExifInterface.ORIENTATION_NORMAL,
+        )
+        assertTrue(
+            orientation == ExifInterface.ORIENTATION_NORMAL ||
+                orientation == ExifInterface.ORIENTATION_UNDEFINED,
+        )
     }
 
-    private fun photoFor(file: File, id: Long = 1L): PhotoRecord {
+    private fun photoFor(
+        file: File,
+        id: Long = 1L,
+        width: Int = 96,
+        height: Int = 96,
+    ): PhotoRecord {
         return PhotoRecord(
             id = id,
             uriString = Uri.fromFile(file).toString(),
@@ -155,8 +197,8 @@ class ExifMetadataServiceInstrumentedTest {
             state = null,
             country = null,
             fileSize = file.length(),
-            width = 96,
-            height = 96,
+            width = width,
+            height = height,
             mimeType = "image/jpeg",
             folderName = "Phase1",
             folderPath = context.cacheDir.absolutePath,
