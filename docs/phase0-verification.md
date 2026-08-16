@@ -88,6 +88,8 @@ Recommended physical matrix:
 - Android 15;
 - Android 16 / API 36.
 
+The current benchmark producer module has `minSdk = 28`, so Android 9+ can run Macrobenchmark directly. Android 8 / API 26-27 remains part of the required compatibility, lifecycle, permission, memory-pressure, and crash/ANR test matrix through instrumentation/manual device stress; do not claim Macrobenchmark numbers for API 26-27 unless the benchmark module is deliberately lowered and revalidated later.
+
 For startup comparisons, use at least 20 measured iterations in the release certification run and store raw Macrobenchmark JSON/traces. Phase-0 source defaults are intentionally shorter for developer iteration.
 
 ## Device lifecycle / low-memory stress
