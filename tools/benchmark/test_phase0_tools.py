@@ -43,6 +43,15 @@ class FixtureGeneratorTest(unittest.TestCase):
         actual = set(fixtures.SEMANTIC_SUBJECTS["livestock_negative"])
         self.assertTrue(required.issubset(actual), required - actual)
 
+    def test_ci_smoke_corpus_instantiates_every_livestock_subject(self) -> None:
+        with tempfile.TemporaryDirectory() as output_dir:
+            output = Path(output_dir)
+            fixtures.generate(303, output, fixtures.DEFAULT_SEED, write_media=False)
+            summary = json.loads((output / "summary-303.json").read_text(encoding="utf-8"))
+            generated = set(summary["semantic_subjects"]["livestock_negative"])
+            expected = set(fixtures.SEMANTIC_SUBJECTS["livestock_negative"])
+            self.assertEqual(expected, generated)
+
     def test_food_positive_contract_is_narrow(self) -> None:
         self.assertEqual(
             "food_candidate",
