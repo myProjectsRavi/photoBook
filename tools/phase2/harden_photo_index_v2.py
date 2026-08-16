@@ -13,6 +13,20 @@ def replace_once(old: str, new: str) -> None:
     text = text.replace(old, new, 1)
 
 
+def replace_in_region(start: str, end: str, old: str, new: str, expected: int = 1) -> None:
+    global text
+    start_at = text.index(start)
+    end_at = text.index(end, start_at)
+    region = text[start_at:end_at]
+    count = region.count(old)
+    if count != expected:
+        raise SystemExit(
+            f"expected {expected} regional match(es), found {count}: {old[:120]!r}"
+        )
+    region = region.replace(old, new, expected)
+    text = text[:start_at] + region + text[end_at:]
+
+
 replace_once(
 '''    fun snapshot(): List<PhotoRecord> = backend.snapshot()
 
@@ -32,7 +46,14 @@ replace_once(
 ''',
 )
 
-replace_once(
+LEGACY_START = "internal class LegacyPhotoIndexBackend : PhotoIndexBackend {"
+LEGACY_END = "/**\n * Phase-2 index backend."
+V2_START = "internal class OverlayPhotoIndexBackend : PhotoIndexBackend {"
+V2_END = "/**\n * Immutable List view with O(1) ID-to-position lookup"
+
+replace_in_region(
+    LEGACY_START,
+    LEGACY_END,
 '''    override fun snapshot(): List<PhotoRecord> = recordsFlow.value
     override fun getById(id: Long): PhotoRecord? = recordsMap[id]
     override fun getByIdsOrdered(ids: List<Long>): List<PhotoRecord> = ids.mapNotNull(recordsMap::get)
@@ -49,8 +70,9 @@ replace_once(
 ''',
 )
 
-# Legacy rollback reads cross coroutine/thread boundaries; volatile refs make those observations safe.
-replace_once(
+replace_in_region(
+    LEGACY_START,
+    LEGACY_END,
 '''    private var version = 0L
     private var folderKeywords: Set<String> = emptySet()
     private var cityKeywords: Set<String> = emptySet()
@@ -63,7 +85,9 @@ replace_once(
 ''',
 )
 
-replace_once(
+replace_in_region(
+    V2_START,
+    V2_END,
 '''    private val recordsMap = LinkedHashMap<Long, PhotoRecord>()
     private var snapshot = OverlayPhotoList.empty()
     private val recordsFlow = MutableStateFlow<List<PhotoRecord>>(snapshot)
@@ -87,7 +111,9 @@ replace_once(
 ''',
 )
 
-replace_once(
+replace_in_region(
+    V2_START,
+    V2_END,
 '''    override fun snapshot(): List<PhotoRecord> = snapshot
     override fun getById(id: Long): PhotoRecord? = recordsMap[id]
     override fun getByIdsOrdered(ids: List<Long>): List<PhotoRecord> = ids.mapNotNull(recordsMap::get)
@@ -100,7 +126,9 @@ replace_once(
 ''',
 )
 
-replace_once(
+replace_in_region(
+    V2_START,
+    V2_END,
 '''    override suspend fun setRecords(records: List<PhotoRecord>) {
         mutex.withLock {
             recordsMap.clear()
@@ -123,7 +151,9 @@ replace_once(
 ''',
 )
 
-replace_once(
+replace_in_region(
+    V2_START,
+    V2_END,
 '''            if (results.isNotEmpty()) {
                 publishPointUpdates(results)
                 bumpVersion()
@@ -147,7 +177,9 @@ replace_once(
 ''',
 )
 
-replace_once(
+replace_in_region(
+    V2_START,
+    V2_END,
 '''            recordsMap[id] = updated
             publishPointUpdates(listOf(updated))
             bumpVersion()
@@ -155,18 +187,12 @@ replace_once(
 '''            recordsMap[id] = updated
             publishPointUpdates(listOf(updated))
 ''',
-)
-replace_once(
-'''            recordsMap[id] = updated
-            publishPointUpdates(listOf(updated))
-            bumpVersion()
-''',
-'''            recordsMap[id] = updated
-            publishPointUpdates(listOf(updated))
-''',
+    expected=2,
 )
 
-replace_once(
+replace_in_region(
+    V2_START,
+    V2_END,
 '''    override suspend fun upsertRecord(record: PhotoRecord) {
         mutex.withLock {
             val previous = recordsMap[record.id]
@@ -199,7 +225,9 @@ replace_once(
 ''',
 )
 
-replace_once(
+replace_in_region(
+    V2_START,
+    V2_END,
 '''    override suspend fun removeRecords(ids: Set<Long>) {
         if (ids.isEmpty()) return
         mutex.withLock {
@@ -262,8 +290,10 @@ replace_once(
 ''',
 )
 
-# Remove only the v2 bumpVersion that remains after rebuildAuxiliarySets; legacy keeps its own.
-needle = '''    private fun rebuildAuxiliarySets(records: List<PhotoRecord>) {
+replace_in_region(
+    V2_START,
+    V2_END,
+'''    private fun rebuildAuxiliarySets(records: List<PhotoRecord>) {
         val sets = buildAuxiliarySets(records)
         folderKeywords = sets.folders
         cityKeywords = sets.cities
@@ -274,23 +304,15 @@ needle = '''    private fun rebuildAuxiliarySets(records: List<PhotoRecord>) {
         version += 1
         changeFlow.value = version
     }
-}
-
-/**
- * Immutable List view with O(1) ID-to-position lookup and a bounded point-update overlay.
-'''
-replacement = '''    private fun rebuildAuxiliarySets(records: List<PhotoRecord>) {
+''',
+'''    private fun rebuildAuxiliarySets(records: List<PhotoRecord>) {
         val sets = buildAuxiliarySets(records)
         folderKeywords = sets.folders
         cityKeywords = sets.cities
         mlKeywords = sets.tags
     }
-}
-
-/**
- * Immutable List view with O(1) ID-to-position lookup and a bounded point-update overlay.
-'''
-replace_once(needle, replacement)
+''',
+)
 
 replace_once(
 '''    override fun get(index: Int): PhotoRecord = overrides[index] ?: base[index]
