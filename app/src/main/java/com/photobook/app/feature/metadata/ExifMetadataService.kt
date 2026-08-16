@@ -6,6 +6,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Rect
 import android.net.Uri
@@ -231,9 +232,9 @@ class ExifMetadataService @Inject constructor(
                         chunk.map { photo ->
                             async {
                                 val uri = runCatching { Uri.parse(photo.uriString) }.getOrNull()
-                                    ?: return@async 0
-                                val bitmap = decodeSampledBitmap(uri, PRIVACY_SCAN_MAX_DIMENSION)
-                                    ?: return@async 0
+                                    ?: error("Invalid photo URI during privacy scan")
+                                val bitmap = decodeOrientedSampledBitmap(uri, PRIVACY_SCAN_MAX_DIMENSION)
+                                    ?: error("Unreadable photo during privacy scan")
                                 try {
                                     detectFaces(bitmap).size
                                 } finally {
@@ -294,7 +295,7 @@ class ExifMetadataService @Inject constructor(
                                 sourceUri = sourceUri,
                                 targetFile = outputFile,
                                 mimeType = mimeType,
-                            ),
+                            ) && verifyNoDetectableFaces(outputFile),
                         ) { "Unable to prove face blurring" }
                     }
                     if (options.stripMetadata) {
@@ -331,10 +332,13 @@ class ExifMetadataService @Inject constructor(
     }
 
     private fun copyImageBytes(sourceUri: Uri, targetUri: Uri): Boolean {
-        val input = context.contentResolver.openInputStream(sourceUri) ?: return false
-        val output = context.contentResolver.openOutputStream(targetUri, "w") ?: return false
         return runCatching {
-            input.use { src -> output.use { dst -> src.copyTo(dst) } }
+            val input = context.contentResolver.openInputStream(sourceUri) ?: return@runCatching false
+            input.use { src ->
+                val output = context.contentResolver.openOutputStream(targetUri, "w")
+                    ?: return@runCatching false
+                output.use { dst -> src.copyTo(dst) }
+            }
             true
         }.getOrDefault(false)
     }
@@ -411,37 +415,25 @@ class ExifMetadataService @Inject constructor(
     }
 
     private fun rewriteImageWithoutMetadata(sourceUri: Uri, targetUri: Uri, mimeType: String): Boolean {
-        val bitmap = decodeSampledBitmap(sourceUri, MAX_BITMAP_DIMENSION) ?: return false
-        val format = compressFormatForMime(mimeType)
-        return runCatching {
-            val output = context.contentResolver.openOutputStream(targetUri, "w") ?: return false
-            output.use { stream -> bitmap.compress(format, JPEG_QUALITY, stream) }
-        }.getOrDefault(false).also { bitmap.recycle() }
+        val bitmap = decodeOrientedSampledBitmap(sourceUri, MAX_BITMAP_DIMENSION) ?: return false
+        val result = runCatching {
+            val output = context.contentResolver.openOutputStream(targetUri, "w")
+                ?: return@runCatching false
+            output.use { stream -> bitmap.compress(compressFormatForMime(mimeType), JPEG_QUALITY, stream) }
+        }.getOrDefault(false)
+        bitmap.recycle()
+        return result
     }
 
     private fun rewriteImageWithoutMetadataFromFile(sourceFile: File, mimeType: String): Boolean {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        runCatching { BitmapFactory.decodeFile(sourceFile.absolutePath, bounds) }
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return false
-        var sample = 1
-        while (bounds.outWidth / sample > MAX_BITMAP_DIMENSION || bounds.outHeight / sample > MAX_BITMAP_DIMENSION) {
-            sample *= 2
-        }
-        val bitmap = runCatching {
-            BitmapFactory.decodeFile(
-                sourceFile.absolutePath,
-                BitmapFactory.Options().apply {
-                    inSampleSize = sample.coerceAtLeast(1)
-                    inPreferredConfig = Bitmap.Config.ARGB_8888
-                },
-            )
-        }.getOrNull() ?: return false
-
-        return runCatching {
+        val bitmap = decodeOrientedSampledBitmap(sourceFile, MAX_BITMAP_DIMENSION) ?: return false
+        val result = runCatching {
             FileOutputStream(sourceFile, false).use { stream ->
                 bitmap.compress(compressFormatForMime(mimeType), JPEG_QUALITY, stream)
             }
-        }.getOrDefault(false).also { bitmap.recycle() }
+        }.getOrDefault(false)
+        bitmap.recycle()
+        return result
     }
 
     private suspend fun blurFacesInSafeShareCopy(
@@ -449,7 +441,7 @@ class ExifMetadataService @Inject constructor(
         targetFile: File,
         mimeType: String,
     ): Boolean {
-        val bitmap = decodeSampledBitmap(sourceUri, SHARE_BLUR_MAX_DIMENSION) ?: return false
+        val bitmap = decodeOrientedSampledBitmap(sourceUri, SHARE_BLUR_MAX_DIMENSION) ?: return false
         val faces = runCatching { detectFaces(bitmap) }.getOrElse {
             bitmap.recycle()
             return false
@@ -467,16 +459,27 @@ class ExifMetadataService @Inject constructor(
             pixelateRect(bitmap = mutable, canvas = canvas, paint = paint, bounds = face)
         }
 
-        return runCatching {
+        val result = runCatching {
             FileOutputStream(targetFile, false).use { output ->
                 mutable.compress(compressFormatForMime(mimeType), JPEG_QUALITY, output)
             }
-        }.getOrDefault(false).also { mutable.recycle() }
+        }.getOrDefault(false)
+        mutable.recycle()
+        return result
+    }
+
+    private fun verifyNoDetectableFaces(targetFile: File): Boolean {
+        val bitmap = decodeOrientedSampledBitmap(targetFile, SHARE_BLUR_MAX_DIMENSION) ?: return false
+        return try {
+            runCatching { detectFaces(bitmap).isEmpty() }.getOrDefault(false)
+        } finally {
+            bitmap.recycle()
+        }
     }
 
     private fun copyImageBytesToFile(sourceUri: Uri, targetFile: File): Boolean {
-        val input = context.contentResolver.openInputStream(sourceUri) ?: return false
         return runCatching {
+            val input = context.contentResolver.openInputStream(sourceUri) ?: return@runCatching false
             input.use { src ->
                 FileOutputStream(targetFile, false).use { dst -> src.copyTo(dst) }
             }
@@ -487,9 +490,8 @@ class ExifMetadataService @Inject constructor(
     private fun verifyReadableImage(targetUri: Uri): Boolean {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         return runCatching {
-            context.contentResolver.openInputStream(targetUri)?.use { stream ->
-                BitmapFactory.decodeStream(stream, null, bounds)
-            } ?: return false
+            val input = context.contentResolver.openInputStream(targetUri) ?: return@runCatching false
+            input.use { stream -> BitmapFactory.decodeStream(stream, null, bounds) }
             bounds.outWidth > 0 && bounds.outHeight > 0
         }.getOrDefault(false)
     }
@@ -503,18 +505,46 @@ class ExifMetadataService @Inject constructor(
         }.getOrDefault(false)
     }
 
-    private fun decodeSampledBitmap(uri: Uri, maxDimensionPx: Int): Bitmap? {
+    private fun decodeOrientedSampledBitmap(uri: Uri, maxDimensionPx: Int): Bitmap? {
+        val orientation = readExifOrientation(uri)
+        val bitmap = decodeSampledBitmap(uri, maxDimensionPx) ?: return null
+        return applyExifOrientation(bitmap, orientation)
+    }
+
+    private fun decodeOrientedSampledBitmap(file: File, maxDimensionPx: Int): Bitmap? {
+        val orientation = readExifOrientation(file)
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        context.contentResolver.openInputStream(uri)?.use { stream ->
-            BitmapFactory.decodeStream(stream, null, bounds)
-        } ?: return null
+        runCatching { BitmapFactory.decodeFile(file.absolutePath, bounds) }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
 
         var sample = 1
         while (bounds.outWidth / sample > maxDimensionPx || bounds.outHeight / sample > maxDimensionPx) {
             sample *= 2
         }
-        return context.contentResolver.openInputStream(uri)?.use { stream ->
+        val bitmap = runCatching {
+            BitmapFactory.decodeFile(
+                file.absolutePath,
+                BitmapFactory.Options().apply {
+                    inSampleSize = sample.coerceAtLeast(1)
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                },
+            )
+        }.getOrNull() ?: return null
+        return applyExifOrientation(bitmap, orientation)
+    }
+
+    private fun decodeSampledBitmap(uri: Uri, maxDimensionPx: Int): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        val boundsInput = context.contentResolver.openInputStream(uri) ?: return null
+        boundsInput.use { stream -> BitmapFactory.decodeStream(stream, null, bounds) }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+        var sample = 1
+        while (bounds.outWidth / sample > maxDimensionPx || bounds.outHeight / sample > maxDimensionPx) {
+            sample *= 2
+        }
+        val input = context.contentResolver.openInputStream(uri) ?: return null
+        return input.use { stream ->
             BitmapFactory.decodeStream(
                 stream,
                 null,
@@ -524,6 +554,56 @@ class ExifMetadataService @Inject constructor(
                 },
             )
         }
+    }
+
+    private fun readExifOrientation(uri: Uri): Int {
+        return runCatching {
+            val input = context.contentResolver.openInputStream(uri) ?: return@runCatching ExifInterface.ORIENTATION_UNDEFINED
+            input.use { stream ->
+                ExifInterface(stream).getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_UNDEFINED,
+                )
+            }
+        }.getOrDefault(ExifInterface.ORIENTATION_UNDEFINED)
+    }
+
+    private fun readExifOrientation(file: File): Int {
+        return runCatching {
+            ExifInterface(file.absolutePath).getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_UNDEFINED,
+            )
+        }.getOrDefault(ExifInterface.ORIENTATION_UNDEFINED)
+    }
+
+    private fun applyExifOrientation(bitmap: Bitmap, orientation: Int): Bitmap {
+        val matrix = Matrix()
+        when (orientation) {
+            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.setScale(-1f, 1f)
+            ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f)
+            ExifInterface.ORIENTATION_FLIP_VERTICAL -> {
+                matrix.setRotate(180f)
+                matrix.postScale(-1f, 1f)
+            }
+            ExifInterface.ORIENTATION_TRANSPOSE -> {
+                matrix.setRotate(90f)
+                matrix.postScale(-1f, 1f)
+            }
+            ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
+            ExifInterface.ORIENTATION_TRANSVERSE -> {
+                matrix.setRotate(-90f)
+                matrix.postScale(-1f, 1f)
+            }
+            ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(-90f)
+            else -> return bitmap
+        }
+
+        return runCatching {
+            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        }.getOrNull()?.also { transformed ->
+            if (transformed !== bitmap) bitmap.recycle()
+        } ?: bitmap
     }
 
     private fun detectFaces(bitmap: Bitmap): List<Rect> {
