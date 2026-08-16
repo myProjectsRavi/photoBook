@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import json
+import random
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 TOOLS_DIR = Path(__file__).resolve().parent
@@ -18,9 +20,20 @@ import report_artifact_sizes as sizes  # noqa: E402
 
 
 class FixtureGeneratorTest(unittest.TestCase):
-    def test_single_101_record_cycle_covers_every_scenario(self) -> None:
-        seen = {fixtures.scenario_for(index) for index in range(101)}
+    def test_single_scenario_cycle_covers_every_scenario(self) -> None:
+        seen = {
+            fixtures.scenario_for(index)
+            for index in range(fixtures.SCENARIO_CYCLE_SIZE)
+        }
         self.assertEqual(set(fixtures.SCENARIOS), seen)
+
+    def test_partial_cycle_counts_are_valid(self) -> None:
+        with tempfile.TemporaryDirectory() as output_dir:
+            output = Path(output_dir)
+            fixtures.generate(13, output, fixtures.DEFAULT_SEED, write_media=False)
+            summary = json.loads((output / "summary-13.json").read_text(encoding="utf-8"))
+            self.assertEqual(13, summary["count"])
+            self.assertEqual(13, summary["scenarios"]["camera_general"])
 
     def test_large_corrupt_and_zero_byte_cases_are_reachable(self) -> None:
         self.assertEqual("large_photo", fixtures.scenario_for(98))
@@ -67,6 +80,25 @@ class FixtureGeneratorTest(unittest.TestCase):
             "raw_ingredient_negative",
         ):
             self.assertEqual("never_food", fixtures.archive_expectation(scenario)[0])
+
+    def test_favorite_protection_overrides_archive_positive_scenarios(self) -> None:
+        start = datetime(2026, 8, 16, 0, 0, tzinfo=timezone.utc)
+        rng = random.Random(fixtures.DEFAULT_SEED)
+        protected_positive_seen = False
+
+        for index in range(5_000):
+            record = fixtures.build_record(index, start, rng)
+            if record.is_favorite:
+                self.assertEqual("never_archive", record.expected_archive)
+                self.assertEqual("favorites are protected", record.expected_archive_reason)
+                if record.scenario in {
+                    "screenshot_payment_positive",
+                    "cooked_food_positive",
+                    "fmcg_packaged_food_positive",
+                }:
+                    protected_positive_seen = True
+
+        self.assertTrue(protected_positive_seen)
 
     def test_generation_is_deterministic_for_same_seed(self) -> None:
         with tempfile.TemporaryDirectory() as first_dir, tempfile.TemporaryDirectory() as second_dir:
