@@ -86,7 +86,7 @@ replace_once(
     override fun hashCode(): Int = System.identityHashCode(this)
 
 ''',
-'''',
+'',
 )
 
 path.write_text(text)
