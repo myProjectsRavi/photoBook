@@ -9,12 +9,16 @@ import zipfile
 from collections import defaultdict
 from pathlib import Path
 
+MODEL_SUFFIXES = (".tflite", ".lite", ".model")
+
 
 def category_for(name: str) -> str:
     parts = name.split("/")
     leaf = parts[-1]
     if leaf.startswith("classes") and leaf.endswith(".dex"):
         return "dex"
+    if leaf.lower().endswith(MODEL_SUFFIXES):
+        return "models"
     if name.startswith("base/") and len(parts) > 1:
         second = parts[1]
         if second in {"dex", "lib", "assets", "res", "root", "manifest"}:
@@ -23,8 +27,6 @@ def category_for(name: str) -> str:
         return parts[0].lower()
     if leaf == "resources.arsc":
         return "resources"
-    if leaf.endswith((".tflite", ".lite", ".model")):
-        return "models"
     return "other"
 
 
