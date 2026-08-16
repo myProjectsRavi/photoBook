@@ -71,7 +71,7 @@ printf '%s\n' "[phase0] running Android Gradle verification"
   :app:bundleRelease \
   :app:verifyApkSize \
   :app:verifyReleaseBundleSize \
-  :baselineprofile:assembleBenchmark
+  :baselineprofile:assembleBenchmarkBenchmark
 
 AAPT="$(find "$SDK_ROOT/build-tools" -maxdepth 2 -type f -name aapt -print | sort -V | tail -n 1)"
 if [[ -z "$AAPT" ]]; then
