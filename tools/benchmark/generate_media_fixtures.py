@@ -23,6 +23,7 @@ from pathlib import Path
 
 DEFAULT_SEED = 20260816
 DEFAULT_COUNTS = (10_000, 50_000, 100_000)
+SCENARIO_CYCLE_SIZE = 101
 
 SCENARIOS = (
     "camera_general",
@@ -165,7 +166,7 @@ def make_png(index: int, width: int = 32, height: int = 32) -> bytes:
 
 def scenario_for(index: int) -> str:
     # Weighted toward normal camera photos while guaranteeing regular adversarial cases.
-    selector = index % 101
+    selector = index % SCENARIO_CYCLE_SIZE
     if selector < 58:
         return "camera_general"
     if selector < 65:
@@ -242,6 +243,9 @@ def build_record(index: int, start: datetime, rng: random.Random) -> FixtureReco
     salt = rng.randrange(1_000_000)
     file_name = f"{prefix}_{index:06d}_{salt:06d}.png"
     expected_archive, expected_reason = archive_expectation(scenario)
+    if is_favorite:
+        expected_archive = "never_archive"
+        expected_reason = "favorites are protected"
 
     return FixtureRecord(
         id=index + 1,
@@ -288,7 +292,11 @@ def generate(count: int, output: Path, seed: int, write_media: bool) -> None:
             if write_media:
                 write_fixture_media(output / f"media-{count}", record)
 
-    missing = [scenario for scenario, seen in summary.items() if seen == 0 and count >= len(SCENARIOS)]
+    missing = [
+        scenario
+        for scenario, seen in summary.items()
+        if seen == 0 and count >= SCENARIO_CYCLE_SIZE
+    ]
     if missing:
         raise RuntimeError(f"fixture distribution failed to cover scenarios: {missing}")
 
