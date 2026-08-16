@@ -2,6 +2,7 @@ package com.photobook.app.baselineprofile
 
 import android.view.KeyEvent
 import androidx.benchmark.macro.FrameTimingMetric
+import androidx.benchmark.macro.MacrobenchmarkScope
 import androidx.benchmark.macro.StartupMode
 import androidx.benchmark.macro.StartupTimingMetric
 import androidx.benchmark.macro.junit4.MacrobenchmarkRule
@@ -52,7 +53,7 @@ class PhotoBookMacrobenchmark {
             packageName = TARGET_PACKAGE,
             metrics = listOf(FrameTimingMetric()),
             iterations = INTERACTION_ITERATIONS,
-            startupMode = StartupMode.WARM,
+            startupMode = null,
             setupBlock = {
                 pressHome()
                 startActivityAndWait()
@@ -78,7 +79,7 @@ class PhotoBookMacrobenchmark {
             packageName = TARGET_PACKAGE,
             metrics = listOf(FrameTimingMetric()),
             iterations = INTERACTION_ITERATIONS,
-            startupMode = StartupMode.WARM,
+            startupMode = null,
             setupBlock = {
                 pressHome()
                 startActivityAndWait()
@@ -106,7 +107,7 @@ class PhotoBookMacrobenchmark {
             packageName = TARGET_PACKAGE,
             metrics = listOf(FrameTimingMetric()),
             iterations = INTERACTION_ITERATIONS,
-            startupMode = StartupMode.WARM,
+            startupMode = null,
             setupBlock = {
                 pressHome()
                 startActivityAndWait()
@@ -118,7 +119,6 @@ class PhotoBookMacrobenchmark {
                 device.waitForIdle()
 
                 // Phase-0 benchmark devices are seeded with deterministic media fixtures.
-                // Move the feed enough to expose the first thumbnail and open it.
                 device.swipe(
                     device.displayWidth / 2,
                     (device.displayHeight * 0.82f).toInt(),
@@ -149,7 +149,7 @@ class PhotoBookMacrobenchmark {
         }
     }
 
-    private fun androidx.benchmark.macro.MacrobenchmarkScope.requireAppWindow() {
+    private fun MacrobenchmarkScope.requireAppWindow() {
         val visible = device.wait(
             Until.hasObject(By.pkg(TARGET_PACKAGE).depth(0)),
             UI_TIMEOUT_MS,
