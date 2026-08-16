@@ -4,6 +4,6 @@ plugins {
     id("org.jetbrains.kotlin.android") version "1.9.24" apply false
     id("org.jetbrains.kotlin.kapt") version "1.9.24" apply false
     id("com.google.dagger.hilt.android") version "2.51.1" apply false
-    id("androidx.baselineprofile") version "1.3.3" apply false
+    id("androidx.baselineprofile") version "1.4.1" apply false
     id("androidx.room") version "2.6.1" apply false
 }
