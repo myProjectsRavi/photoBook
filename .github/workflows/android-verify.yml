@@ -30,15 +30,15 @@ jobs:
         run: |
           chmod +x ./gradlew
           ./gradlew \
-            testDebugUnitTest \
-            lintDebug \
-            assembleDebug \
-            assembleDebugAndroidTest \
-            assembleBenchmark \
-            bundleRelease \
-            verifyApkSize \
-            verifyReleaseBundleSize \
-            :baselineprofile:assembleBenchmarkBenchmark
+            :app:testDebugUnitTest \
+            :app:lintDebug \
+            :app:assembleDebug \
+            :app:assembleDebugAndroidTest \
+            :app:assembleBenchmark \
+            :app:bundleRelease \
+            :app:verifyApkSize \
+            :app:verifyReleaseBundleSize \
+            :baselineprofile:assembleBenchmark
 
       - name: Generate deterministic Phase-0 fixture smoke corpus
         run: |
