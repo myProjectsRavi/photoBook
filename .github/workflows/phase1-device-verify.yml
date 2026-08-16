@@ -29,13 +29,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager \
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n 1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager 2>/dev/null | sort | tail -n 1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+
+          test -x "$SDKMANAGER"
+          test -x "$AVDMANAGER"
+          test -x "$ADB"
+
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" \
             "platform-tools" \
             "emulator" \
             "system-images;android-35;google_apis;x86_64"
+          test -x "$EMULATOR"
 
-          echo "no" | avdmanager create avd \
+          echo "no" | "$AVDMANAGER" create avd \
             --force \
             --name photobook-phase1-api35 \
             --package "system-images;android-35;google_apis;x86_64" \
@@ -45,7 +56,7 @@ jobs:
             sudo chmod 666 /dev/kvm
           fi
 
-          nohup emulator \
+          nohup "$EMULATOR" \
             -avd photobook-phase1-api35 \
             -no-window \
             -no-audio \
@@ -54,9 +65,9 @@ jobs:
             -gpu swiftshader_indirect \
             > "$RUNNER_TEMP/phase1-emulator.log" 2>&1 &
 
-          adb wait-for-device
+          "$ADB" wait-for-device
           for attempt in $(seq 1 120); do
-            if [[ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
+            if [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
               break
             fi
             if [[ "$attempt" == "120" ]]; then
@@ -66,12 +77,12 @@ jobs:
             sleep 2
           done
 
-          adb shell settings put global window_animation_scale 0
-          adb shell settings put global transition_animation_scale 0
-          adb shell settings put global animator_duration_scale 0
-          adb shell input keyevent 82 || true
-          adb shell getprop ro.build.version.release
-          adb shell getprop ro.build.version.sdk
+          "$ADB" shell settings put global window_animation_scale 0
+          "$ADB" shell settings put global transition_animation_scale 0
+          "$ADB" shell settings put global animator_duration_scale 0
+          "$ADB" shell input keyevent 82 || true
+          "$ADB" shell getprop ro.build.version.release
+          "$ADB" shell getprop ro.build.version.sdk
 
       - name: Run Android instrumentation
         run: ./gradlew :app:connectedDebugAndroidTest --stacktrace
@@ -80,9 +91,11 @@ jobs:
         if: always()
         shell: bash
         run: |
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
           mkdir -p build/reports/phase1-device
-          adb logcat -d > build/reports/phase1-device/logcat.txt 2>/dev/null || true
-          adb shell dumpsys meminfo com.photobook.app.debug > build/reports/phase1-device/meminfo.txt 2>/dev/null || true
+          "$ADB" logcat -d > build/reports/phase1-device/logcat.txt 2>/dev/null || true
+          "$ADB" shell dumpsys meminfo com.photobook.app.debug > build/reports/phase1-device/meminfo.txt 2>/dev/null || true
           cp "$RUNNER_TEMP/phase1-emulator.log" build/reports/phase1-device/emulator.log 2>/dev/null || true
 
       - name: Upload Phase 1 device evidence
