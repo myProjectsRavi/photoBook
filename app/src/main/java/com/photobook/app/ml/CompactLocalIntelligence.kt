@@ -1,8 +1,8 @@
 package com.photobook.app.ml
 
 import android.graphics.Bitmap
-import android.graphics.Rect
 import android.graphics.PointF
+import android.graphics.Rect
 import android.media.FaceDetector
 
 data class CompactLocalLabel(
@@ -57,13 +57,25 @@ object CompactLocalIntelligence {
         }
     }
 
+    /**
+     * Best-effort face detection used by optional tagging features.
+     * A detector/setup failure intentionally degrades to no tags instead of failing the ML job.
+     */
     fun detectFaces(bitmap: Bitmap): List<Rect> {
+        return runCatching { detectFacesStrict(bitmap) }.getOrDefault(emptyList())
+    }
+
+    /**
+     * Strict face detection for privacy-sensitive callers such as Safe Share.
+     * Setup/detector failures are surfaced so callers can fail closed instead of treating them as
+     * proof that no face exists.
+     */
+    fun detectFacesStrict(bitmap: Bitmap): List<Rect> {
         if (bitmap.width < 64 || bitmap.height < 64) return emptyList()
         val evenWidth = bitmap.width - (bitmap.width % 2)
         if (evenWidth < 2) return emptyList()
-        val rgb565 = runCatching {
-            bitmap.copy(Bitmap.Config.RGB_565, false)
-        }.getOrNull() ?: return emptyList()
+        val rgb565 = bitmap.copy(Bitmap.Config.RGB_565, false)
+            ?: error("Unable to create RGB565 bitmap for face detection")
         return try {
             val faces = arrayOfNulls<FaceDetector.Face>(MAX_FACES)
             val count = FaceDetector(evenWidth, bitmap.height, MAX_FACES).findFaces(rgb565, faces)
