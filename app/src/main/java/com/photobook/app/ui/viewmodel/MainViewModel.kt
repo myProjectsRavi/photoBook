@@ -37,6 +37,7 @@ import com.photobook.app.search.PhotoSource
 import com.photobook.app.search.QueryParser
 import com.photobook.app.search.QueryToken
 import com.photobook.app.search.SearchContext
+import com.photobook.app.search.SearchEngineV2
 import com.photobook.app.search.SuggestionEngine
 import com.photobook.app.search.SuggestionItem
 import com.photobook.app.search.TextToken
@@ -81,6 +82,7 @@ class MainViewModel @Inject constructor(
     private val photoIndex: PhotoIndex,
     private val indexPersistence: IndexPersistence,
     private val filterEngine: FilterEngine,
+    private val searchEngineV2: SearchEngineV2,
     private val queryParser: QueryParser,
     private val tokenClassifier: TokenClassifier,
     private val suggestionEngine: SuggestionEngine,
@@ -140,39 +142,44 @@ class MainViewModel @Inject constructor(
     @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
     val pagedResults: kotlinx.coroutines.flow.Flow<PagingData<PhotoRecord>> = combine(
         queryFlow.debounce(Constants.SEARCH_DEBOUNCE_MS),
-        photoIndex.records().debounce(RECORDS_UPDATE_DEBOUNCE_MS),
+        photoIndex.changes().debounce(RECORDS_UPDATE_DEBOUNCE_MS),
         uiState.map { it.favoritesOnly }.distinctUntilChanged(),
         uiState.map { it.feedMode }.distinctUntilChanged(),
-    ) { query, records, favoritesOnly, feedMode ->
+    ) { query, indexVersion, favoritesOnly, feedMode ->
         SearchFlowInput(
             query = query,
-            records = records,
+            indexVersion = indexVersion,
             favoritesOnly = favoritesOnly,
             feedMode = feedMode,
         )
     }.flatMapLatest { input ->
+        // Read one immutable library view for this generation. Search v2 also receives the
+        // generation number and fails closed to the legacy snapshot if the index changes mid-run.
+        val records = photoIndex.snapshot()
         val searchResult = runSearch(
             query = input.query,
-            records = input.records,
+            records = records,
+            expectedIndexVersion = input.indexVersion,
         )
-        val filteredRecords = if (input.favoritesOnly) {
-            searchResult.results.filter { it.isFavorite }
+        val filteredIds = if (input.favoritesOnly) {
+            searchResult.orderedIds.filter { id ->
+                photoIndex.getByIdFromSnapshot(records, id)?.isFavorite == true
+            }
         } else {
-            searchResult.results
+            searchResult.orderedIds
         }
-        val filteredIds = filteredRecords.map { it.id }
 
-        latestSearchResultIds = searchResult.results.map { it.id }
+        latestSearchResultIds = searchResult.orderedIds
         latestVisibleResultIds = filteredIds
 
         val timelineMarks = withContext(Dispatchers.Default) {
-            buildTimelineMarks(filteredRecords)
+            buildTimelineMarks(filteredIds, records)
         }
         val visibleIds = filteredIds.toSet()
 
         uiState.update { state ->
             state.copy(
-                photoCount = input.records.size,
+                photoCount = records.size,
                 resultCount = filteredIds.size,
                 selectedPhotoIds = clampSelectionToResultIds(state.selectedPhotoIds, visibleIds),
                 timelineMarks = timelineMarks,
@@ -183,7 +190,7 @@ class MainViewModel @Inject constructor(
                 ),
             )
         }
-        maybeRefreshMemoryStories(input.records)
+        maybeRefreshMemoryStories(records)
 
         Pager(
             config = PagingConfig(
@@ -212,10 +219,20 @@ class MainViewModel @Inject constructor(
 
     private data class SearchFlowInput(
         val query: String,
-        val records: List<PhotoRecord>,
+        val indexVersion: Long,
         val favoritesOnly: Boolean,
         val feedMode: HomeFeedMode,
     )
+
+    private data class SearchIdResult(
+        val orderedIds: List<Long>,
+        val tokens: List<QueryToken>,
+    )
+
+    private enum class SearchRuntimeStrategy {
+        LEGACY,
+        V2,
+    }
 
     private data class PendingStoryLaunch(
         val photoIds: List<Long>,
@@ -389,7 +406,7 @@ class MainViewModel @Inject constructor(
 
     fun openPhotoById(photoId: Long) {
         viewModelScope.launch {
-            val photo = photoIndex.snapshot().firstOrNull { it.id == photoId } ?: return@launch
+            val photo = photoIndex.getById(photoId) ?: return@launch
             clearSelection()
             onPhotoClicked(photo)
         }
@@ -853,12 +870,11 @@ class MainViewModel @Inject constructor(
 
     fun resolvePhotosByIds(photoIds: Set<Long>): List<PhotoRecord> {
         if (photoIds.isEmpty()) return emptyList()
-        val byId = photoIndex.snapshot().associateBy { record -> record.id }
         val orderedVisible = latestVisibleResultIds.filter { id -> id in photoIds }
         val orderedIds = linkedSetOf<Long>()
         orderedVisible.forEach(orderedIds::add)
         photoIds.forEach(orderedIds::add)
-        return orderedIds.mapNotNull(byId::get)
+        return photoIndex.getByIdsOrdered(orderedIds.toList())
     }
 
     private fun observeSuggestions() {
@@ -1230,9 +1246,7 @@ class MainViewModel @Inject constructor(
     }
 
     private fun resolveVisiblePhotos(): List<PhotoRecord> {
-        if (latestVisibleResultIds.isEmpty()) return emptyList()
-        val byId = photoIndex.snapshot().associateBy { record -> record.id }
-        return latestVisibleResultIds.mapNotNull(byId::get)
+        return photoIndex.getByIdsOrdered(latestVisibleResultIds)
     }
 
     private data class ViewerWindow(
@@ -1248,8 +1262,7 @@ class MainViewModel @Inject constructor(
         val start = (centerIndex - VIEWER_WINDOW_RADIUS).coerceAtLeast(0)
         val endExclusive = (centerIndex + VIEWER_WINDOW_RADIUS + 1).coerceAtMost(latestVisibleResultIds.size)
         val windowIds = latestVisibleResultIds.subList(start, endExclusive)
-        val byId = photoIndex.snapshot().associateBy { record -> record.id }
-        val photos = windowIds.mapNotNull(byId::get)
+        val photos = photoIndex.getByIdsOrdered(windowIds)
         val localIndex = photos.indexOfFirst { photo -> photo.id == centerPhotoId }
         if (photos.isEmpty() || localIndex < 0) return null
 
@@ -1287,32 +1300,65 @@ class MainViewModel @Inject constructor(
     private suspend fun runSearch(
         query: String,
         records: List<PhotoRecord>,
-    ): FilterEngine.SearchResult {
+        expectedIndexVersion: Long,
+    ): SearchIdResult {
         val normalizedQuery = query.trim()
         if (normalizedQuery.isBlank()) {
             // Timeline is the single feed mode now — shows all photos (incl. screenshots) chronologically.
-            return FilterEngine.SearchResult(
-                results = records,
+            return SearchIdResult(
+                orderedIds = records.map { record -> record.id },
                 tokens = emptyList(),
             )
         }
 
         val typedTokens = queryParser.tokenize(normalizedQuery).map(tokenClassifier::classify)
         val shouldUseDao = shouldUseDaoCandidateSearch(typedTokens)
+        val context = buildSearchContext()
+
+        if (SEARCH_RUNTIME_STRATEGY == SearchRuntimeStrategy.V2) {
+            val daoCandidateIds = if (shouldUseDao) {
+                indexPersistence.searchIdsByQueryText(normalizedQuery)
+            } else {
+                emptyList()
+            }
+            // Preserve the legacy empty-FTS fallback: an empty candidate set means search the
+            // current in-memory library rather than incorrectly returning no results.
+            val candidateIds = daoCandidateIds.takeIf { it.isNotEmpty() }
+            val v2Result = withContext(Dispatchers.Default) {
+                searchEngineV2.search(
+                    query = query,
+                    candidateIds = candidateIds,
+                    context = context,
+                    expectedIndexVersion = expectedIndexVersion,
+                )
+            }
+            if (v2Result.complete) {
+                return SearchIdResult(
+                    orderedIds = v2Result.orderedIds,
+                    tokens = v2Result.tokens,
+                )
+            }
+        }
+
+        // Temporary internal rollback path. Keep this until 10k/50k/100k parity and release
+        // verification are green; it is not a user-facing or permanent dual architecture.
         val daoCandidates = if (shouldUseDao) {
             indexPersistence.searchByQueryText(normalizedQuery)
         } else {
             emptyList()
         }
         val recordsToSearch = if (daoCandidates.isNotEmpty()) daoCandidates else records
-
-        return withContext(Dispatchers.Default) {
+        val legacyResult = withContext(Dispatchers.Default) {
             filterEngine.search(
                 query = query,
                 records = recordsToSearch,
-                context = buildSearchContext(),
+                context = context,
             )
         }
+        return SearchIdResult(
+            orderedIds = legacyResult.results.map { record -> record.id },
+            tokens = legacyResult.tokens,
+        )
     }
 
     private fun shouldUseDaoCandidateSearch(tokens: List<QueryToken>): Boolean {
@@ -1329,14 +1375,16 @@ class MainViewModel @Inject constructor(
     }
 
     private fun buildTimelineMarks(
-        orderedRecords: List<PhotoRecord>,
+        orderedIds: List<Long>,
+        records: List<PhotoRecord>,
     ): List<TimelineMark> {
-        if (orderedRecords.isEmpty()) return emptyList()
+        if (orderedIds.isEmpty()) return emptyList()
         val marks = ArrayList<TimelineMark>()
         var lastYear = Int.MIN_VALUE
         var lastMonth = Int.MIN_VALUE
 
-        orderedRecords.forEachIndexed { index, record ->
+        orderedIds.forEachIndexed { index, id ->
+            val record = photoIndex.getByIdFromSnapshot(records, id) ?: return@forEachIndexed
             if (record.year != lastYear || record.month != lastMonth) {
                 marks += TimelineMark(
                     index = index,
@@ -1368,11 +1416,8 @@ class MainViewModel @Inject constructor(
     }
 
     private fun openStoryFromIdsInternal(photoIds: List<Long>, title: String): Boolean {
-        if (photoIds.isEmpty()) return false
-        val snapshot = photoIndex.snapshot()
-        if (snapshot.isEmpty()) return false
-        val byId = snapshot.associateBy { it.id }
-        val photos = photoIds.mapNotNull(byId::get)
+        if (photoIds.isEmpty() || photoIndex.size() == 0) return false
+        val photos = photoIndex.getByIdsOrdered(photoIds)
         if (photos.isEmpty()) return false
 
         uiState.update { state ->
@@ -1491,5 +1536,6 @@ class MainViewModel @Inject constructor(
         private const val RECORDS_UPDATE_DEBOUNCE_MS = 250L
         private const val MAX_DECLUTTER_CANDIDATES = 300
         private const val REELS_ENABLED_KEY = "reels_enabled_v1"
+        private val SEARCH_RUNTIME_STRATEGY = SearchRuntimeStrategy.V2
     }
 }
