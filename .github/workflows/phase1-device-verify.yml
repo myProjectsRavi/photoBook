@@ -17,10 +17,10 @@ concurrency:
 
 jobs:
   privacy-instrumentation:
-    # PhotoBook ships ARM ABIs. macos-15 is an ARM64 GitHub-hosted runner and
-    # already includes the Android Emulator, so the test APK runs natively and
-    # this job only needs to install the API-35 system image.
-    runs-on: macos-15
+    # Linux hosted runners expose KVM. Keep a Google APIs x86_64 image because
+    # PhotoBook ships ARM APK splits and Google-backed emulator images can provide
+    # native-code translation for that test configuration.
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
 
     steps:
@@ -38,30 +38,39 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Library/Android/sdk}}"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
           SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n 1)"
           AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager 2>/dev/null | sort | tail -n 1)"
           ADB="$SDK_ROOT/platform-tools/adb"
           EMULATOR="$SDK_ROOT/emulator/emulator"
-          SYSTEM_IMAGE="system-images;android-35;google_apis;arm64-v8a"
+          SYSTEM_IMAGE="system-images;android-35;google_apis;x86_64"
           AVD_NAME="photobook-phase1-api35"
 
           test -x "$SDKMANAGER"
           test -x "$AVDMANAGER"
           test -x "$ADB"
-          test -x "$EMULATOR"
 
           echo "Android SDK: $SDK_ROOT"
-          "$EMULATOR" -version | head -n 3
-
+          echo "Installing emulator + API-35 Google APIs x86_64 image"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" --channel=0 "$SYSTEM_IMAGE"
+          "$SDKMANAGER" --channel=0 \
+            "emulator" \
+            "$SYSTEM_IMAGE"
+          test -x "$EMULATOR"
+          "$EMULATOR" -version | head -n 3
 
           echo "no" | "$AVDMANAGER" create avd \
             --force \
             --name "$AVD_NAME" \
             --package "$SYSTEM_IMAGE" \
             --device "pixel_2"
+
+          if [[ ! -e /dev/kvm ]]; then
+            echo "GitHub Linux runner does not expose /dev/kvm; refusing a software-emulated false gate."
+            exit 1
+          fi
+          sudo chmod 666 /dev/kvm
+          "$EMULATOR" -accel-check
 
           nohup "$EMULATOR" \
             -avd "$AVD_NAME" \
@@ -129,7 +138,7 @@ jobs:
         if: always()
         shell: bash
         run: |
-          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Library/Android/sdk}}"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
           ADB="$SDK_ROOT/platform-tools/adb"
           mkdir -p build/reports/phase1-device
           if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then
