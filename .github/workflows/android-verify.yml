@@ -41,7 +41,7 @@ jobs:
       - name: Generate deterministic Phase-0 fixture smoke corpus
         run: |
           python3 tools/benchmark/generate_media_fixtures.py \
-            --count 100 \
+            --count 101 \
             --output build/phase0-fixtures \
             --write-media
 
