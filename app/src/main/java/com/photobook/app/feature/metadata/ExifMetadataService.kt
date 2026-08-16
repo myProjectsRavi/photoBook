@@ -558,7 +558,8 @@ class ExifMetadataService @Inject constructor(
 
     private fun readExifOrientation(uri: Uri): Int {
         return runCatching {
-            val input = context.contentResolver.openInputStream(uri) ?: return@runCatching ExifInterface.ORIENTATION_UNDEFINED
+            val input = context.contentResolver.openInputStream(uri)
+                ?: return@runCatching ExifInterface.ORIENTATION_UNDEFINED
             input.use { stream ->
                 ExifInterface(stream).getAttributeInt(
                     ExifInterface.TAG_ORIENTATION,
@@ -607,7 +608,7 @@ class ExifMetadataService @Inject constructor(
     }
 
     private fun detectFaces(bitmap: Bitmap): List<Rect> {
-        return CompactLocalIntelligence.detectFaces(bitmap)
+        return CompactLocalIntelligence.detectFacesStrict(bitmap)
     }
 
     private fun pixelateRect(
@@ -820,11 +821,19 @@ class ExifMetadataService @Inject constructor(
             ExifInterface.TAG_GPS_PROCESSING_METHOD,
             ExifInterface.TAG_MODEL,
             ExifInterface.TAG_MAKE,
+            ExifInterface.TAG_CAMERA_OWNER_NAME,
+            ExifInterface.TAG_BODY_SERIAL_NUMBER,
             ExifInterface.TAG_LENS_MODEL,
             ExifInterface.TAG_LENS_MAKE,
+            ExifInterface.TAG_LENS_SERIAL_NUMBER,
+            ExifInterface.TAG_IMAGE_UNIQUE_ID,
+            ExifInterface.TAG_MAKER_NOTE,
             ExifInterface.TAG_DATETIME,
             ExifInterface.TAG_DATETIME_ORIGINAL,
             ExifInterface.TAG_DATETIME_DIGITIZED,
+            ExifInterface.TAG_OFFSET_TIME,
+            ExifInterface.TAG_OFFSET_TIME_ORIGINAL,
+            ExifInterface.TAG_OFFSET_TIME_DIGITIZED,
             ExifInterface.TAG_SOFTWARE,
             ExifInterface.TAG_IMAGE_DESCRIPTION,
             ExifInterface.TAG_ARTIST,
