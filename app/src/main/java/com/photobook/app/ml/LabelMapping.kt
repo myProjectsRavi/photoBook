@@ -185,7 +185,7 @@ object LabelMapping {
         rawToCanonical[normalized]?.let { return it }
 
         return rawToCanonical.entries.firstOrNull { (raw, _) ->
-            normalized.contains(raw)
+            containsPhrase(normalized, raw)
         }?.value
     }
 
@@ -216,6 +216,20 @@ object LabelMapping {
         } else {
             threshold(canonical)
         }
+    }
+
+    private fun containsPhrase(text: String, phrase: String): Boolean {
+        var fromIndex = 0
+        while (fromIndex <= text.length - phrase.length) {
+            val index = text.indexOf(phrase, startIndex = fromIndex)
+            if (index < 0) return false
+            val beforeIsBoundary = index == 0 || !text[index - 1].isLetterOrDigit()
+            val afterIndex = index + phrase.length
+            val afterIsBoundary = afterIndex == text.length || !text[afterIndex].isLetterOrDigit()
+            if (beforeIsBoundary && afterIsBoundary) return true
+            fromIndex = index + 1
+        }
+        return false
     }
 
     private val LIVE_SUBJECT_CANONICAL_LABELS = setOf(
