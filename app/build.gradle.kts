@@ -7,6 +7,7 @@ plugins {
     id("org.jetbrains.kotlin.kapt")
     id("com.google.dagger.hilt.android")
     id("androidx.baselineprofile")
+    id("androidx.room")
 }
 
 val injectedSigningStoreFile = gradle.startParameter.projectProperties["android.injected.signing.store.file"]
@@ -25,6 +26,9 @@ val releaseKeystoreProperties = Properties().apply {
         keystorePropsFile.inputStream().use(::load)
     }
 }
+val releaseKeystorePath = releaseKeystoreProperties.getProperty("storeFile")
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
 
 val bundledLabelModelDependency = "com.google.mlkit:image-labeling:17.0.9"
 
@@ -83,15 +87,10 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            val keystorePath = releaseKeystoreProperties.getProperty("storeFile")
-                ?.trim()
-                ?.takeIf { it.isNotEmpty() }
-
-
-            if (keystorePath != null) {
-                val candidate = File(keystorePath).let { file ->
-                    if (file.isAbsolute) file else rootProject.file(keystorePath)
+        if (releaseKeystorePath != null) {
+            create("release") {
+                val candidate = File(releaseKeystorePath).let { file ->
+                    if (file.isAbsolute) file else rootProject.file(releaseKeystorePath)
                 }
                 if (!candidate.exists()) {
                     throw GradleException("Release keystore not found at: ${candidate.absolutePath}")
@@ -112,7 +111,9 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("release")
+            if (releaseKeystorePath != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             ndk {
                 debugSymbolLevel = "SYMBOL_TABLE"
             }
@@ -120,6 +121,12 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+        }
+        create("benchmark") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+            isDebuggable = false
         }
     }
 
@@ -140,6 +147,7 @@ android {
         getByName("main").assets.srcDir(
             layout.buildDirectory.dir("generated/assets/bundledLabelModel"),
         )
+        getByName("androidTest").assets.srcDir("$projectDir/schemas")
     }
 
     composeOptions {
@@ -178,6 +186,10 @@ android {
         density { enableSplit = true }
         abi { enableSplit = true }
     }
+}
+
+room {
+    schemaDirectory("$projectDir/schemas")
 }
 
 kapt {
@@ -236,6 +248,16 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
     testImplementation("com.google.truth:truth:1.4.2")
 
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
+    androidTestImplementation("androidx.room:room-testing:2.6.1")
+
+    // Required by current Macrobenchmark tooling for profile/shader-cache control,
+    // but intentionally excluded from production release artifacts.
+    add("benchmarkImplementation", "androidx.profileinstaller:profileinstaller:1.4.1")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
     baselineProfile(project(":baselineprofile"))
@@ -243,17 +265,21 @@ dependencies {
 
 tasks.register("verifyApkSize") {
     group = "verification"
-    description = "Fails when any generated APK exceeds 30 MB."
+    description = "Fails when any generated release APK exceeds 30 MB."
 
     doLast {
         val maxBytes = 30L * 1024L * 1024L
-        val apkRoot = layout.buildDirectory.dir("outputs/apk").get().asFile
-        if (!apkRoot.exists()) return@doLast
+        val apkRoot = layout.buildDirectory.dir("outputs/apk/release").get().asFile
+        check(apkRoot.exists()) {
+            "Release APK size gate could not find ${apkRoot.path}; run assembleRelease first."
+        }
 
         val apks = apkRoot.walkTopDown()
             .filter { it.isFile && it.extension == "apk" }
             .toList()
-        if (apks.isEmpty()) return@doLast
+        check(apks.isNotEmpty()) {
+            "Release APK size gate found no release APKs under ${apkRoot.path}."
+        }
 
         apks.forEach { apk ->
             val sizeBytes = apk.length()
@@ -271,12 +297,16 @@ tasks.register("verifyReleaseBundleSize") {
     doLast {
         val maxBytes = 20L * 1024L * 1024L
         val bundleRoot = layout.buildDirectory.dir("outputs/bundle/release").get().asFile
-        if (!bundleRoot.exists()) return@doLast
+        check(bundleRoot.exists()) {
+            "Release AAB size gate could not find ${bundleRoot.path}; run bundleRelease first."
+        }
 
         val bundles = bundleRoot.walkTopDown()
             .filter { it.isFile && it.extension == "aab" }
             .toList()
-        if (bundles.isEmpty()) return@doLast
+        check(bundles.isNotEmpty()) {
+            "Release AAB size gate found no release bundles under ${bundleRoot.path}."
+        }
 
         bundles.forEach { bundle ->
             val sizeBytes = bundle.length()
@@ -295,7 +325,7 @@ tasks.register("printReleaseMetadata") {
     }
 }
 
-tasks.matching { it.name.startsWith("assemble") }.configureEach {
+tasks.matching { it.name == "assembleRelease" }.configureEach {
     finalizedBy("verifyApkSize")
 }
 

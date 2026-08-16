@@ -7,23 +7,39 @@ on:
       - main
       - "feature/**"
       - "codex/**"
+      - "agent/**"
+  workflow_dispatch:
 
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 55
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
 
-      - name: Verify app
-        run: |
-          chmod +x ./gradlew
-          ./gradlew testDebugUnitTest assembleDebug bundleRelease verifyApkSize verifyReleaseBundleSize lintDebug
+      - name: Run Phase-0 verification
+        run: bash tools/benchmark/run_phase0_local.sh
+
+      - name: Upload Phase-0 verification evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: phase0-verification-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            app/schemas/
+            app/build/reports/tests/
+            app/build/reports/lint-results-debug.html
+            build/reports/phase0/
+            build/phase0-fixtures/*.json
+            build/phase0-fixtures/*.jsonl

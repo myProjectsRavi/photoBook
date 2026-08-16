@@ -11,7 +11,7 @@ import androidx.room.RoomDatabase
         ArchiveDecisionEntity::class,
     ],
     version = 12,
-    exportSchema = false,
+    exportSchema = true,
 )
 abstract class PhotoBookDatabase : RoomDatabase() {
     abstract fun photoDao(): PhotoDao
