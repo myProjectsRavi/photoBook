@@ -28,27 +28,30 @@ class SearchEngineV2 @Inject constructor(
         context: SearchContext = SearchContext(),
     ): SearchResult {
         val normalized = queryParser.normalize(query)
-        val source = sourceRecords(candidateIds)
-        if (!source.complete) {
-            return SearchResult(emptyList(), emptyList(), complete = false)
-        }
 
         if (normalized.isBlank()) {
-            return SearchResult(
-                orderedIds = source.records.map { record -> record.id },
-                tokens = emptyList(),
-            )
+            if (candidateIds == null) {
+                return SearchResult(
+                    orderedIds = index.snapshot().map { record -> record.id },
+                    tokens = emptyList(),
+                )
+            }
+            if (candidateIds.any { id -> index.getById(id) == null }) {
+                return SearchResult(emptyList(), emptyList(), complete = false)
+            }
+            return SearchResult(candidateIds.toList(), emptyList())
         }
 
         val tokens = queryParser.tokenize(normalized).map(tokenClassifier::classify)
         val filters = tokens.mapNotNull { token -> filterFactory.create(token, context) }
         val isOldest = tokens.any { it is TemporalToken && it.keyword == "oldest" }
         val isRecent = tokens.any { it is TemporalToken && it.keyword == "recent" }
+        val hitCapacity = (candidateIds?.size ?: index.size()).coerceAtMost(MAX_INITIAL_HIT_CAPACITY)
+        val hits = ArrayList<SearchHit>(hitCapacity)
 
-        val hits = ArrayList<SearchHit>()
-        source.records.forEachIndexed { ordinal, photo ->
+        val complete = forEachSource(candidateIds) { ordinal, photo ->
             if (filters.isNotEmpty() && !filters.all { filter -> filter(photo) }) {
-                return@forEachIndexed
+                return@forEachSource
             }
             hits += SearchHit(
                 id = photo.id,
@@ -60,6 +63,9 @@ class SearchEngineV2 @Inject constructor(
                 },
                 ordinal = ordinal,
             )
+        }
+        if (!complete) {
+            return SearchResult(emptyList(), tokens, complete = false)
         }
 
         if (hits.size > 1 && tokens.isNotEmpty()) {
@@ -90,27 +96,24 @@ class SearchEngineV2 @Inject constructor(
         return SearchResult(orderedIds = orderedIds, tokens = tokens)
     }
 
-    private fun sourceRecords(candidateIds: List<Long>?): SearchSource {
+    /**
+     * Iterates the active index directly. Candidate IDs therefore cost only the compact ID list;
+     * there is no intermediate candidate List<PhotoRecord> allocation.
+     */
+    private inline fun forEachSource(
+        candidateIds: List<Long>?,
+        action: (ordinal: Int, photo: PhotoRecord) -> Unit,
+    ): Boolean {
         if (candidateIds == null) {
-            return SearchSource(index.snapshot(), complete = true)
+            index.snapshot().forEachIndexed(action)
+            return true
         }
-        if (candidateIds.isEmpty()) {
-            return SearchSource(emptyList(), complete = true)
+        candidateIds.forEachIndexed { ordinal, id ->
+            val photo = index.getById(id) ?: return false
+            action(ordinal, photo)
         }
-
-        val records = ArrayList<PhotoRecord>(candidateIds.size)
-        candidateIds.forEach { id ->
-            val record = index.getById(id)
-                ?: return SearchSource(emptyList(), complete = false)
-            records += record
-        }
-        return SearchSource(records, complete = true)
+        return true
     }
-
-    private data class SearchSource(
-        val records: List<PhotoRecord>,
-        val complete: Boolean,
-    )
 
     private data class SearchHit(
         val id: Long,
@@ -121,5 +124,6 @@ class SearchEngineV2 @Inject constructor(
 
     private companion object {
         private const val RECENT_RESULT_LIMIT = 50
+        private const val MAX_INITIAL_HIT_CAPACITY = 16_384
     }
 }
