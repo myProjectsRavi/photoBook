@@ -7,11 +7,13 @@ on:
       - main
       - "feature/**"
       - "codex/**"
+      - "agent/**"
+  workflow_dispatch:
 
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 55
 
     steps:
       - name: Checkout
@@ -22,8 +24,48 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
 
-      - name: Verify app
+      - name: Verify app and benchmark sources
         run: |
           chmod +x ./gradlew
-          ./gradlew testDebugUnitTest assembleDebug bundleRelease verifyApkSize verifyReleaseBundleSize lintDebug
+          ./gradlew \
+            testDebugUnitTest \
+            lintDebug \
+            assembleDebug \
+            bundleRelease \
+            verifyApkSize \
+            verifyReleaseBundleSize \
+            :baselineprofile:assembleBenchmark
+
+      - name: Generate deterministic Phase-0 fixture smoke corpus
+        run: |
+          python3 tools/benchmark/generate_media_fixtures.py \
+            --count 100 \
+            --output build/phase0-fixtures \
+            --write-media
+
+      - name: Report APK and AAB size composition
+        run: |
+          python3 tools/benchmark/report_artifact_sizes.py \
+            --root app/build/outputs \
+            --output build/reports/phase0/artifact-sizes.json
+
+      - name: Verify Room schema export exists
+        run: |
+          test -f app/schemas/com.photobook.app.data.db.PhotoBookDatabase/12.json
+
+      - name: Upload Phase-0 verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase0-verification-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            app/schemas/
+            app/build/reports/tests/
+            app/build/reports/lint-results-debug.html
+            build/reports/phase0/
+            build/phase0-fixtures/*.json
+            build/phase0-fixtures/*.jsonl
