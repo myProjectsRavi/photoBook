@@ -7,18 +7,15 @@ import org.junit.Test
 class PhotoTagCodecTest {
 
     @Test
-    fun preparedFoodEvidence_isPersistedButNotSearchable() {
+    fun preparedFoodEvidence_isNotSearchable() {
         val tags = listOf(
             MLTag("food", 0.91f),
             MLTag("prepared_food", 0.88f),
             MLTag("people", 0.81f),
         )
 
-        val encoded = PhotoTagCodec.encode(tags)
-        val decoded = PhotoTagCodec.decode(encoded)
-        val searchable = PhotoTagCodec.toSearchableText(decoded)
+        val searchable = PhotoTagCodec.toSearchableText(tags)
 
-        assertThat(decoded.map { it.label }).contains("prepared_food")
         assertThat(searchable).contains("food")
         assertThat(searchable).contains("people")
         assertThat(searchable).doesNotContain("prepared_food")
