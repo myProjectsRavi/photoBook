@@ -74,11 +74,25 @@ object CompactLocalIntelligence {
         if (bitmap.width < 64 || bitmap.height < 64) return emptyList()
         val evenWidth = bitmap.width - (bitmap.width % 2)
         if (evenWidth < 2) return emptyList()
-        val rgb565 = bitmap.copy(Bitmap.Config.RGB_565, false)
-            ?: error("Unable to create RGB565 bitmap for face detection")
+
+        // FaceDetector requires the supplied bitmap dimensions to exactly match the dimensions
+        // passed to its constructor, and its width must be even. Crop only the final column for an
+        // odd-width source; never recycle or mutate the caller-owned bitmap.
+        val detectorSource = if (bitmap.width == evenWidth) {
+            bitmap
+        } else {
+            Bitmap.createBitmap(bitmap, 0, 0, evenWidth, bitmap.height)
+        }
+        val rgb565 = try {
+            detectorSource.copy(Bitmap.Config.RGB_565, false)
+                ?: error("Unable to create RGB565 bitmap for face detection")
+        } finally {
+            if (detectorSource !== bitmap) detectorSource.recycle()
+        }
+
         return try {
             val faces = arrayOfNulls<FaceDetector.Face>(MAX_FACES)
-            val count = FaceDetector(evenWidth, bitmap.height, MAX_FACES).findFaces(rgb565, faces)
+            val count = FaceDetector(rgb565.width, rgb565.height, MAX_FACES).findFaces(rgb565, faces)
             buildList {
                 for (index in 0 until count.coerceAtMost(MAX_FACES)) {
                     val face = faces[index] ?: continue
