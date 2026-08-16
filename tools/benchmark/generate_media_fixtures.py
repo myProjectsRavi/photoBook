@@ -65,7 +65,7 @@ def make_png(index: int, width: int = 32, height: int = 32) -> bytes:
     """Create a tiny deterministic RGB PNG using only the Python standard library."""
     rows = bytearray()
     for y in range(height):
-        rows.append(0)  # PNG filter type 0.
+        rows.append(0)
         for x in range(width):
             rows.extend(
                 (
@@ -84,7 +84,7 @@ def make_png(index: int, width: int = 32, height: int = 32) -> bytes:
 
 def scenario_for(index: int) -> str:
     # Weighted toward normal camera photos while guaranteeing regular adversarial cases.
-    selector = index % 100
+    selector = index % 101
     if selector < 58:
         return "camera_general"
     if selector < 65:
@@ -106,8 +106,10 @@ def scenario_for(index: int) -> str:
     if selector < 98:
         return "favorite_protected"
     if selector == 98:
+        return "large_photo"
+    if selector == 99:
         return "corrupt_media"
-    return "zero_byte_media" if index % 2 else "large_photo"
+    return "zero_byte_media"
 
 
 def archive_expectation(scenario: str) -> tuple[str, str]:
@@ -148,7 +150,6 @@ def build_record(index: int, start: datetime, rng: random.Random) -> FixtureReco
         prefix = "IMG"
         terms = ("camera", scenario.replace("_", " "))
 
-    # Keep file names deterministic but non-sequential enough to exercise ordering.
     salt = rng.randrange(1_000_000)
     file_name = f"{prefix}_{index:06d}_{salt:06d}.png"
     expected_archive, expected_reason = archive_expectation(scenario)
@@ -194,6 +195,10 @@ def generate(count: int, output: Path, seed: int, write_media: bool) -> None:
             manifest.write(json.dumps(asdict(record), sort_keys=True) + "\n")
             if write_media:
                 write_fixture_media(output / f"media-{count}", record)
+
+    missing = [scenario for scenario, seen in summary.items() if seen == 0 and count >= len(SCENARIOS)]
+    if missing:
+        raise RuntimeError(f"fixture distribution failed to cover scenarios: {missing}")
 
     metadata = {
         "count": count,
