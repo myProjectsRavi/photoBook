@@ -325,8 +325,9 @@ internal class OverlayPhotoIndexBackend : PhotoIndexBackend {
             recordsMap.clear()
             records.forEach { recordsMap[it.id] = it }
             val sorted = records.sortedByDescending { it.dateAdded }
+            val publicationVersion = beginPublication()
             rebuildAuxiliarySets(sorted)
-            publishStructural(sorted)
+            publishStructural(sorted, publicationVersion)
         }
     }
 
@@ -348,13 +349,14 @@ internal class OverlayPhotoIndexBackend : PhotoIndexBackend {
                 }
             }
             if (results.isNotEmpty()) {
+                val publicationVersion = beginPublication()
                 val newMlKeywords = results.asSequence()
                     .flatMap { it.mlTags.asSequence().map { tag -> tag.label.lowercase() } }
                     .toSet()
                 if (!mlKeywords.containsAll(newMlKeywords)) {
                     mlKeywords = mlKeywords + newMlKeywords
                 }
-                publishPointUpdates(results)
+                publishPointUpdates(results, publicationVersion)
             }
         }
         return results
@@ -366,7 +368,8 @@ internal class OverlayPhotoIndexBackend : PhotoIndexBackend {
             if (record.isFavorite == isFavorite) return@withLock
             val updated = record.copy(isFavorite = isFavorite)
             recordsMap[id] = updated
-            publishPointUpdates(listOf(updated))
+            val publicationVersion = beginPublication()
+            publishPointUpdates(listOf(updated), publicationVersion)
         }
     }
 
@@ -377,7 +380,8 @@ internal class OverlayPhotoIndexBackend : PhotoIndexBackend {
             nextFavorite = !record.isFavorite
             val updated = record.copy(isFavorite = nextFavorite)
             recordsMap[id] = updated
-            publishPointUpdates(listOf(updated))
+            val publicationVersion = beginPublication()
+            publishPointUpdates(listOf(updated), publicationVersion)
         }
         return nextFavorite
     }
@@ -391,9 +395,10 @@ internal class OverlayPhotoIndexBackend : PhotoIndexBackend {
                 previous != null && previous.dateAdded == record.dateAdded -> snapshot.replaceAll(listOf(record))
                 else -> OverlayPhotoList.from(recordsMap.values.sortedByDescending { it.dateAdded })
             }
+            val publicationVersion = beginPublication()
             // Keep keyword semantics exactly aligned with the rollback implementation.
             rebuildAuxiliarySets(nextSnapshot)
-            publishSnapshot(nextSnapshot)
+            publishSnapshot(nextSnapshot, publicationVersion)
         }
     }
 
@@ -406,30 +411,37 @@ internal class OverlayPhotoIndexBackend : PhotoIndexBackend {
             }
             if (anyRemoved) {
                 val nextSnapshot = OverlayPhotoList.from(recordsMap.values.sortedByDescending { it.dateAdded })
+                val publicationVersion = beginPublication()
                 rebuildAuxiliarySets(nextSnapshot)
-                publishSnapshot(nextSnapshot)
+                publishSnapshot(nextSnapshot, publicationVersion)
             }
         }
     }
 
-    private fun publishStructural(records: List<PhotoRecord>) {
-        publishSnapshot(OverlayPhotoList.from(records))
+    private fun beginPublication(): Long {
+        val nextVersion = version + 1L
+        version = nextVersion
+        return nextVersion
     }
 
-    private fun publishPointUpdates(records: List<PhotoRecord>) {
-        publishSnapshot(snapshot.replaceAll(records))
+    private fun publishStructural(records: List<PhotoRecord>, publicationVersion: Long) {
+        publishSnapshot(OverlayPhotoList.from(records), publicationVersion)
+    }
+
+    private fun publishPointUpdates(records: List<PhotoRecord>, publicationVersion: Long) {
+        publishSnapshot(snapshot.replaceAll(records), publicationVersion)
     }
 
     /**
-     * Invalidate the old generation before publishing the new immutable view. changeFlow is emitted
-     * only after publication, so production searches can use its value as a completed-generation token.
+     * `version` is advanced by beginPublication() before any exposed keyword/snapshot state changes.
+     * `changeFlow` advances only after the immutable snapshot is fully visible. Therefore
+     * version != changeFlow.value means a publication is in progress and Search v2 must fail closed.
      */
-    private fun publishSnapshot(nextSnapshot: OverlayPhotoList) {
-        val nextVersion = version + 1L
-        version = nextVersion
+    private fun publishSnapshot(nextSnapshot: OverlayPhotoList, publicationVersion: Long) {
+        check(version == publicationVersion) { "PhotoIndex publication generation changed unexpectedly" }
         snapshot = nextSnapshot
         recordsFlow.value = nextSnapshot
-        changeFlow.value = nextVersion
+        changeFlow.value = publicationVersion
     }
 
     private fun rebuildAuxiliarySets(records: List<PhotoRecord>) {
