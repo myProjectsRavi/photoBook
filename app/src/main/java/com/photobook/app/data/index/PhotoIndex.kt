@@ -37,6 +37,14 @@ class PhotoIndex internal constructor(
 
     fun snapshot(): List<PhotoRecord> = backend.snapshot()
 
+    /** Resolve against one immutable snapshot so a search generation never mixes index states. */
+    internal fun getByIdFromSnapshot(records: List<PhotoRecord>, id: Long): PhotoRecord? {
+        return when (records) {
+            is OverlayPhotoList -> records.getById(id)
+            else -> records.firstOrNull { record -> record.id == id }
+        }
+    }
+
     fun getById(id: Long): PhotoRecord? = backend.getById(id)
 
     fun getByIdsOrdered(ids: List<Long>): List<PhotoRecord> = backend.getByIdsOrdered(ids)
@@ -153,17 +161,21 @@ internal class LegacyPhotoIndexBackend : PhotoIndexBackend {
     private val recordsFlow = MutableStateFlow<List<PhotoRecord>>(emptyList())
     private val changeFlow = MutableStateFlow(0L)
 
-    private var version = 0L
-    private var folderKeywords: Set<String> = emptySet()
-    private var cityKeywords: Set<String> = emptySet()
-    private var mlKeywords: Set<String> = emptySet()
+    @Volatile private var version = 0L
+    @Volatile private var folderKeywords: Set<String> = emptySet()
+    @Volatile private var cityKeywords: Set<String> = emptySet()
+    @Volatile private var mlKeywords: Set<String> = emptySet()
 
     override fun records(): StateFlow<List<PhotoRecord>> = recordsFlow.asStateFlow()
     override fun changes(): StateFlow<Long> = changeFlow.asStateFlow()
     override fun snapshot(): List<PhotoRecord> = recordsFlow.value
-    override fun getById(id: Long): PhotoRecord? = recordsMap[id]
-    override fun getByIdsOrdered(ids: List<Long>): List<PhotoRecord> = ids.mapNotNull(recordsMap::get)
-    override fun size(): Int = recordsMap.size
+    override fun getById(id: Long): PhotoRecord? = recordsFlow.value.firstOrNull { record -> record.id == id }
+    override fun getByIdsOrdered(ids: List<Long>): List<PhotoRecord> {
+        if (ids.isEmpty()) return emptyList()
+        val byId = recordsFlow.value.associateBy { record -> record.id }
+        return ids.mapNotNull(byId::get)
+    }
+    override fun size(): Int = recordsFlow.value.size
     override fun version(): Long = version
     override fun folderKeywords(): Set<String> = folderKeywords
     override fun cityKeywords(): Set<String> = cityKeywords
@@ -286,22 +298,23 @@ internal class LegacyPhotoIndexBackend : PhotoIndexBackend {
  */
 internal class OverlayPhotoIndexBackend : PhotoIndexBackend {
     private val mutex = Mutex()
+    // recordsMap is writer-only under mutex. Readers use immutable snapshots exclusively.
     private val recordsMap = LinkedHashMap<Long, PhotoRecord>()
-    private var snapshot = OverlayPhotoList.empty()
+    @Volatile private var snapshot = OverlayPhotoList.empty()
     private val recordsFlow = MutableStateFlow<List<PhotoRecord>>(snapshot)
     private val changeFlow = MutableStateFlow(0L)
 
-    private var version = 0L
-    private var folderKeywords: Set<String> = emptySet()
-    private var cityKeywords: Set<String> = emptySet()
-    private var mlKeywords: Set<String> = emptySet()
+    @Volatile private var version = 0L
+    @Volatile private var folderKeywords: Set<String> = emptySet()
+    @Volatile private var cityKeywords: Set<String> = emptySet()
+    @Volatile private var mlKeywords: Set<String> = emptySet()
 
     override fun records(): StateFlow<List<PhotoRecord>> = recordsFlow.asStateFlow()
     override fun changes(): StateFlow<Long> = changeFlow.asStateFlow()
     override fun snapshot(): List<PhotoRecord> = snapshot
-    override fun getById(id: Long): PhotoRecord? = recordsMap[id]
-    override fun getByIdsOrdered(ids: List<Long>): List<PhotoRecord> = ids.mapNotNull(recordsMap::get)
-    override fun size(): Int = recordsMap.size
+    override fun getById(id: Long): PhotoRecord? = snapshot.getById(id)
+    override fun getByIdsOrdered(ids: List<Long>): List<PhotoRecord> = snapshot.getByIdsOrdered(ids)
+    override fun size(): Int = snapshot.size
     override fun version(): Long = version
     override fun folderKeywords(): Set<String> = folderKeywords
     override fun cityKeywords(): Set<String> = cityKeywords
@@ -311,9 +324,9 @@ internal class OverlayPhotoIndexBackend : PhotoIndexBackend {
         mutex.withLock {
             recordsMap.clear()
             records.forEach { recordsMap[it.id] = it }
-            publishStructural(records.sortedByDescending { it.dateAdded })
-            rebuildAuxiliarySets(snapshot)
-            bumpVersion()
+            val sorted = records.sortedByDescending { it.dateAdded }
+            rebuildAuxiliarySets(sorted)
+            publishStructural(sorted)
         }
     }
 
@@ -335,14 +348,13 @@ internal class OverlayPhotoIndexBackend : PhotoIndexBackend {
                 }
             }
             if (results.isNotEmpty()) {
-                publishPointUpdates(results)
-                bumpVersion()
                 val newMlKeywords = results.asSequence()
                     .flatMap { it.mlTags.asSequence().map { tag -> tag.label.lowercase() } }
                     .toSet()
                 if (!mlKeywords.containsAll(newMlKeywords)) {
                     mlKeywords = mlKeywords + newMlKeywords
                 }
+                publishPointUpdates(results)
             }
         }
         return results
@@ -355,7 +367,6 @@ internal class OverlayPhotoIndexBackend : PhotoIndexBackend {
             val updated = record.copy(isFavorite = isFavorite)
             recordsMap[id] = updated
             publishPointUpdates(listOf(updated))
-            bumpVersion()
         }
     }
 
@@ -367,7 +378,6 @@ internal class OverlayPhotoIndexBackend : PhotoIndexBackend {
             val updated = record.copy(isFavorite = nextFavorite)
             recordsMap[id] = updated
             publishPointUpdates(listOf(updated))
-            bumpVersion()
         }
         return nextFavorite
     }
@@ -376,14 +386,14 @@ internal class OverlayPhotoIndexBackend : PhotoIndexBackend {
         mutex.withLock {
             val previous = recordsMap[record.id]
             recordsMap[record.id] = record
-            when {
-                previous == record -> Unit
-                previous != null && previous.dateAdded == record.dateAdded -> publishPointUpdates(listOf(record))
-                else -> publishStructural(recordsMap.values.sortedByDescending { it.dateAdded })
+            val nextSnapshot = when {
+                previous == record -> snapshot
+                previous != null && previous.dateAdded == record.dateAdded -> snapshot.replaceAll(listOf(record))
+                else -> OverlayPhotoList.from(recordsMap.values.sortedByDescending { it.dateAdded })
             }
             // Keep keyword semantics exactly aligned with the rollback implementation.
-            rebuildAuxiliarySets(snapshot)
-            bumpVersion()
+            rebuildAuxiliarySets(nextSnapshot)
+            publishSnapshot(nextSnapshot)
         }
     }
 
@@ -395,21 +405,31 @@ internal class OverlayPhotoIndexBackend : PhotoIndexBackend {
                 if (recordsMap.remove(id) != null) anyRemoved = true
             }
             if (anyRemoved) {
-                publishStructural(recordsMap.values.sortedByDescending { it.dateAdded })
-                rebuildAuxiliarySets(snapshot)
-                bumpVersion()
+                val nextSnapshot = OverlayPhotoList.from(recordsMap.values.sortedByDescending { it.dateAdded })
+                rebuildAuxiliarySets(nextSnapshot)
+                publishSnapshot(nextSnapshot)
             }
         }
     }
 
     private fun publishStructural(records: List<PhotoRecord>) {
-        snapshot = OverlayPhotoList.from(records)
-        recordsFlow.value = snapshot
+        publishSnapshot(OverlayPhotoList.from(records))
     }
 
     private fun publishPointUpdates(records: List<PhotoRecord>) {
-        snapshot = snapshot.replaceAll(records)
-        recordsFlow.value = snapshot
+        publishSnapshot(snapshot.replaceAll(records))
+    }
+
+    /**
+     * Invalidate the old generation before publishing the new immutable view. changeFlow is emitted
+     * only after publication, so production searches can use its value as a completed-generation token.
+     */
+    private fun publishSnapshot(nextSnapshot: OverlayPhotoList) {
+        val nextVersion = version + 1L
+        version = nextVersion
+        snapshot = nextSnapshot
+        recordsFlow.value = nextSnapshot
+        changeFlow.value = nextVersion
     }
 
     private fun rebuildAuxiliarySets(records: List<PhotoRecord>) {
@@ -417,11 +437,6 @@ internal class OverlayPhotoIndexBackend : PhotoIndexBackend {
         folderKeywords = sets.folders
         cityKeywords = sets.cities
         mlKeywords = sets.tags
-    }
-
-    private fun bumpVersion() {
-        version += 1
-        changeFlow.value = version
     }
 }
 
@@ -439,6 +454,15 @@ internal class OverlayPhotoList private constructor(
         get() = base.size
 
     override fun get(index: Int): PhotoRecord = overrides[index] ?: base[index]
+
+    fun getById(id: Long): PhotoRecord? {
+        val index = indexById[id] ?: return null
+        return get(index)
+    }
+
+    fun getByIdsOrdered(ids: List<Long>): List<PhotoRecord> {
+        return ids.mapNotNull(::getById)
+    }
 
     fun replaceAll(records: List<PhotoRecord>): OverlayPhotoList {
         if (records.isEmpty() || base.isEmpty()) return this
