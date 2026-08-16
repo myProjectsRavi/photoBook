@@ -162,7 +162,9 @@ class MainViewModel @Inject constructor(
             expectedIndexVersion = input.indexVersion,
         )
         val filteredIds = if (input.favoritesOnly) {
-            searchResult.orderedIds.filter { id -> photoIndex.getById(id)?.isFavorite == true }
+            searchResult.orderedIds.filter { id ->
+                photoIndex.getByIdFromSnapshot(records, id)?.isFavorite == true
+            }
         } else {
             searchResult.orderedIds
         }
@@ -171,7 +173,7 @@ class MainViewModel @Inject constructor(
         latestVisibleResultIds = filteredIds
 
         val timelineMarks = withContext(Dispatchers.Default) {
-            buildTimelineMarks(filteredIds)
+            buildTimelineMarks(filteredIds, records)
         }
         val visibleIds = filteredIds.toSet()
 
@@ -1374,6 +1376,7 @@ class MainViewModel @Inject constructor(
 
     private fun buildTimelineMarks(
         orderedIds: List<Long>,
+        records: List<PhotoRecord>,
     ): List<TimelineMark> {
         if (orderedIds.isEmpty()) return emptyList()
         val marks = ArrayList<TimelineMark>()
@@ -1381,7 +1384,7 @@ class MainViewModel @Inject constructor(
         var lastMonth = Int.MIN_VALUE
 
         orderedIds.forEachIndexed { index, id ->
-            val record = photoIndex.getById(id) ?: return@forEachIndexed
+            val record = photoIndex.getByIdFromSnapshot(records, id) ?: return@forEachIndexed
             if (record.year != lastYear || record.month != lastMonth) {
                 marks += TimelineMark(
                     index = index,
