@@ -7,6 +7,7 @@ plugins {
     id("org.jetbrains.kotlin.kapt")
     id("com.google.dagger.hilt.android")
     id("androidx.baselineprofile")
+    id("androidx.room")
 }
 
 val injectedSigningStoreFile = gradle.startParameter.projectProperties["android.injected.signing.store.file"]
@@ -121,6 +122,12 @@ android {
                 "proguard-rules.pro"
             )
         }
+        create("benchmark") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+            isDebuggable = false
+        }
     }
 
     compileOptions {
@@ -181,12 +188,12 @@ android {
     }
 }
 
+room {
+    schemaDirectory("$projectDir/schemas")
+}
+
 kapt {
     correctErrorTypes = true
-    arguments {
-        arg("room.schemaLocation", file("$projectDir/schemas").path)
-        arg("room.incremental", "true")
-    }
 }
 
 dependencies {
