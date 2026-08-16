@@ -3,11 +3,15 @@
 
 from __future__ import annotations
 
+import binascii
 import json
 import random
+import struct
 import sys
 import tempfile
 import unittest
+import zipfile
+import zlib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -39,6 +43,36 @@ class FixtureGeneratorTest(unittest.TestCase):
         self.assertEqual("large_photo", fixtures.scenario_for(98))
         self.assertEqual("corrupt_media", fixtures.scenario_for(99))
         self.assertEqual("zero_byte_media", fixtures.scenario_for(100))
+
+    def test_generated_png_has_valid_chunks_crc_and_payload(self) -> None:
+        payload = fixtures.make_png(42)
+        self.assertEqual(b"\x89PNG\r\n\x1a\n", payload[:8])
+        offset = 8
+        idat_parts: list[bytes] = []
+        dimensions: tuple[int, int] | None = None
+        saw_iend = False
+
+        while offset < len(payload):
+            length = struct.unpack(">I", payload[offset:offset + 4])[0]
+            chunk_type = payload[offset + 4:offset + 8]
+            chunk_payload = payload[offset + 8:offset + 8 + length]
+            expected_crc = struct.unpack(">I", payload[offset + 8 + length:offset + 12 + length])[0]
+            actual_crc = binascii.crc32(chunk_type + chunk_payload) & 0xFFFFFFFF
+            self.assertEqual(expected_crc, actual_crc)
+
+            if chunk_type == b"IHDR":
+                dimensions = struct.unpack(">II", chunk_payload[:8])
+            elif chunk_type == b"IDAT":
+                idat_parts.append(chunk_payload)
+            elif chunk_type == b"IEND":
+                saw_iend = True
+
+            offset += 12 + length
+
+        self.assertEqual((32, 32), dimensions)
+        self.assertTrue(saw_iend)
+        raw = zlib.decompress(b"".join(idat_parts))
+        self.assertEqual(32 * (1 + 32 * 3), len(raw))
 
     def test_livestock_ground_truth_names_high_risk_subjects(self) -> None:
         required = {
@@ -132,6 +166,26 @@ class ArtifactSizeClassifierTest(unittest.TestCase):
         self.assertEqual("dex", sizes.category_for("base/dex/classes.dex"))
         self.assertEqual("lib", sizes.category_for("base/lib/arm64-v8a/libfoo.so"))
         self.assertEqual("resources", sizes.category_for("resources.arsc"))
+
+    def test_inspect_artifact_reports_model_and_code_buckets(self) -> None:
+        with tempfile.TemporaryDirectory() as output_dir:
+            artifact = Path(output_dir) / "synthetic-release.apk"
+            with zipfile.ZipFile(artifact, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("classes.dex", b"DEX" * 100)
+                archive.writestr("lib/arm64-v8a/libfoo.so", b"LIB" * 100)
+                archive.writestr(
+                    "assets/photobook/food_live_label_model.tflite",
+                    b"MODEL" * 100,
+                )
+                archive.writestr("resources.arsc", b"RES" * 100)
+
+            report = sizes.inspect_artifact(artifact)
+            categories = report["compressed_categories_bytes"]
+            self.assertGreater(categories["dex"], 0)
+            self.assertGreater(categories["lib"], 0)
+            self.assertGreater(categories["models"], 0)
+            self.assertGreater(categories["resources"], 0)
+            self.assertEqual(artifact.stat().st_size, report["artifact_bytes"])
 
 
 if __name__ == "__main__":
