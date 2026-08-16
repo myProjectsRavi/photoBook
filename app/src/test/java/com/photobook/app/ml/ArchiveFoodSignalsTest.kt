@@ -41,6 +41,19 @@ class ArchiveFoodSignalsTest {
     }
 
     @Test
+    fun foodWithAnimal_isRejected() {
+        assertThat(
+            ArchiveFoodSignals.isEligible(
+                listOf(
+                    MLTag("food", 0.91f),
+                    MLTag("prepared_food", 0.91f),
+                    MLTag("animal", 0.88f),
+                ),
+            ),
+        ).isFalse()
+    }
+
+    @Test
     fun foodWithPerson_isRejected() {
         assertThat(
             ArchiveFoodSignals.isEligible(
@@ -71,5 +84,8 @@ class ArchiveFoodSignalsTest {
         assertThat(LabelMapping.map("Person")).isEqualTo("people")
         assertThat(LabelMapping.map("Animal")).isEqualTo("animal")
         assertThat(LabelMapping.map("Hen")).isEqualTo("bird")
+        assertThat(LabelMapping.map("Cattle")).isEqualTo("animal")
+        assertThat(LabelMapping.map("Bull")).isEqualTo("animal")
+        assertThat(LabelMapping.map("Horse")).isEqualTo("animal")
     }
 }
