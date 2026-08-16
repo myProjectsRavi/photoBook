@@ -92,7 +92,7 @@ class ArchiveFoodSignalsTest {
                         MLTag(subject, 0.90f),
                     ),
                 ),
-            ).named(subject).isFalse()
+            ).isFalse()
         }
     }
 
@@ -128,7 +128,7 @@ class ArchiveFoodSignalsTest {
         )
 
         aliases.forEach { (raw, expected) ->
-            assertThat(LabelMapping.map(raw)).named(raw).isEqualTo(expected)
+            assertThat(LabelMapping.map(raw)).isEqualTo(expected)
         }
     }
 
@@ -143,8 +143,8 @@ class ArchiveFoodSignalsTest {
     @Test
     fun genericObjects_doNotCountAsPreparedFood() {
         listOf("product", "plate", "bowl", "steaming").forEach { label ->
-            assertThat(LabelMapping.isPreparedFoodLabel(label)).named(label).isFalse()
-            assertThat(LabelMapping.map(label)).named(label).isNull()
+            assertThat(LabelMapping.isPreparedFoodLabel(label)).isFalse()
+            assertThat(LabelMapping.map(label)).isNull()
         }
     }
 }
