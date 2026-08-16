@@ -26,56 +26,8 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - name: Verify Phase-0 host tooling
-        run: python3 -m unittest tools/benchmark/test_phase0_tools.py
-
-      - name: Verify app and benchmark sources
-        run: |
-          chmod +x ./gradlew
-          ./gradlew \
-            :app:testDebugUnitTest \
-            :app:lintDebug \
-            :app:assembleDebug \
-            :app:assembleDebugAndroidTest \
-            :app:assembleBenchmark \
-            :app:assembleRelease \
-            :app:bundleRelease \
-            :app:verifyApkSize \
-            :app:verifyReleaseBundleSize \
-            :baselineprofile:assembleBenchmark
-
-      - name: Verify release APK requests no Internet permission
-        shell: bash
-        run: |
-          set -euo pipefail
-          AAPT="$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -type f -name aapt -print | sort -V | tail -n 1)"
-          test -n "$AAPT"
-          mapfile -t release_apks < <(find app/build/outputs/apk/release -type f -name '*.apk' -print | sort)
-          test "${#release_apks[@]}" -gt 0
-          for apk in "${release_apks[@]}"; do
-            if "$AAPT" dump permissions "$apk" | grep -Fq 'android.permission.INTERNET'; then
-              echo "FAIL: $apk requests android.permission.INTERNET" >&2
-              exit 1
-            fi
-            echo "PASS: $apk has no android.permission.INTERNET"
-          done
-
-      - name: Generate deterministic Phase-0 fixture smoke corpus
-        run: |
-          python3 tools/benchmark/generate_media_fixtures.py \
-            --count 303 \
-            --output build/phase0-fixtures \
-            --write-media
-
-      - name: Report APK and AAB size composition
-        run: |
-          python3 tools/benchmark/report_artifact_sizes.py \
-            --root app/build/outputs \
-            --output build/reports/phase0/artifact-sizes.json
-
-      - name: Verify Room schema export exists
-        run: |
-          test -f app/schemas/com.photobook.app.data.db.PhotoBookDatabase/12.json
+      - name: Run Phase-0 verification
+        run: bash tools/benchmark/run_phase0_local.sh
 
       - name: Upload Phase-0 verification evidence
         if: always()
