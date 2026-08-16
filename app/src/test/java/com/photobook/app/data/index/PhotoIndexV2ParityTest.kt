@@ -25,8 +25,9 @@ class PhotoIndexV2ParityTest {
             val ids = listOf(1L, (count / 2).toLong(), count.toLong())
             ids.forEachIndexed { step, id ->
                 val previousV2Snapshot = v2.snapshot()
-                legacy.setFavorite(id, true)
-                v2.setFavorite(id, true)
+                val targetFavorite = !checkNotNull(v2.getById(id)).isFavorite
+                legacy.setFavorite(id, targetFavorite)
+                v2.setFavorite(id, targetFavorite)
                 assertNotSame("v2 point update should publish a new immutable view", previousV2Snapshot, v2.snapshot())
                 assertParity(legacy, v2, "favorite-$count-$step")
             }
