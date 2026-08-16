@@ -1,0 +1,95 @@
+name: Phase 1 Device Verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  privacy-instrumentation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Provision Android emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            "platform-tools" \
+            "emulator" \
+            "system-images;android-35;google_apis;x86_64"
+
+          echo "no" | avdmanager create avd \
+            --force \
+            --name photobook-phase1-api35 \
+            --package "system-images;android-35;google_apis;x86_64" \
+            --device "pixel_2"
+
+          if [[ -e /dev/kvm ]]; then
+            sudo chmod 666 /dev/kvm
+          fi
+
+          nohup emulator \
+            -avd photobook-phase1-api35 \
+            -no-window \
+            -no-audio \
+            -no-boot-anim \
+            -no-snapshot \
+            -gpu swiftshader_indirect \
+            > "$RUNNER_TEMP/phase1-emulator.log" 2>&1 &
+
+          adb wait-for-device
+          for attempt in $(seq 1 120); do
+            if [[ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
+              break
+            fi
+            if [[ "$attempt" == "120" ]]; then
+              cat "$RUNNER_TEMP/phase1-emulator.log"
+              exit 1
+            fi
+            sleep 2
+          done
+
+          adb shell settings put global window_animation_scale 0
+          adb shell settings put global transition_animation_scale 0
+          adb shell settings put global animator_duration_scale 0
+          adb shell input keyevent 82 || true
+          adb shell getprop ro.build.version.release
+          adb shell getprop ro.build.version.sdk
+
+      - name: Run Android instrumentation
+        run: ./gradlew :app:connectedDebugAndroidTest --stacktrace
+
+      - name: Capture device diagnostics
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p build/reports/phase1-device
+          adb logcat -d > build/reports/phase1-device/logcat.txt 2>/dev/null || true
+          adb shell dumpsys meminfo com.photobook.app.debug > build/reports/phase1-device/meminfo.txt 2>/dev/null || true
+          cp "$RUNNER_TEMP/phase1-emulator.log" build/reports/phase1-device/emulator.log 2>/dev/null || true
+
+      - name: Upload Phase 1 device evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: phase1-device-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+            build/reports/phase1-device/
