@@ -133,6 +133,14 @@ class ArchiveFoodSignalsTest {
     }
 
     @Test
+    fun aliasFallback_usesPhraseBoundariesInsteadOfSubstringCollisions() {
+        assertThat(LabelMapping.map("pizza on serving tray")).isEqualTo("food")
+        assertThat(LabelMapping.map("cow in pasture")).isEqualTo("animal")
+        assertThat(LabelMapping.map("kitchen interior")).isNull()
+        assertThat(LabelMapping.map("cardboard box")).isNull()
+    }
+
+    @Test
     fun genericObjects_doNotCountAsPreparedFood() {
         listOf("product", "plate", "bowl", "steaming").forEach { label ->
             assertThat(LabelMapping.isPreparedFoodLabel(label)).named(label).isFalse()
