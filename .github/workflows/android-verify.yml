@@ -38,20 +38,21 @@ jobs:
             :app:assembleDebug \
             :app:assembleDebugAndroidTest \
             :app:assembleBenchmark \
+            :app:assembleRelease \
             :app:bundleRelease \
             :app:verifyApkSize \
             :app:verifyReleaseBundleSize \
             :baselineprofile:assembleBenchmark
 
-      - name: Verify release-like APK requests no Internet permission
+      - name: Verify release APK requests no Internet permission
         shell: bash
         run: |
           set -euo pipefail
           AAPT="$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -type f -name aapt -print | sort -V | tail -n 1)"
           test -n "$AAPT"
-          mapfile -t benchmark_apks < <(find app/build/outputs/apk/benchmark -type f -name '*.apk' -print | sort)
-          test "${#benchmark_apks[@]}" -gt 0
-          for apk in "${benchmark_apks[@]}"; do
+          mapfile -t release_apks < <(find app/build/outputs/apk/release -type f -name '*.apk' -print | sort)
+          test "${#release_apks[@]}" -gt 0
+          for apk in "${release_apks[@]}"; do
             if "$AAPT" dump permissions "$apk" | grep -Fq 'android.permission.INTERNET'; then
               echo "FAIL: $apk requests android.permission.INTERNET" >&2
               exit 1
