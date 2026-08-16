@@ -1,0 +1,40 @@
+name: Phase 2 Remove Obsolete Records Flow
+
+on:
+  push:
+    branches:
+      - "agent/phase2-index-search-v2"
+    paths:
+      - "tools/phase2/remove_records_flow_v2.py"
+      - ".github/workflows/phase2-remove-records-flow.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v6
+        with:
+          ref: agent/phase2-index-search-v2
+          fetch-depth: 0
+      - name: Remove obsolete records flow
+        run: python3 tools/phase2/remove_records_flow_v2.py
+      - name: Validate patch
+        run: |
+          git diff --check
+          git diff -- app/src/main/java/com/photobook/app/data/index/PhotoIndex.kt
+      - name: Commit cleanup
+        run: |
+          if git diff --quiet -- app/src/main/java/com/photobook/app/data/index/PhotoIndex.kt; then
+            echo "No PhotoIndex changes produced"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/photobook/app/data/index/PhotoIndex.kt
+          git commit -m "phase2: remove obsolete records flow"
+          git push origin HEAD:agent/phase2-index-search-v2
