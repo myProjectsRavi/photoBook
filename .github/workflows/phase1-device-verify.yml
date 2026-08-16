@@ -9,9 +9,18 @@ on:
 permissions:
   contents: read
 
+# Only the newest verification head matters. Prevent future test-only commits from
+# leaving multiple large emulator-image downloads running in parallel.
+concurrency:
+  group: phase1-device-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   privacy-instrumentation:
-    runs-on: ubuntu-latest
+    # PhotoBook ships ARM ABIs. macos-15 is an ARM64 GitHub-hosted runner and
+    # already includes the Android Emulator, so the test APK runs natively and
+    # this job only needs to install the API-35 system image.
+    runs-on: macos-15
     timeout-minutes: 40
 
     steps:
@@ -29,60 +38,89 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Library/Android/sdk}}"
           SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n 1)"
           AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager 2>/dev/null | sort | tail -n 1)"
           ADB="$SDK_ROOT/platform-tools/adb"
           EMULATOR="$SDK_ROOT/emulator/emulator"
+          SYSTEM_IMAGE="system-images;android-35;google_apis;arm64-v8a"
+          AVD_NAME="photobook-phase1-api35"
 
           test -x "$SDKMANAGER"
           test -x "$AVDMANAGER"
           test -x "$ADB"
+          test -x "$EMULATOR"
+
+          echo "Android SDK: $SDK_ROOT"
+          "$EMULATOR" -version | head -n 3
 
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" \
-            "platform-tools" \
-            "emulator" \
-            "system-images;android-35;google_apis;x86_64"
-          test -x "$EMULATOR"
+          "$SDKMANAGER" --channel=0 "$SYSTEM_IMAGE"
 
           echo "no" | "$AVDMANAGER" create avd \
             --force \
-            --name photobook-phase1-api35 \
-            --package "system-images;android-35;google_apis;x86_64" \
+            --name "$AVD_NAME" \
+            --package "$SYSTEM_IMAGE" \
             --device "pixel_2"
 
-          if [[ -e /dev/kvm ]]; then
-            sudo chmod 666 /dev/kvm
-          fi
-
           nohup "$EMULATOR" \
-            -avd photobook-phase1-api35 \
+            -avd "$AVD_NAME" \
             -no-window \
             -no-audio \
             -no-boot-anim \
             -no-snapshot \
+            -no-metrics \
             -gpu swiftshader_indirect \
+            -memory 2048 \
+            -cores 2 \
             > "$RUNNER_TEMP/phase1-emulator.log" 2>&1 &
+          EMULATOR_PID=$!
 
-          "$ADB" wait-for-device
+          device_ready=false
           for attempt in $(seq 1 120); do
-            if [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then
+              device_ready=true
               break
             fi
-            if [[ "$attempt" == "120" ]]; then
-              cat "$RUNNER_TEMP/phase1-emulator.log"
+            if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then
+              echo "Android emulator exited before ADB became ready"
+              cat "$RUNNER_TEMP/phase1-emulator.log" || true
               exit 1
             fi
             sleep 2
           done
+          if [[ "$device_ready" != "true" ]]; then
+            echo "Timed out waiting for ADB device readiness"
+            cat "$RUNNER_TEMP/phase1-emulator.log" || true
+            exit 1
+          fi
+
+          boot_complete=false
+          for attempt in $(seq 1 120); do
+            if [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
+              boot_complete=true
+              break
+            fi
+            if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then
+              echo "Android emulator exited before boot completed"
+              cat "$RUNNER_TEMP/phase1-emulator.log" || true
+              exit 1
+            fi
+            sleep 2
+          done
+          if [[ "$boot_complete" != "true" ]]; then
+            echo "Timed out waiting for Android boot completion"
+            cat "$RUNNER_TEMP/phase1-emulator.log" || true
+            exit 1
+          fi
 
           "$ADB" shell settings put global window_animation_scale 0
           "$ADB" shell settings put global transition_animation_scale 0
           "$ADB" shell settings put global animator_duration_scale 0
           "$ADB" shell input keyevent 82 || true
-          "$ADB" shell getprop ro.build.version.release
-          "$ADB" shell getprop ro.build.version.sdk
+          echo "Android release: $("$ADB" shell getprop ro.build.version.release | tr -d '\r')"
+          echo "Android SDK: $("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"
+          echo "Android ABI: $("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r')"
 
       - name: Run Android instrumentation
         run: ./gradlew :app:connectedDebugAndroidTest --stacktrace
@@ -91,11 +129,15 @@ jobs:
         if: always()
         shell: bash
         run: |
-          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Library/Android/sdk}}"
           ADB="$SDK_ROOT/platform-tools/adb"
           mkdir -p build/reports/phase1-device
-          "$ADB" logcat -d > build/reports/phase1-device/logcat.txt 2>/dev/null || true
-          "$ADB" shell dumpsys meminfo com.photobook.app.debug > build/reports/phase1-device/meminfo.txt 2>/dev/null || true
+          if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then
+            "$ADB" logcat -d > build/reports/phase1-device/logcat.txt 2>/dev/null || true
+            "$ADB" shell dumpsys meminfo com.photobook.app.debug > build/reports/phase1-device/meminfo.txt 2>/dev/null || true
+          else
+            echo "No ready ADB device was available during diagnostics." > build/reports/phase1-device/adb-status.txt
+          fi
           cp "$RUNNER_TEMP/phase1-emulator.log" build/reports/phase1-device/emulator.log 2>/dev/null || true
 
       - name: Upload Phase 1 device evidence
