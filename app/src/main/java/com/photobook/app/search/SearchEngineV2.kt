@@ -28,21 +28,29 @@ class SearchEngineV2 @Inject constructor(
         context: SearchContext = SearchContext(),
         expectedIndexVersion: Long? = null,
     ): SearchResult {
-        if (!versionMatches(expectedIndexVersion)) {
+        val sourceVersion = index.version()
+        if (!generationMatches(sourceVersion, expectedIndexVersion)) {
             return SearchResult(emptyList(), emptyList(), complete = false)
         }
-        val normalized = queryParser.normalize(query)
 
+        // Capture exactly one immutable generation. A writer advances version before changing any
+        // exposed keyword/snapshot state and advances changeFlow only after publication is complete.
+        val sourceSnapshot = index.snapshot()
+        if (!generationMatches(sourceVersion, expectedIndexVersion)) {
+            return SearchResult(emptyList(), emptyList(), complete = false)
+        }
+
+        val normalized = queryParser.normalize(query)
         if (normalized.isBlank()) {
             val orderedIds = if (candidateIds == null) {
-                index.snapshot().map { record -> record.id }
+                sourceSnapshot.map { record -> record.id }
             } else {
-                if (candidateIds.any { id -> index.getById(id) == null }) {
+                if (candidateIds.any { id -> index.getByIdFromSnapshot(sourceSnapshot, id) == null }) {
                     return SearchResult(emptyList(), emptyList(), complete = false)
                 }
                 candidateIds.toList()
             }
-            return if (versionMatches(expectedIndexVersion)) {
+            return if (generationMatches(sourceVersion, expectedIndexVersion)) {
                 SearchResult(orderedIds = orderedIds, tokens = emptyList())
             } else {
                 SearchResult(emptyList(), emptyList(), complete = false)
@@ -53,10 +61,10 @@ class SearchEngineV2 @Inject constructor(
         val filters = tokens.mapNotNull { token -> filterFactory.create(token, context) }
         val isOldest = tokens.any { it is TemporalToken && it.keyword == "oldest" }
         val isRecent = tokens.any { it is TemporalToken && it.keyword == "recent" }
-        val hitCapacity = (candidateIds?.size ?: index.size()).coerceAtMost(MAX_INITIAL_HIT_CAPACITY)
+        val hitCapacity = (candidateIds?.size ?: sourceSnapshot.size).coerceAtMost(MAX_INITIAL_HIT_CAPACITY)
         val hits = ArrayList<SearchHit>(hitCapacity)
 
-        val complete = forEachSource(candidateIds) { ordinal, photo ->
+        val complete = forEachSource(sourceSnapshot, candidateIds) { ordinal, photo ->
             if (filters.isEmpty() || filters.all { filter -> filter(photo) }) {
                 hits += SearchHit(
                     id = photo.id,
@@ -70,7 +78,7 @@ class SearchEngineV2 @Inject constructor(
                 )
             }
         }
-        if (!complete || !versionMatches(expectedIndexVersion)) {
+        if (!complete || !generationMatches(sourceVersion, expectedIndexVersion)) {
             return SearchResult(emptyList(), tokens, complete = false)
         }
 
@@ -94,7 +102,7 @@ class SearchEngineV2 @Inject constructor(
             }
         }
 
-        if (!versionMatches(expectedIndexVersion)) {
+        if (!generationMatches(sourceVersion, expectedIndexVersion)) {
             return SearchResult(emptyList(), tokens, complete = false)
         }
         val orderedIds = if (isRecent && hits.size > RECENT_RESULT_LIMIT) {
@@ -105,27 +113,27 @@ class SearchEngineV2 @Inject constructor(
         return SearchResult(orderedIds = orderedIds, tokens = tokens)
     }
 
-    /**
-     * Iterates the active index directly. Candidate IDs therefore cost only the compact ID list;
-     * there is no intermediate candidate List<PhotoRecord> allocation.
-     */
+    /** Candidate IDs are resolved from the captured snapshot, never from mutable writer state. */
     private inline fun forEachSource(
+        sourceSnapshot: List<PhotoRecord>,
         candidateIds: List<Long>?,
         action: (ordinal: Int, photo: PhotoRecord) -> Unit,
     ): Boolean {
         if (candidateIds == null) {
-            index.snapshot().forEachIndexed(action)
+            sourceSnapshot.forEachIndexed(action)
             return true
         }
         candidateIds.forEachIndexed { ordinal, id ->
-            val photo = index.getById(id) ?: return false
+            val photo = index.getByIdFromSnapshot(sourceSnapshot, id) ?: return false
             action(ordinal, photo)
         }
         return true
     }
 
-    private fun versionMatches(expectedIndexVersion: Long?): Boolean {
-        return expectedIndexVersion == null || index.version() == expectedIndexVersion
+    private fun generationMatches(sourceVersion: Long, expectedIndexVersion: Long?): Boolean {
+        return index.version() == sourceVersion &&
+            index.changes().value == sourceVersion &&
+            (expectedIndexVersion == null || expectedIndexVersion == sourceVersion)
     }
 
     private data class SearchHit(
