@@ -265,17 +265,21 @@ dependencies {
 
 tasks.register("verifyApkSize") {
     group = "verification"
-    description = "Fails when any generated APK exceeds 30 MB."
+    description = "Fails when any generated release APK exceeds 30 MB."
 
     doLast {
         val maxBytes = 30L * 1024L * 1024L
-        val apkRoot = layout.buildDirectory.dir("outputs/apk").get().asFile
-        if (!apkRoot.exists()) return@doLast
+        val apkRoot = layout.buildDirectory.dir("outputs/apk/release").get().asFile
+        check(apkRoot.exists()) {
+            "Release APK size gate could not find ${apkRoot.path}; run assembleRelease first."
+        }
 
         val apks = apkRoot.walkTopDown()
             .filter { it.isFile && it.extension == "apk" }
             .toList()
-        if (apks.isEmpty()) return@doLast
+        check(apks.isNotEmpty()) {
+            "Release APK size gate found no release APKs under ${apkRoot.path}."
+        }
 
         apks.forEach { apk ->
             val sizeBytes = apk.length()
@@ -293,12 +297,16 @@ tasks.register("verifyReleaseBundleSize") {
     doLast {
         val maxBytes = 20L * 1024L * 1024L
         val bundleRoot = layout.buildDirectory.dir("outputs/bundle/release").get().asFile
-        if (!bundleRoot.exists()) return@doLast
+        check(bundleRoot.exists()) {
+            "Release AAB size gate could not find ${bundleRoot.path}; run bundleRelease first."
+        }
 
         val bundles = bundleRoot.walkTopDown()
             .filter { it.isFile && it.extension == "aab" }
             .toList()
-        if (bundles.isEmpty()) return@doLast
+        check(bundles.isNotEmpty()) {
+            "Release AAB size gate found no release bundles under ${bundleRoot.path}."
+        }
 
         bundles.forEach { bundle ->
             val sizeBytes = bundle.length()
@@ -317,7 +325,7 @@ tasks.register("printReleaseMetadata") {
     }
 }
 
-tasks.matching { it.name.startsWith("assemble") }.configureEach {
+tasks.matching { it.name == "assembleRelease" }.configureEach {
     finalizedBy("verifyApkSize")
 }
 
