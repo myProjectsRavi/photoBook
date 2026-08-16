@@ -1,23 +1,71 @@
+import java.io.File
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.kapt")
     id("com.google.dagger.hilt.android")
-    id("androidx.room")
     id("androidx.baselineprofile")
+    id("androidx.room")
 }
 
-import java.util.Properties
-
-val releaseKeystoreProperties = Properties()
-val releaseKeystorePropertiesFile = rootProject.file("keystore.properties")
-if (releaseKeystorePropertiesFile.exists()) {
-    releaseKeystorePropertiesFile.inputStream().use(releaseKeystoreProperties::load)
+val injectedSigningStoreFile = gradle.startParameter.projectProperties["android.injected.signing.store.file"]
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+if (injectedSigningStoreFile != null && !File(injectedSigningStoreFile).isAbsolute) {
+    throw GradleException(
+        "Relative signing path '$injectedSigningStoreFile' is not supported by AGP externalOverride. " +
+            "Use an absolute keystore path (for example, '/Users/you/keys/photobook_keystore.jks').",
+    )
 }
-val hasReleaseSigning = releaseKeystoreProperties.getProperty("storeFile")?.trim()?.isNotEmpty() == true
 
-val bundledLabelModel by configurations.creating
+val releaseKeystoreProperties = Properties().apply {
+    val keystorePropsFile = rootProject.file("keystore.properties")
+    if (keystorePropsFile.exists()) {
+        keystorePropsFile.inputStream().use(::load)
+    }
+}
+val releaseKeystorePath = releaseKeystoreProperties.getProperty("storeFile")
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+
 val bundledLabelModelDependency = "com.google.mlkit:image-labeling:17.0.9"
+
+// Resolve the pinned model artifact only to extract its bundled model asset. The
+// ML Kit runtime is intentionally not packaged; the standalone LiteRT runtime
+// executes the app-local model without deferred model delivery or cloud calls.
+val bundledLabelModel = configurations.create("bundledLabelModel") {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    isTransitive = false
+}
+val extractBundledLabelModel = tasks.register("extractBundledLabelModel") {
+    val outputDirectory = layout.buildDirectory.dir("generated/assets/bundledLabelModel")
+    inputs.property("modelArtifact", bundledLabelModelDependency)
+    outputs.file(
+        outputDirectory.map { directory ->
+            directory.file("photobook/food_live_label_model.tflite")
+        },
+    )
+    doLast {
+        project.delete(outputDirectory)
+        project.sync {
+            from(project.zipTree(bundledLabelModel.resolve().single())) {
+                include("assets/mlkit_label_default_model/mobile_ica_8bit_with_metadata_tflite")
+                eachFile { path = "photobook/food_live_label_model.tflite" }
+                includeEmptyDirs = false
+            }
+            into(outputDirectory)
+        }
+    }
+}
+tasks.matching { task ->
+    (task.name.startsWith("merge") && task.name.endsWith("Assets")) ||
+        task.name.contains("Lint", ignoreCase = true)
+}.configureEach {
+    dependsOn(extractBundledLabelModel)
+}
 
 android {
     namespace = "com.photobook.app"
@@ -34,44 +82,51 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+        // Strip locales we don't translate; cuts AndroidX/MLKit translations significantly.
+        resourceConfigurations += listOf("en")
     }
 
     signingConfigs {
-        create("release") {
-            if (releaseKeystorePropertiesFile.exists()) {
-                val storeFilePath = releaseKeystoreProperties.getProperty("storeFile")
-                if (!storeFilePath.isNullOrBlank()) {
-                    storeFile = rootProject.file(storeFilePath)
+        if (releaseKeystorePath != null) {
+            create("release") {
+                val candidate = File(releaseKeystorePath).let { file ->
+                    if (file.isAbsolute) file else rootProject.file(releaseKeystorePath)
                 }
+                if (!candidate.exists()) {
+                    throw GradleException("Release keystore not found at: ${candidate.absolutePath}")
+                }
+
+                storeFile = candidate
                 storePassword = releaseKeystoreProperties.getProperty("storePassword")
+                    ?: throw GradleException("storePassword missing in keystore.properties")
                 keyAlias = releaseKeystoreProperties.getProperty("keyAlias")
+                    ?: throw GradleException("keyAlias missing in keystore.properties")
                 keyPassword = releaseKeystoreProperties.getProperty("keyPassword")
+                    ?: throw GradleException("keyPassword missing in keystore.properties")
             }
         }
     }
 
     buildTypes {
-        debug {
-            applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
-        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro",
-            )
-            if (hasReleaseSigning) {
+            if (releaseKeystorePath != null) {
                 signingConfig = signingConfigs.getByName("release")
             }
+            ndk {
+                debugSymbolLevel = "SYMBOL_TABLE"
+            }
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
         create("benchmark") {
             initWith(getByName("release"))
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += listOf("release")
             isDebuggable = false
-            isProfileable = true
         }
     }
 
@@ -79,18 +134,19 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
     kotlinOptions {
         jvmTarget = "17"
     }
 
     buildFeatures {
         compose = true
-        buildConfig = true
     }
 
     sourceSets {
-        getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/model-assets"))
-        getByName("benchmark").manifest.srcFile("src/benchmark/AndroidManifest.xml")
+        getByName("main").assets.srcDir(
+            layout.buildDirectory.dir("generated/assets/bundledLabelModel"),
+        )
         getByName("androidTest").assets.srcDir("$projectDir/schemas")
     }
 
@@ -100,6 +156,8 @@ android {
 
     packaging {
         jniLibs {
+            // Ensure native libs are stored uncompressed and 16KB page-aligned
+            // Required by Google Play for devices with 16KB memory pages
             useLegacyPackaging = false
         }
         resources {
@@ -117,6 +175,8 @@ android {
             isEnable = true
             reset()
             include("arm64-v8a", "armeabi-v7a")
+            // No universal APK — keeps per-ABI APKs under the strict 30 MB size gate.
+            // Use Play Store AAB for automatic per-device delivery.
             isUniversalApk = false
         }
     }
@@ -175,7 +235,11 @@ dependencies {
     implementation("androidx.hilt:hilt-work:1.2.0")
     kapt("androidx.hilt:hilt-compiler:1.2.0")
 
+    // Keep the model app-local and use the standalone on-device LiteRT runtime;
+    // no cloud inference or deferred model delivery is allowed.
     add("bundledLabelModel", bundledLabelModelDependency)
+    // LiteRT 1.4.1 keeps the InterpreterApi surface used by LocalSemanticImageLabeler
+    // and ships 16 KB ELF-aligned native libraries for Play's Android 15 requirement.
     implementation("com.google.ai.edge.litert:litert:1.4.1")
     implementation("org.tensorflow:tensorflow-lite-metadata:0.1.0-rc2")
     implementation("com.google.zxing:core:3.5.3")
@@ -190,6 +254,8 @@ dependencies {
     androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
     androidTestImplementation("androidx.room:room-testing:2.6.1")
 
+    // Required by current Macrobenchmark tooling for profile/shader-cache control,
+    // but intentionally excluded from production release artifacts.
     add("benchmarkImplementation", "androidx.profileinstaller:profileinstaller:1.4.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
@@ -252,29 +318,17 @@ tasks.register("verifyReleaseBundleSize") {
 }
 
 tasks.register("printReleaseMetadata") {
-    group = "verification"
-    description = "Prints release version metadata for verification."
     doLast {
         println("versionCode=${android.defaultConfig.versionCode}")
         println("versionName=${android.defaultConfig.versionName}")
-        println("minSdk=${android.defaultConfig.minSdk}")
         println("targetSdk=${android.defaultConfig.targetSdk}")
     }
 }
 
-val extractBundledLabelModel by tasks.registering(Copy::class) {
-    from(bundledLabelModel.map { files -> files.map(::zipTree) }) {
-        include("**/labeler_assets/image_classifier.tflite")
-        eachFile {
-            path = "photobook/food_live_label_model.tflite"
-        }
-        includeEmptyDirs = false
-    }
-    into(layout.buildDirectory.dir("generated/model-assets"))
+tasks.matching { it.name == "assembleRelease" }.configureEach {
+    finalizedBy("verifyApkSize")
 }
 
-tasks.matching { task ->
-    task.name.startsWith("merge") && task.name.endsWith("Assets")
-}.configureEach {
-    dependsOn(extractBundledLabelModel)
+tasks.matching { it.name == "bundleRelease" }.configureEach {
+    finalizedBy("verifyReleaseBundleSize")
 }
