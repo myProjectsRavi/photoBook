@@ -85,6 +85,14 @@ class ArchiveClassifier @Inject constructor() {
         if (!photo.isMlProcessed || !photo.isArchiveFoodCandidate) return null
         if (ArchiveFoodSignals.containsLiveSubject(photo.mlTags)) return null
 
+        val preparedFoodConfidence = photo.mlTags
+            .asSequence()
+            .filter { tag -> tag.label.equals("prepared_food", ignoreCase = true) }
+            .map { tag -> tag.confidence }
+            .maxOrNull()
+            ?: return null
+        if (preparedFoodConfidence < ArchiveFoodSignals.MIN_PREPARED_FOOD_CONFIDENCE) return null
+
         val confidence = (
             FOOD_BASE_CONFIDENCE +
                 ArchiveFoodSignals.MIN_SEMANTIC_FOOD_CONFIDENCE * FOOD_CONFIDENCE_WEIGHT
@@ -93,7 +101,7 @@ class ArchiveClassifier @Inject constructor() {
         return ArchiveClassification(
             category = ArchiveCategory.Food,
             confidence = confidence,
-            reasons = listOf("Food photo"),
+            reasons = listOf("Prepared food evidence"),
         )
     }
 
