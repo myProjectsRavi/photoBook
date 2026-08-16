@@ -10,6 +10,7 @@ import androidx.exifinterface.media.ExifInterface
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.ml.CompactLocalIntelligence
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
@@ -128,6 +129,18 @@ class ExifMetadataServiceInstrumentedTest {
         assertTrue(safeShareDir.listFiles().orEmpty().none { it.isFile })
     }
 
+    @Test
+    fun strictFaceDetection_acceptsOddWidthBitmapWithoutDimensionMismatch() {
+        val bitmap = Bitmap.createBitmap(101, 101, Bitmap.Config.ARGB_8888)
+        bitmap.eraseColor(Color.DKGRAY)
+        try {
+            val faces = CompactLocalIntelligence.detectFacesStrict(bitmap)
+            assertTrue(faces.size <= 8)
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
     private fun createSensitiveJpeg(
         width: Int = 96,
         height: Int = 96,
@@ -147,6 +160,14 @@ class ExifMetadataServiceInstrumentedTest {
             setAttribute(ExifInterface.TAG_USER_COMMENT, "private-comment")
             setAttribute(ExifInterface.TAG_XMP, "<x:xmpmeta>private-xmp</x:xmpmeta>")
             setAttribute(ExifInterface.TAG_ORIENTATION, orientation.toString())
+            setAttribute(ExifInterface.TAG_SUBSEC_TIME_ORIGINAL, "123")
+            setAttribute(ExifInterface.TAG_GPS_MAP_DATUM, "WGS-84")
+            setAttribute(ExifInterface.TAG_GPS_SPEED_REF, "K")
+            setAttribute(ExifInterface.TAG_GPS_SPEED, "42/1")
+            setAttribute(ExifInterface.TAG_GPS_DEST_LATITUDE_REF, "N")
+            setAttribute(ExifInterface.TAG_GPS_DEST_LATITUDE, "12/1,34/1,5600/100")
+            setAttribute(ExifInterface.TAG_GPS_DEST_LONGITUDE_REF, "E")
+            setAttribute(ExifInterface.TAG_GPS_DEST_LONGITUDE, "77/1,35/1,1200/100")
             setLatLong(17.3850, 78.4867)
             saveAttributes()
         }
@@ -163,6 +184,14 @@ class ExifMetadataServiceInstrumentedTest {
         assertNull(exif.getAttribute(ExifInterface.TAG_MAKE))
         assertNull(exif.getAttribute(ExifInterface.TAG_USER_COMMENT))
         assertNull(exif.getAttributeBytes(ExifInterface.TAG_XMP))
+        assertNull(exif.getAttribute(ExifInterface.TAG_SUBSEC_TIME_ORIGINAL))
+        assertNull(exif.getAttribute(ExifInterface.TAG_GPS_MAP_DATUM))
+        assertNull(exif.getAttribute(ExifInterface.TAG_GPS_SPEED))
+        assertNull(exif.getAttribute(ExifInterface.TAG_GPS_SPEED_REF))
+        assertNull(exif.getAttribute(ExifInterface.TAG_GPS_DEST_LATITUDE))
+        assertNull(exif.getAttribute(ExifInterface.TAG_GPS_DEST_LATITUDE_REF))
+        assertNull(exif.getAttribute(ExifInterface.TAG_GPS_DEST_LONGITUDE))
+        assertNull(exif.getAttribute(ExifInterface.TAG_GPS_DEST_LONGITUDE_REF))
         assertNull(exif.latLong)
         val orientation = exif.getAttributeInt(
             ExifInterface.TAG_ORIENTATION,
