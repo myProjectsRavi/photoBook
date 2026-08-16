@@ -1,0 +1,40 @@
+name: Phase 2 Apply ViewModel Patch
+
+on:
+  push:
+    branches:
+      - "agent/phase2-index-search-v2"
+    paths:
+      - "tools/phase2/apply_main_viewmodel_v2.py"
+      - ".github/workflows/phase2-apply-viewmodel.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v6
+        with:
+          ref: agent/phase2-index-search-v2
+          fetch-depth: 0
+      - name: Apply exact source transformation
+        run: python3 tools/phase2/apply_main_viewmodel_v2.py
+      - name: Validate patch
+        run: |
+          git diff --check
+          git diff -- app/src/main/java/com/photobook/app/ui/viewmodel/MainViewModel.kt
+      - name: Commit transformed ViewModel
+        run: |
+          if git diff --quiet -- app/src/main/java/com/photobook/app/ui/viewmodel/MainViewModel.kt; then
+            echo "No ViewModel changes produced"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/photobook/app/ui/viewmodel/MainViewModel.kt
+          git commit -m "phase2: cut over search to compact ID pipeline"
+          git push origin HEAD:agent/phase2-index-search-v2
