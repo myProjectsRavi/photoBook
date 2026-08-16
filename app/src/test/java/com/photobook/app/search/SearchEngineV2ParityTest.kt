@@ -84,6 +84,36 @@ class SearchEngineV2ParityTest {
         assertEquals(emptyList<Long>(), result.orderedIds)
     }
 
+    @Test
+    fun staleExpectedGenerationForcesRollbackInsteadOfMixingSnapshots() = runBlocking {
+        val index = PhotoIndex(PhotoIndexStrategy.V2)
+        index.setRecords(deterministicRecords(1_000))
+        val parser = QueryParser()
+        val classifier = TokenClassifier(index)
+        val filters = FilterFactory()
+        val ranker = SearchRanker()
+        val v2 = SearchEngineV2(index, parser, classifier, filters, ranker)
+        val staleVersion = index.changes().value
+
+        index.toggleFavorite(1L)
+
+        val staleResult = v2.search(
+            query = "invoice",
+            context = SearchContext(nowMillis = NOW),
+            expectedIndexVersion = staleVersion,
+        )
+        assertFalse(staleResult.complete)
+        assertEquals(emptyList<Long>(), staleResult.orderedIds)
+
+        val currentVersion = index.changes().value
+        val currentResult = v2.search(
+            query = "invoice",
+            context = SearchContext(nowMillis = NOW),
+            expectedIndexVersion = currentVersion,
+        )
+        assertEquals(true, currentResult.complete)
+    }
+
     private fun deterministicRecords(count: Int): List<PhotoRecord> {
         return List(count) { offset ->
             val id = offset.toLong() + 1L
