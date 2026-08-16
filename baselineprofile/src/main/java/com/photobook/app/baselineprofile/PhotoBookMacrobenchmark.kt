@@ -10,6 +10,7 @@ import androidx.benchmark.macro.junit4.MacrobenchmarkRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
 import androidx.test.uiautomator.By
+import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
 import org.junit.Rule
 import org.junit.Test
@@ -87,8 +88,8 @@ class PhotoBookMacrobenchmark {
                 startActivityAndWait()
                 requireAppWindow()
                 requireReadyLibrary()
-                val search = device.findObject(By.textContains("Search"))
-                    ?: error("Search field was not exposed to UI Automator")
+                val search = device.findObject(By.clazz("android.widget.EditText"))
+                    ?: error("PhotoBook search EditText was not exposed to UI Automator")
                 search.click()
                 repeat(32) { device.pressKeyCode(KeyEvent.KEYCODE_DEL) }
                 device.waitForIdle()
@@ -158,10 +159,10 @@ class PhotoBookMacrobenchmark {
         check(visible) { "PhotoBook window did not become visible" }
     }
 
-    private fun MacrobenchmarkScope.requireReadyLibrary(): androidx.test.uiautomator.UiObject2 {
+    private fun MacrobenchmarkScope.requireReadyLibrary(): UiObject2 {
         val deadlineMs = SystemClock.elapsedRealtime() + READY_TIMEOUT_MS
         while (SystemClock.elapsedRealtime() < deadlineMs) {
-            val action = device.findObject(By.text(REELS_ACTION_TEXT))
+            val action = clickableAncestor(device.findObject(By.text(REELS_ACTION_TEXT)))
             if (action?.isEnabled == true) {
                 return action
             }
@@ -174,6 +175,16 @@ class PhotoBookMacrobenchmark {
         )
     }
 
+    private fun clickableAncestor(initial: UiObject2?): UiObject2? {
+        var node = initial
+        repeat(MAX_ANCESTOR_DEPTH) {
+            val current = node ?: return null
+            if (current.isClickable) return current
+            node = current.parent
+        }
+        return null
+    }
+
     companion object {
         private const val TARGET_PACKAGE = "com.photobook.app"
         private const val REELS_ACTION_TEXT = "Reel Browsing"
@@ -181,5 +192,6 @@ class PhotoBookMacrobenchmark {
         private const val INTERACTION_ITERATIONS = 5
         private const val UI_TIMEOUT_MS = 8_000L
         private const val READY_TIMEOUT_MS = 30_000L
+        private const val MAX_ANCESTOR_DEPTH = 4
     }
 }
