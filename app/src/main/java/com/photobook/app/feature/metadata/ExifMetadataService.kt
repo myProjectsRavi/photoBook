@@ -1,5 +1,6 @@
 package com.photobook.app.feature.metadata
 
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
@@ -126,11 +127,7 @@ class ExifMetadataService @Inject constructor(
                 }
             }.fold(
                 onSuccess = { details ->
-                    if (details != null) {
-                        ExifDetailsResult.Success(details)
-                    } else {
-                        ExifDetailsResult.Error()
-                    }
+                    if (details != null) ExifDetailsResult.Success(details) else ExifDetailsResult.Error()
                 },
                 onFailure = { error -> ExifDetailsResult.Error(error) },
             )
@@ -148,11 +145,20 @@ class ExifMetadataService @Inject constructor(
 
                 val sourceUri = runCatching { Uri.parse(photo.uriString) }.getOrNull()
                     ?: return@withLock MetadataCleanResult.Error()
+                val mimeType = normalizeImageMime(photo.mimeType)
+                val operationId = UUID.randomUUID().toString().take(8)
+                val cleanedName = cleanedFileName(photo.fileName, mimeType, operationId)
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                    !recordPendingCleanCopyIntent(cleanedName)
+                ) {
+                    return@withLock MetadataCleanResult.Error(
+                        IllegalStateException("Unable to journal clean-copy intent"),
+                    )
+                }
 
                 var outputUri: Uri? = null
                 try {
-                    val mimeType = normalizeImageMime(photo.mimeType)
-                    val cleanedName = cleanedFileName(photo.fileName, mimeType)
                     val values = ContentValues().apply {
                         put(MediaStore.MediaColumns.DISPLAY_NAME, cleanedName)
                         put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
@@ -165,28 +171,25 @@ class ExifMetadataService @Inject constructor(
                     val insertedUri = context.contentResolver.insert(
                         MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                         values,
-                    ) ?: return@withLock MetadataCleanResult.Error()
+                    ) ?: run {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            clearPendingCleanCopyJournal()
+                        }
+                        return@withLock MetadataCleanResult.Error()
+                    }
                     outputUri = insertedUri
 
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-                        !recordPendingCleanCopy(insertedUri)
+                        !recordPendingCleanCopyUri(insertedUri)
                     ) {
-                        runCatching { context.contentResolver.delete(insertedUri, null, null) }
-                        clearPendingCleanCopyJournal()
-                        return@withLock MetadataCleanResult.Error(
-                            IllegalStateException("Unable to journal pending clean copy"),
-                        )
+                        throw IllegalStateException("Unable to journal pending clean-copy URI")
                     }
 
-                    check(copyImageBytes(sourceUri, insertedUri)) {
-                        "Failed to copy source image"
-                    }
+                    check(copyImageBytes(sourceUri, insertedUri)) { "Failed to copy source image" }
                     check(sanitizeMetadata(sourceUri, insertedUri, mimeType)) {
                         "Unable to prove sensitive metadata removal"
                     }
-                    check(verifyReadableImage(insertedUri)) {
-                        "Clean copy is not a readable image"
-                    }
+                    check(verifyReadableImage(insertedUri)) { "Clean copy is not a readable image" }
 
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                         val publishedRows = context.contentResolver.update(
@@ -199,10 +202,7 @@ class ExifMetadataService @Inject constructor(
                         clearPendingCleanCopyJournal()
                     }
 
-                    MetadataCleanResult.Success(
-                        uri = insertedUri,
-                        fileName = cleanedName,
-                    )
+                    MetadataCleanResult.Success(uri = insertedUri, fileName = cleanedName)
                 } catch (t: Throwable) {
                     val deleted = outputUri?.let { uri ->
                         runCatching { context.contentResolver.delete(uri, null, null) }
@@ -220,18 +220,13 @@ class ExifMetadataService @Inject constructor(
     suspend fun scanSharePrivacy(photos: List<PhotoRecord>): SharePrivacyScanResult {
         if (photos.isEmpty()) {
             return SharePrivacyScanResult.Success(
-                SharePrivacySummary(
-                    photoCount = 0,
-                    faceCount = 0,
-                    metadataRiskCount = 0,
-                ),
+                SharePrivacySummary(photoCount = 0, faceCount = 0, metadataRiskCount = 0),
             )
         }
         return withContext(Dispatchers.IO) {
             runCatching {
-                val chunkedPhotos = photos.chunked(8)
                 var totalFaceCount = 0
-                for (chunk in chunkedPhotos) {
+                for (chunk in photos.chunked(8)) {
                     totalFaceCount += coroutineScope {
                         chunk.map { photo ->
                             async {
@@ -248,7 +243,6 @@ class ExifMetadataService @Inject constructor(
                         }.awaitAll().sum()
                     }
                 }
-
                 val metadataRiskCount = photos.count { photo ->
                     photo.latitude != null || photo.longitude != null || !photo.cameraModel.isNullOrBlank()
                 }
@@ -280,9 +274,6 @@ class ExifMetadataService @Inject constructor(
 
             val createdFiles = mutableListOf<File>()
             val prepared = mutableListOf<SafeShareItem>()
-
-            // Safe Share is atomic: if any requested asset cannot prove every enabled privacy
-            // transform, no URI from the batch is released and all generated cache files are removed.
             for (photo in photos) {
                 var failedFile: File? = null
                 val resultPair = runCatching {
@@ -335,7 +326,6 @@ class ExifMetadataService @Inject constructor(
                 prepared += pair.first
                 createdFiles += pair.second
             }
-
             SafeShareResult.Success(prepared)
         }
     }
@@ -398,8 +388,7 @@ class ExifMetadataService @Inject constructor(
 
     private fun hasXmp(targetFile: File): Boolean? {
         return runCatching {
-            ExifInterface(targetFile.absolutePath)
-                .getAttributeBytes(ExifInterface.TAG_XMP) != null
+            ExifInterface(targetFile.absolutePath).getAttributeBytes(ExifInterface.TAG_XMP) != null
         }.getOrNull()
     }
 
@@ -434,7 +423,6 @@ class ExifMetadataService @Inject constructor(
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         runCatching { BitmapFactory.decodeFile(sourceFile.absolutePath, bounds) }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return false
-
         var sample = 1
         while (bounds.outWidth / sample > MAX_BITMAP_DIMENSION || bounds.outHeight / sample > MAX_BITMAP_DIMENSION) {
             sample *= 2
@@ -449,10 +437,9 @@ class ExifMetadataService @Inject constructor(
             )
         }.getOrNull() ?: return false
 
-        val format = compressFormatForMime(mimeType)
         return runCatching {
             FileOutputStream(sourceFile, false).use { stream ->
-                bitmap.compress(format, JPEG_QUALITY, stream)
+                bitmap.compress(compressFormatForMime(mimeType), JPEG_QUALITY, stream)
             }
         }.getOrDefault(false).also { bitmap.recycle() }
     }
@@ -477,12 +464,7 @@ class ExifMetadataService @Inject constructor(
         val canvas = Canvas(mutable)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         faces.forEach { face ->
-            pixelateRect(
-                bitmap = mutable,
-                canvas = canvas,
-                paint = paint,
-                bounds = face,
-            )
+            pixelateRect(bitmap = mutable, canvas = canvas, paint = paint, bounds = face)
         }
 
         return runCatching {
@@ -588,11 +570,24 @@ class ExifMetadataService @Inject constructor(
 
     private fun reconcilePendingCleanCopyJournal(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return true
-        val rawUri = cleanCopyJournal.getString(KEY_PENDING_CLEAN_COPY_URI, null) ?: return true
-        val uri = runCatching { Uri.parse(rawUri) }.getOrNull()
-            ?: return clearPendingCleanCopyJournal()
+        val pendingUri = cleanCopyJournal.getString(KEY_PENDING_CLEAN_COPY_URI, null)
+        if (!pendingUri.isNullOrBlank()) {
+            val uri = runCatching { Uri.parse(pendingUri) }.getOrNull() ?: return false
+            val pendingState = queryPendingState(uri) ?: return false
+            return when (pendingState) {
+                PENDING_ROW_MISSING, 0 -> clearPendingCleanCopyJournal()
+                1 -> deletePendingUri(uri) && clearPendingCleanCopyJournal()
+                else -> false
+            }
+        }
 
-        val pendingState = runCatching {
+        val pendingName = cleanCopyJournal.getString(KEY_PENDING_CLEAN_COPY_NAME, null)
+            ?: return true
+        return reconcilePendingCleanCopyByName(pendingName)
+    }
+
+    private fun queryPendingState(uri: Uri): Int? {
+        return runCatching {
             context.contentResolver.query(
                 uri,
                 arrayOf(MediaStore.MediaColumns.IS_PENDING),
@@ -601,22 +596,52 @@ class ExifMetadataService @Inject constructor(
                 null,
             )?.use { cursor ->
                 if (!cursor.moveToFirst()) PENDING_ROW_MISSING else cursor.getInt(0)
+            } ?: PENDING_ROW_MISSING
+        }.getOrNull()
+    }
+
+    private fun reconcilePendingCleanCopyByName(displayName: String): Boolean {
+        val pendingUris = runCatching {
+            buildList {
+                context.contentResolver.query(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    arrayOf(MediaStore.Images.Media._ID),
+                    "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.IS_PENDING} = 1",
+                    arrayOf(displayName),
+                    null,
+                )?.use { cursor ->
+                    while (cursor.moveToNext()) {
+                        add(
+                            ContentUris.withAppendedId(
+                                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                                cursor.getLong(0),
+                            ),
+                        )
+                    }
+                }
             }
         }.getOrNull() ?: return false
 
-        return when (pendingState) {
-            PENDING_ROW_MISSING, 0 -> clearPendingCleanCopyJournal()
-            1 -> {
-                val deleted = runCatching {
-                    context.contentResolver.delete(uri, null, null)
-                }.getOrDefault(0)
-                deleted > 0 && clearPendingCleanCopyJournal()
-            }
-            else -> false
-        }
+        if (pendingUris.any { uri -> !deletePendingUri(uri) }) return false
+        return clearPendingCleanCopyJournal()
     }
 
-    private fun recordPendingCleanCopy(uri: Uri): Boolean {
+    private fun deletePendingUri(uri: Uri): Boolean {
+        val deleted = runCatching {
+            context.contentResolver.delete(uri, null, null)
+        }.getOrDefault(0)
+        if (deleted > 0) return true
+        return queryPendingState(uri) == PENDING_ROW_MISSING
+    }
+
+    private fun recordPendingCleanCopyIntent(displayName: String): Boolean {
+        return cleanCopyJournal.edit()
+            .putString(KEY_PENDING_CLEAN_COPY_NAME, displayName)
+            .remove(KEY_PENDING_CLEAN_COPY_URI)
+            .commit()
+    }
+
+    private fun recordPendingCleanCopyUri(uri: Uri): Boolean {
         return cleanCopyJournal.edit()
             .putString(KEY_PENDING_CLEAN_COPY_URI, uri.toString())
             .commit()
@@ -624,6 +649,7 @@ class ExifMetadataService @Inject constructor(
 
     private fun clearPendingCleanCopyJournal(): Boolean {
         return cleanCopyJournal.edit()
+            .remove(KEY_PENDING_CLEAN_COPY_NAME)
             .remove(KEY_PENDING_CLEAN_COPY_URI)
             .commit()
     }
@@ -657,10 +683,12 @@ class ExifMetadataService @Inject constructor(
         }
     }
 
-    private fun cleanedFileName(originalName: String, mimeType: String): String {
+    private fun cleanedFileName(originalName: String, mimeType: String, operationId: String): String {
         val base = originalName.substringBeforeLast('.', missingDelimiterValue = originalName)
             .ifBlank { "PhotoBook" }
-        return "${base}_clean.${extensionForMime(mimeType)}"
+            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .take(64)
+        return "${base}_clean_$operationId.${extensionForMime(mimeType)}"
     }
 
     private fun safeShareFileName(originalName: String, extension: String): String {
@@ -675,9 +703,7 @@ class ExifMetadataService @Inject constructor(
     private fun cleanupStaleSafeShareFiles(dir: File) {
         val cutoff = System.currentTimeMillis() - SAFE_SHARE_TTL_MS
         dir.listFiles().orEmpty().forEach { file ->
-            if (file.isFile && file.lastModified() < cutoff) {
-                runCatching { file.delete() }
-            }
+            if (file.isFile && file.lastModified() < cutoff) runCatching { file.delete() }
         }
     }
 
@@ -733,7 +759,8 @@ class ExifMetadataService @Inject constructor(
         private const val SAFE_SHARE_CACHE_DIR = "safe_share"
         private const val SAFE_SHARE_TTL_MS = 24L * 60L * 60L * 1000L
         private val CLEAN_COPY_RELATIVE_PATH = Environment.DIRECTORY_PICTURES + "/PhotoBook/Clean"
-        private const val CLEAN_COPY_JOURNAL_PREFS = "metadata_clean_copy_journal_v1"
+        private const val CLEAN_COPY_JOURNAL_PREFS = "metadata_clean_copy_journal_v2"
+        private const val KEY_PENDING_CLEAN_COPY_NAME = "pending_name"
         private const val KEY_PENDING_CLEAN_COPY_URI = "pending_uri"
         private const val PENDING_ROW_MISSING = -1
     }
