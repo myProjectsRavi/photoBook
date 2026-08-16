@@ -16,6 +16,7 @@ import json
 import random
 import struct
 import zlib
+from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -39,6 +40,85 @@ SCENARIOS = (
     "zero_byte_media",
 )
 
+SEMANTIC_SUBJECTS = {
+    "camera_general": (
+        "family moment",
+        "landscape",
+        "building",
+        "vehicle",
+        "flower",
+    ),
+    "screenshot_payment_positive": (
+        "UPI payment confirmation",
+        "PhonePe transaction receipt",
+        "Google Pay transaction receipt",
+        "Paytm transaction receipt",
+        "bank transfer confirmation",
+    ),
+    "screenshot_nonpayment_negative": (
+        "chat containing a rupee amount",
+        "shopping price screenshot",
+        "stock-market screenshot",
+        "plain calculator amount",
+        "social post containing payment words",
+    ),
+    "cooked_food_positive": (
+        "cooked meal",
+        "restaurant dish",
+        "plated food",
+        "served breakfast",
+        "prepared snack",
+    ),
+    "fmcg_packaged_food_positive": (
+        "sealed snack packet",
+        "branded biscuit packet",
+        "packaged beverage",
+        "boxed cereal",
+        "packaged ready-to-eat food",
+    ),
+    "livestock_negative": (
+        "cow",
+        "buffalo",
+        "goat",
+        "sheep",
+        "lamb",
+        "cattle",
+        "bull",
+        "horse",
+        "hen",
+        "rooster",
+        "live chicken",
+        "livestock",
+    ),
+    "wildlife_negative": (
+        "bird",
+        "wild animal",
+        "deer",
+        "live fish",
+        "pet dog",
+        "pet cat",
+    ),
+    "raw_ingredient_negative": (
+        "raw vegetables",
+        "whole fruit",
+        "raw meat",
+        "raw poultry",
+        "raw fish ingredient",
+        "uncooked grains",
+    ),
+    "sensitive_document_negative": (
+        "Aadhaar screenshot",
+        "PAN card screenshot",
+        "passport screenshot",
+        "boarding pass screenshot",
+        "insurance document screenshot",
+    ),
+    "favorite_protected": ("favorite user photo",),
+    "large_photo": ("large-resolution camera photo",),
+    "corrupt_media": ("corrupt image",),
+    "zero_byte_media": ("zero-byte image",),
+}
+
 
 @dataclass(frozen=True)
 class FixtureRecord:
@@ -46,6 +126,7 @@ class FixtureRecord:
     relative_path: str
     file_name: str
     scenario: str
+    semantic_subject: str
     date_added_ms: int
     width: int
     height: int
@@ -112,6 +193,13 @@ def scenario_for(index: int) -> str:
     return "zero_byte_media"
 
 
+def semantic_subject_for(index: int, scenario: str) -> str:
+    subjects = SEMANTIC_SUBJECTS[scenario]
+    # The absolute index keeps selection deterministic and spreads subcases across
+    # repeated 101-record scenario cycles without requiring mutable generator state.
+    return subjects[index % len(subjects)]
+
+
 def archive_expectation(scenario: str) -> tuple[str, str]:
     if scenario == "screenshot_payment_positive":
         return "payments_candidate", "strong payment screenshot cues"
@@ -136,6 +224,7 @@ def archive_expectation(scenario: str) -> tuple[str, str]:
 
 def build_record(index: int, start: datetime, rng: random.Random) -> FixtureRecord:
     scenario = scenario_for(index)
+    semantic_subject = semantic_subject_for(index, scenario)
     age = timedelta(minutes=index * 7)
     timestamp = int((start - age).timestamp() * 1000)
     is_favorite = scenario == "favorite_protected" or index % 211 == 0
@@ -159,6 +248,7 @@ def build_record(index: int, start: datetime, rng: random.Random) -> FixtureReco
         relative_path=f"{folder}/{file_name}",
         file_name=file_name,
         scenario=scenario,
+        semantic_subject=semantic_subject,
         date_added_ms=timestamp,
         width=width,
         height=height,
@@ -187,11 +277,13 @@ def generate(count: int, output: Path, seed: int, write_media: bool) -> None:
     start = datetime(2026, 8, 16, 0, 0, tzinfo=timezone.utc)
     manifest_path = output / f"manifest-{count}.jsonl"
     summary: dict[str, int] = {scenario: 0 for scenario in SCENARIOS}
+    subject_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
     with manifest_path.open("w", encoding="utf-8") as manifest:
         for index in range(count):
             record = build_record(index, start, rng)
             summary[record.scenario] = summary.get(record.scenario, 0) + 1
+            subject_counts[record.scenario][record.semantic_subject] += 1
             manifest.write(json.dumps(asdict(record), sort_keys=True) + "\n")
             if write_media:
                 write_fixture_media(output / f"media-{count}", record)
@@ -206,6 +298,10 @@ def generate(count: int, output: Path, seed: int, write_media: bool) -> None:
         "write_media": write_media,
         "manifest": manifest_path.name,
         "scenarios": summary,
+        "semantic_subjects": {
+            scenario: dict(sorted(counts.items()))
+            for scenario, counts in sorted(subject_counts.items())
+        },
         "archive_safety_contract": {
             "positive_food": ["cooked_food_positive", "fmcg_packaged_food_positive"],
             "must_never_be_food": [
