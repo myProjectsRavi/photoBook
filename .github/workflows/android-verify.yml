@@ -37,7 +37,7 @@ jobs:
             bundleRelease \
             verifyApkSize \
             verifyReleaseBundleSize \
-            :baselineprofile:assembleBenchmark
+            :baselineprofile:assembleBenchmarkBenchmark
 
       - name: Generate deterministic Phase-0 fixture smoke corpus
         run: |
