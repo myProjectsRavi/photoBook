@@ -88,7 +88,6 @@ data class ExifDetails(
 class ExifMetadataService @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
-    private val cleanCopyMutex = Mutex()
     private val cleanCopyJournal by lazy {
         context.getSharedPreferences(CLEAN_COPY_JOURNAL_PREFS, Context.MODE_PRIVATE)
     }
@@ -137,7 +136,7 @@ class ExifMetadataService @Inject constructor(
 
     suspend fun createCleanCopy(photo: PhotoRecord): MetadataCleanResult {
         return withContext(Dispatchers.IO) {
-            cleanCopyMutex.withLock {
+            CLEAN_COPY_MUTEX.withLock {
                 if (!reconcilePendingCleanCopyJournal()) {
                     return@withLock MetadataCleanResult.Error(
                         IllegalStateException("Unable to reconcile a previous pending clean copy"),
@@ -147,7 +146,7 @@ class ExifMetadataService @Inject constructor(
                 val sourceUri = runCatching { Uri.parse(photo.uriString) }.getOrNull()
                     ?: return@withLock MetadataCleanResult.Error()
                 val mimeType = normalizeImageMime(photo.mimeType)
-                val operationId = UUID.randomUUID().toString().take(8)
+                val operationId = UUID.randomUUID().toString().take(16)
                 val cleanedName = cleanedFileName(photo.fileName, mimeType, operationId)
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
@@ -809,7 +808,12 @@ class ExifMetadataService @Inject constructor(
     }
 
     companion object {
+        // The recovery journal is process-wide, so serialization must also be process-wide even
+        // when multiple UI surfaces construct independent ExifMetadataService instances.
+        private val CLEAN_COPY_MUTEX = Mutex()
+
         private val SENSITIVE_EXIF_TAGS = listOf(
+            ExifInterface.TAG_GPS_VERSION_ID,
             ExifInterface.TAG_GPS_LATITUDE,
             ExifInterface.TAG_GPS_LONGITUDE,
             ExifInterface.TAG_GPS_LATITUDE_REF,
@@ -817,8 +821,30 @@ class ExifMetadataService @Inject constructor(
             ExifInterface.TAG_GPS_ALTITUDE,
             ExifInterface.TAG_GPS_ALTITUDE_REF,
             ExifInterface.TAG_GPS_TIMESTAMP,
-            ExifInterface.TAG_GPS_DATESTAMP,
+            ExifInterface.TAG_GPS_SATELLITES,
+            ExifInterface.TAG_GPS_STATUS,
+            ExifInterface.TAG_GPS_MEASURE_MODE,
+            ExifInterface.TAG_GPS_DOP,
+            ExifInterface.TAG_GPS_SPEED_REF,
+            ExifInterface.TAG_GPS_SPEED,
+            ExifInterface.TAG_GPS_TRACK_REF,
+            ExifInterface.TAG_GPS_TRACK,
+            ExifInterface.TAG_GPS_IMG_DIRECTION_REF,
+            ExifInterface.TAG_GPS_IMG_DIRECTION,
+            ExifInterface.TAG_GPS_MAP_DATUM,
+            ExifInterface.TAG_GPS_DEST_LATITUDE_REF,
+            ExifInterface.TAG_GPS_DEST_LATITUDE,
+            ExifInterface.TAG_GPS_DEST_LONGITUDE_REF,
+            ExifInterface.TAG_GPS_DEST_LONGITUDE,
+            ExifInterface.TAG_GPS_DEST_BEARING_REF,
+            ExifInterface.TAG_GPS_DEST_BEARING,
+            ExifInterface.TAG_GPS_DEST_DISTANCE_REF,
+            ExifInterface.TAG_GPS_DEST_DISTANCE,
             ExifInterface.TAG_GPS_PROCESSING_METHOD,
+            ExifInterface.TAG_GPS_AREA_INFORMATION,
+            ExifInterface.TAG_GPS_DATESTAMP,
+            ExifInterface.TAG_GPS_DIFFERENTIAL,
+            ExifInterface.TAG_GPS_H_POSITIONING_ERROR,
             ExifInterface.TAG_MODEL,
             ExifInterface.TAG_MAKE,
             ExifInterface.TAG_CAMERA_OWNER_NAME,
@@ -831,6 +857,9 @@ class ExifMetadataService @Inject constructor(
             ExifInterface.TAG_DATETIME,
             ExifInterface.TAG_DATETIME_ORIGINAL,
             ExifInterface.TAG_DATETIME_DIGITIZED,
+            ExifInterface.TAG_SUBSEC_TIME,
+            ExifInterface.TAG_SUBSEC_TIME_ORIGINAL,
+            ExifInterface.TAG_SUBSEC_TIME_DIGITIZED,
             ExifInterface.TAG_OFFSET_TIME,
             ExifInterface.TAG_OFFSET_TIME_ORIGINAL,
             ExifInterface.TAG_OFFSET_TIME_DIGITIZED,
