@@ -12,6 +12,7 @@ import androidx.benchmark.macro.StartupTimingMetric
 import androidx.benchmark.macro.junit4.MacrobenchmarkRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
+import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
@@ -39,31 +40,27 @@ class PhotoBookMacrobenchmark {
         BenchmarkMediaSeeder.ensureSeeded()
     }
 
+    /**
+     * Measures the one-time first-library index build without wrapping the whole
+     * operation in Perfetto. At 50k/100k a tens-of-minutes trace can itself fill
+     * emulator storage and invalidate the measurement. The subsequent tests reuse
+     * the persisted Room index produced here and measure steady-state behavior with
+     * normal Macrobenchmark traces.
+     */
     @Test
     fun a_initialIndexReadyLatency() {
         val librarySize = BenchmarkMediaSeeder.requestedLibrarySize()
-        var elapsedMs = -1L
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
 
-        benchmarkRule.measureRepeated(
-            packageName = TARGET_PACKAGE,
-            metrics = listOf(
-                StartupTimingMetric(),
-                MemoryUsageMetric(MemoryUsageMetric.Mode.Max),
-            ),
-            iterations = 1,
-            startupMode = StartupMode.COLD,
-            setupBlock = {
-                device.executeShellCommand("pm clear $TARGET_PACKAGE")
-                grantRuntimePermissions(device)
-                pressHome()
-            },
-        ) {
-            val startMs = SystemClock.elapsedRealtime()
-            startActivityAndWait()
-            requireAppWindow()
-            requireReadyLibrary()
-            elapsedMs = SystemClock.elapsedRealtime() - startMs
-        }
+        device.executeShellCommand("pm clear $TARGET_PACKAGE")
+        grantRuntimePermissions(device)
+        device.pressHome()
+
+        val startMs = SystemClock.elapsedRealtime()
+        launchTargetApp(device)
+        requireAppWindow(device)
+        requireReadyLibrary(device, indexReadyTimeoutMs(librarySize))
+        val elapsedMs = SystemClock.elapsedRealtime() - startMs
 
         check(elapsedMs > 0L) { "Initial index-ready latency was not captured" }
         val photosPerSecond = librarySize * 1_000.0 / elapsedMs.toDouble()
@@ -80,6 +77,8 @@ class PhotoBookMacrobenchmark {
 
     @Test
     fun b_coldStartup() {
+        ensureSteadyStateIndex()
+
         benchmarkRule.measureRepeated(
             packageName = TARGET_PACKAGE,
             metrics = listOf(
@@ -89,7 +88,11 @@ class PhotoBookMacrobenchmark {
             iterations = STARTUP_ITERATIONS,
             startupMode = StartupMode.COLD,
             setupBlock = {
-                prepareReadyAppForMeasurement()
+                // StartupMode.COLD kills the target process between setupBlock and
+                // measureBlock. Do not start PhotoBook here; the persisted index was
+                // prepared before entering measureRepeated.
+                grantRuntimePermissions(device)
+                pressHome()
             },
         ) {
             startActivityAndWait()
@@ -98,6 +101,8 @@ class PhotoBookMacrobenchmark {
 
     @Test
     fun c_warmStartup() {
+        ensureSteadyStateIndex()
+
         benchmarkRule.measureRepeated(
             packageName = TARGET_PACKAGE,
             metrics = listOf(
@@ -116,6 +121,7 @@ class PhotoBookMacrobenchmark {
 
     @Test
     fun d_firstVisibleThumbnailLatency() {
+        ensureSteadyStateIndex()
         val samplesMs = mutableListOf<Long>()
 
         benchmarkRule.measureRepeated(
@@ -127,14 +133,15 @@ class PhotoBookMacrobenchmark {
             iterations = STARTUP_ITERATIONS,
             startupMode = StartupMode.COLD,
             setupBlock = {
-                prepareReadyAppForMeasurement()
+                grantRuntimePermissions(device)
+                pressHome()
             },
         ) {
             val startMs = SystemClock.elapsedRealtime()
             startActivityAndWait()
-            requireAppWindow()
-            check(waitForVisiblePhotoThumbnail()) {
-                "No clickable photo thumbnail became visible after cold start"
+            requireAppWindow(device)
+            check(waitForVisiblePhotoThumbnail(device) != null) {
+                "No benchmark photo thumbnail became visible after cold start"
             }
             samplesMs += SystemClock.elapsedRealtime() - startMs
         }
@@ -151,6 +158,8 @@ class PhotoBookMacrobenchmark {
 
     @Test
     fun e_gridScrollFrameTiming() {
+        ensureSteadyStateIndex()
+
         benchmarkRule.measureRepeated(
             packageName = TARGET_PACKAGE,
             metrics = listOf(
@@ -178,6 +187,8 @@ class PhotoBookMacrobenchmark {
 
     @Test
     fun f_searchTypingAndResultsFrameTiming() {
+        ensureSteadyStateIndex()
+
         benchmarkRule.measureRepeated(
             packageName = TARGET_PACKAGE,
             metrics = listOf(
@@ -207,6 +218,9 @@ class PhotoBookMacrobenchmark {
 
     @Test
     fun g_reelsVerticalSwipeFrameTiming() {
+        ensureSteadyStateIndex()
+        var reelsModeEnabled = false
+
         benchmarkRule.measureRepeated(
             packageName = TARGET_PACKAGE,
             metrics = listOf(
@@ -217,24 +231,21 @@ class PhotoBookMacrobenchmark {
             startupMode = null,
             setupBlock = {
                 prepareReadyAppForMeasurement(pressHomeAfterReady = false)
-                val reelsToggle = requireReadyLibrary()
-                reelsToggle.click()
-                device.waitForIdle()
 
-                device.swipe(
-                    device.displayWidth / 2,
-                    (device.displayHeight * 0.82f).toInt(),
-                    device.displayWidth / 2,
-                    (device.displayHeight * 0.55f).toInt(),
-                    10,
-                )
-                device.click(
-                    device.displayWidth / 6,
-                    (device.displayHeight * 0.72f).toInt(),
-                )
-                val viewerOpened = device.wait(Until.hasObject(By.desc("Close")), UI_TIMEOUT_MS)
+                // The home action enables vertical paging; it does not itself open
+                // a viewer. Enable it once, then open an actual seeded thumbnail.
+                if (!reelsModeEnabled) {
+                    requireReadyLibrary(device).click()
+                    reelsModeEnabled = true
+                    device.waitForIdle()
+                }
+
+                val thumbnail = waitForVisiblePhotoThumbnail(device)
+                    ?: error("Reels benchmark requires a visible PBENCH photo thumbnail")
+                thumbnail.click()
+                val viewerOpened = device.wait(Until.hasObject(By.desc("Close")), THUMBNAIL_TIMEOUT_MS)
                 check(viewerOpened) {
-                    "Reels benchmark requires a seeded fixture library and a visible first photo"
+                    "Reels benchmark could not open the seeded photo viewer"
                 }
             },
         ) {
@@ -251,20 +262,55 @@ class PhotoBookMacrobenchmark {
         }
     }
 
+    /**
+     * Establishes the persistent steady-state index outside a Macrobenchmark trace.
+     * This is intentionally idempotent: after a_initialIndexReadyLatency it should
+     * return quickly, while an individually invoked test can still self-prepare.
+     */
+    private fun ensureSteadyStateIndex() {
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        grantRuntimePermissions(device)
+        device.pressHome()
+        launchTargetApp(device)
+        requireAppWindow(device)
+        requireReadyLibrary(
+            device = device,
+            timeoutMs = indexReadyTimeoutMs(BenchmarkMediaSeeder.requestedLibrarySize()),
+        )
+        device.pressHome()
+    }
+
     private fun MacrobenchmarkScope.prepareReadyAppForMeasurement(
         pressHomeAfterReady: Boolean = true,
     ) {
         grantRuntimePermissions(device)
         pressHome()
         startActivityAndWait()
-        requireAppWindow()
-        requireReadyLibrary()
+        requireAppWindow(device)
+
+        // A previous interaction iteration may have left the photo viewer open.
+        // Close it before locating home-screen controls for the next iteration.
+        device.findObject(By.desc("Close"))?.let { close ->
+            close.click()
+            device.waitForIdle()
+        }
+
+        requireReadyLibrary(device)
         if (pressHomeAfterReady) {
             pressHome()
         }
     }
 
-    private fun MacrobenchmarkScope.requireAppWindow() {
+    private fun launchTargetApp(device: UiDevice) {
+        val output = device.executeShellCommand(
+            "am start -W -n $TARGET_PACKAGE/$TARGET_ACTIVITY",
+        )
+        check(!output.contains("Error", ignoreCase = true)) {
+            "Unable to launch PhotoBook: $output"
+        }
+    }
+
+    private fun requireAppWindow(device: UiDevice) {
         val visible = device.wait(
             Until.hasObject(By.pkg(TARGET_PACKAGE).depth(0)),
             UI_TIMEOUT_MS,
@@ -272,8 +318,11 @@ class PhotoBookMacrobenchmark {
         check(visible) { "PhotoBook window did not become visible" }
     }
 
-    private fun MacrobenchmarkScope.requireReadyLibrary(): UiObject2 {
-        val deadlineMs = SystemClock.elapsedRealtime() + BenchmarkMediaSeeder.readyTimeoutMs()
+    private fun requireReadyLibrary(
+        device: UiDevice,
+        timeoutMs: Long = BenchmarkMediaSeeder.readyTimeoutMs(),
+    ): UiObject2 {
+        val deadlineMs = SystemClock.elapsedRealtime() + timeoutMs
         while (SystemClock.elapsedRealtime() < deadlineMs) {
             val action = clickableAncestor(device.findObject(By.text(REELS_ACTION_TEXT)))
             if (action?.isEnabled == true) {
@@ -284,21 +333,21 @@ class PhotoBookMacrobenchmark {
         }
         error(
             "PhotoBook did not reach its ready state before benchmark measurement; " +
-                "librarySize=${BenchmarkMediaSeeder.requestedLibrarySize()}",
+                "librarySize=${BenchmarkMediaSeeder.requestedLibrarySize()} timeoutMs=$timeoutMs",
         )
     }
 
-    private fun MacrobenchmarkScope.waitForVisiblePhotoThumbnail(): Boolean {
+    private fun waitForVisiblePhotoThumbnail(device: UiDevice): UiObject2? {
         val deadlineMs = SystemClock.elapsedRealtime() + THUMBNAIL_TIMEOUT_MS
         while (SystemClock.elapsedRealtime() < deadlineMs) {
-            val visiblePhoto = device.findObjects(By.clickable(true)).any { node ->
-                !node.contentDescription.isNullOrBlank()
+            val visiblePhoto = device.findObjects(By.clickable(true)).firstOrNull { node ->
+                node.contentDescription?.startsWith(BenchmarkMediaSeeder.DISPLAY_NAME_PREFIX) == true
             }
-            if (visiblePhoto) return true
+            if (visiblePhoto != null) return visiblePhoto
             device.waitForIdle()
             SystemClock.sleep(50)
         }
-        return false
+        return null
     }
 
     private fun grantRuntimePermissions(device: UiDevice) {
@@ -326,6 +375,12 @@ class PhotoBookMacrobenchmark {
         return null
     }
 
+    private fun indexReadyTimeoutMs(librarySize: Int): Long = when (librarySize) {
+        in 1..10_000 -> 4L * 60_000L
+        in 10_001..50_000 -> 20L * 60_000L
+        else -> 45L * 60_000L
+    }
+
     private fun percentile(sortedValues: List<Long>, percentile: Int): Long {
         require(sortedValues.isNotEmpty())
         val nearestRank = ceil((percentile / 100.0) * sortedValues.size).toInt()
@@ -335,6 +390,7 @@ class PhotoBookMacrobenchmark {
 
     companion object {
         private const val TARGET_PACKAGE = "com.photobook.app"
+        private const val TARGET_ACTIVITY = ".MainActivity"
         private const val REELS_ACTION_TEXT = "Reel Browsing"
         private const val STARTUP_ITERATIONS = 10
         private const val INTERACTION_ITERATIONS = 5
