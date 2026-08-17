@@ -3,8 +3,12 @@ set -euo pipefail
 
 # Phase-3 scale/device certification runner.
 #
-# This script does not modify production source or user media. The benchmark test
-# APK owns and seeds its isolated Pictures/PhotoBookBenchmark MediaStore corpus.
+# Repository production source remains unchanged. For benchmark execution this
+# script may prepare an ephemeral release-like target in the local CI worktree:
+# debug signing, profileable tracing, and (on x86_64 emulators only) an x86_64
+# APK split. Those workspace-only changes are captured as evidence and are never
+# committed. The benchmark test APK owns and seeds its isolated
+# Pictures/PhotoBookBenchmark MediaStore corpus.
 # Use REQUIRE_PHYSICAL=1 for release-grade physical-device evidence.
 
 LIBRARY_SIZE="${LIBRARY_SIZE:-10000}"
@@ -23,6 +27,10 @@ esac
 
 if ! command -v adb >/dev/null 2>&1; then
   echo "adb is required" >&2
+  exit 2
+fi
+if ! command -v keytool >/dev/null 2>&1; then
+  echo "keytool is required" >&2
   exit 2
 fi
 
@@ -73,10 +81,70 @@ fi
 "${ADB[@]}" shell settings put global animator_duration_scale 0
 "${ADB[@]}" logcat -c || true
 
-# The baselineprofile test module targets the app's benchmark build type with its
-# own benchmark build type, so AGP's intended connected variant is explicitly
-# benchmarkBenchmark. Other generated connected tasks (for example benchmarkRelease
-# and nonMinifiedBenchmark) are valid tasks but are not this certification target.
+# Macrobenchmark needs a release-like, non-debuggable, profileable target that is
+# installable without production signing material. Prepare that only inside this
+# ephemeral worktree; the repository's normal release configuration is untouched.
+RELEASE_MANIFEST="app/src/release/AndroidManifest.xml"
+if [[ -e "$RELEASE_MANIFEST" ]]; then
+  echo "Refusing to overwrite existing $RELEASE_MANIFEST" >&2
+  exit 1
+fi
+mkdir -p "$(dirname "$RELEASE_MANIFEST")"
+cat > "$RELEASE_MANIFEST" <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application>
+        <profileable
+            android:shell="true"
+            tools:targetApi="29" />
+    </application>
+</manifest>
+EOF
+cp "$RELEASE_MANIFEST" "$OUT_DIR/phase3-release-manifest-overlay.xml"
+
+# Production APKs intentionally ship ARM splits only. GitHub's KVM-backed Android
+# emulator is x86_64, so add x86_64 to this worktree only when that is the selected
+# device ABI. Fail closed if the expected production split declaration moves.
+if [[ "$IS_EMULATOR" == "1" && "$ABI" == "x86_64" ]]; then
+  python3 - <<'PY'
+from pathlib import Path
+
+path = Path("app/build.gradle.kts")
+text = path.read_text()
+old = 'include("arm64-v8a", "armeabi-v7a")'
+new = 'include("arm64-v8a", "armeabi-v7a", "x86_64")'
+if text.count(old) != 1:
+    raise SystemExit(
+        "Expected exactly one production ABI split declaration before Phase-3 CI patch"
+    )
+path.write_text(text.replace(old, new))
+PY
+fi
+
+git diff -- app/build.gradle.kts > "$OUT_DIR/phase3-ci-build.patch" || true
+
+# AGP supports an injected signing override. Use an isolated throwaway debug key
+# so no release key or GitHub Secret is required or exposed.
+DEBUG_KEYSTORE="${PHASE3_DEBUG_KEYSTORE:-${TMPDIR:-/tmp}/photobook-phase3-debug.keystore}"
+if [[ ! -f "$DEBUG_KEYSTORE" ]]; then
+  rm -f "$DEBUG_KEYSTORE"
+  keytool -genkeypair \
+    -keystore "$DEBUG_KEYSTORE" \
+    -storepass android \
+    -alias androiddebugkey \
+    -keypass android \
+    -keyalg RSA \
+    -keysize 2048 \
+    -validity 10000 \
+    -dname "CN=Android Debug,O=PhotoBook Phase3,C=US" \
+    -noprompt >/dev/null 2>&1
+fi
+DEBUG_KEYSTORE="$(cd "$(dirname "$DEBUG_KEYSTORE")" && pwd)/$(basename "$DEBUG_KEYSTORE")"
+
+# The baselineprofile module currently exposes several connected variants. This
+# is the release-like Macrobenchmark variant already proven to compile the
+# minified release target; Phase-3 makes that target installable above.
 echo "[phase3] resolving connected Macrobenchmark task"
 TASK_LIST="$(./gradlew :baselineprofile:tasks --all --console=plain)"
 CONNECTED_TASK="connectedBenchmarkBenchmarkAndroidTest"
@@ -94,6 +162,10 @@ fi
 echo "[phase3] running :baselineprofile:$CONNECTED_TASK at librarySize=$LIBRARY_SIZE"
 
 ./gradlew ":baselineprofile:$CONNECTED_TASK" \
+  -Pandroid.injected.signing.store.file="$DEBUG_KEYSTORE" \
+  -Pandroid.injected.signing.store.password=android \
+  -Pandroid.injected.signing.key.alias=androiddebugkey \
+  -Pandroid.injected.signing.key.password=android \
   -Pandroid.testInstrumentationRunnerArguments.androidx.benchmark.enabledRules=Macrobenchmark \
   -Pandroid.testInstrumentationRunnerArguments.photobook.librarySize="$LIBRARY_SIZE" \
   --stacktrace \
