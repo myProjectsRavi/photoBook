@@ -223,6 +223,7 @@ class PhotoBookMacrobenchmark {
     fun g_reelsVerticalSwipeFrameTiming() {
         ensureSteadyStateIndex()
         var reelsModeEnabled = false
+        var reelsThumbnailCenter: TapPoint? = null
 
         benchmarkRule.measureRepeated(
             packageName = TARGET_PACKAGE,
@@ -243,9 +244,13 @@ class PhotoBookMacrobenchmark {
                     device.waitForIdle()
                 }
 
-                val thumbnail = waitForVisiblePhotoThumbnail(device)
+                val thumbnailCenter = reelsThumbnailCenter
+                    ?: waitForVisiblePhotoThumbnail(device)?.visibleBounds?.let { bounds ->
+                        TapPoint(bounds.centerX(), bounds.centerY())
+                    }
                     ?: error("Reels benchmark requires a visible photo thumbnail")
-                thumbnail.click()
+                reelsThumbnailCenter = thumbnailCenter
+                device.click(thumbnailCenter.x, thumbnailCenter.y)
                 val viewerOpened = device.wait(Until.hasObject(By.desc("Close")), THUMBNAIL_TIMEOUT_MS)
                 check(viewerOpened) {
                     "Reels benchmark could not open the seeded photo viewer"
@@ -344,8 +349,10 @@ class PhotoBookMacrobenchmark {
         val deadlineMs = SystemClock.elapsedRealtime() + THUMBNAIL_TIMEOUT_MS
         while (SystemClock.elapsedRealtime() < deadlineMs) {
             val geometry = photoGridGeometry(device)
-            val clickable = device.findObjects(By.clickable(true))
-            val candidates = clickable.filter { node -> isPhotoGridNode(node, geometry) }
+            val describedNodes = device.findObjects(By.pkg(TARGET_PACKAGE)).filter { node ->
+                node.contentDescription?.toString()?.startsWith(BENCHMARK_PHOTO_DESC_PREFIX) == true
+            }
+            val candidates = describedNodes.filter { node -> isPhotoGridNode(node, geometry) }
             val visiblePhoto = candidates.firstOrNull { candidate ->
                 val centerY = candidate.visibleBounds.centerY()
                 candidates.any { other ->
@@ -359,7 +366,10 @@ class PhotoBookMacrobenchmark {
         }
 
         val geometry = photoGridGeometry(device)
-        val bounds = device.findObjects(By.clickable(true))
+        val bounds = device.findObjects(By.pkg(TARGET_PACKAGE))
+            .filter { node ->
+                node.contentDescription?.toString()?.startsWith(BENCHMARK_PHOTO_DESC_PREFIX) == true
+            }
             .take(12)
             .joinToString(separator = ";") { node ->
                 val rect = node.visibleBounds
@@ -368,7 +378,7 @@ class PhotoBookMacrobenchmark {
         println(
             "[phase3] thumbnailSelector timeout " +
                 "expectedCellPx=${geometry.expectedCellPx} " +
-                "expectedCardPx=${geometry.expectedCardPx} clickableBounds=$bounds",
+                "expectedCardPx=${geometry.expectedCardPx} pbenchBounds=$bounds",
         )
         return null
     }
@@ -399,7 +409,6 @@ class PhotoBookMacrobenchmark {
     }
 
     private fun isPhotoGridNode(node: UiObject2, geometry: PhotoGridGeometry): Boolean {
-        if (!node.isEnabled) return false
         val bounds = node.visibleBounds
         val width = bounds.width()
         val height = bounds.height()
@@ -464,6 +473,11 @@ class PhotoBookMacrobenchmark {
         return sortedValues[index]
     }
 
+    private data class TapPoint(
+        val x: Int,
+        val y: Int,
+    )
+
     private data class PhotoGridGeometry(
         val expectedCellPx: Float,
         val expectedCardPx: Float,
@@ -477,6 +491,7 @@ class PhotoBookMacrobenchmark {
         private const val TARGET_PACKAGE = "com.photobook.app"
         private const val TARGET_ACTIVITY = ".MainActivity"
         private const val REELS_ACTION_TEXT = "Reel Browsing"
+        private const val BENCHMARK_PHOTO_DESC_PREFIX = "PBENCH_"
         private const val STARTUP_ITERATIONS = 10
         private const val INTERACTION_ITERATIONS = 5
         private const val UI_TIMEOUT_MS = 8_000L
