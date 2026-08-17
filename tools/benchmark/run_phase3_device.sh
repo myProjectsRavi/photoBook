@@ -138,8 +138,9 @@ ORIGINAL_ANIMATOR_DURATION="$("${ADB[@]}" shell settings get global animator_dur
 "${ADB[@]}" shell dumpsys battery > "$OUT_DIR/battery-before.txt"
 BATTERY_BEFORE="$(cat "$OUT_DIR/battery-before.txt" | tr -d '\r')"
 if [[ "$IS_EMULATOR" == "1" ]]; then
-  "${ADB[@]}" shell dumpsys battery unplug >/dev/null
   BATTERY_SIMULATED=1
+  "${ADB[@]}" shell dumpsys battery unplug >/dev/null
+  "${ADB[@]}" shell dumpsys battery set status 3 >/dev/null
 else
   if printf '%s\n' "$BATTERY_BEFORE" \
     | grep -Eiq '(AC powered|USB powered|Wireless powered|Dock powered): true'; then
@@ -153,6 +154,25 @@ if grep -Eiq '(AC powered|USB powered|Wireless powered|Dock powered): true' \
   echo "Phase-3 core benchmark requires a non-charging device state" >&2
   exit 1
 fi
+BATTERY_BENCHMARK_STATUS="$(
+  awk -F': ' '/^[[:space:]]*status:/ {print $2; exit}' "$OUT_DIR/battery-benchmark-state.txt" \
+    | tr -d '\r'
+)"
+if [[ "$IS_EMULATOR" == "1" ]]; then
+  if [[ "$BATTERY_BENCHMARK_STATUS" != "3" ]]; then
+    echo "Phase-3 emulator must report BatteryManager status 3 (DISCHARGING); got $BATTERY_BENCHMARK_STATUS" >&2
+    exit 1
+  fi
+else
+  case "$BATTERY_BENCHMARK_STATUS" in
+    3|4) ;;
+    *)
+      echo "Physical Phase-3 device must report battery status 3 (DISCHARGING) or 4 (NOT_CHARGING); got $BATTERY_BENCHMARK_STATUS" >&2
+      exit 1
+      ;;
+  esac
+fi
+printf 'battery_status_benchmark=%s\n' "$BATTERY_BENCHMARK_STATUS" >> "$OUT_DIR/device.txt"
 
 # Keep rendering measurements deterministic and avoid animation-scale noise.
 "${ADB[@]}" shell settings put global window_animation_scale 0
