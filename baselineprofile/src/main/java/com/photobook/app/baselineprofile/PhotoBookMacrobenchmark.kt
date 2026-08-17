@@ -245,9 +245,7 @@ class PhotoBookMacrobenchmark {
                 }
 
                 val thumbnailCenter = reelsThumbnailCenter
-                    ?: waitForVisiblePhotoThumbnail(device)?.visibleBounds?.let { bounds ->
-                        TapPoint(bounds.centerX(), bounds.centerY())
-                    }
+                    ?: waitForVisiblePhotoThumbnail(device)
                     ?: error("Reels benchmark requires a visible photo thumbnail")
                 reelsThumbnailCenter = thumbnailCenter
                 device.click(thumbnailCenter.x, thumbnailCenter.y)
@@ -345,43 +343,67 @@ class PhotoBookMacrobenchmark {
         )
     }
 
-    private fun waitForVisiblePhotoThumbnail(device: UiDevice): UiObject2? {
+    /**
+     * Finds a visible grid card without depending on PhotoThumbnail's accessibility
+     * label. The label intentionally changes from file name to ML tags as local
+     * intelligence finishes, so it is not a stable benchmark identifier.
+     *
+     * UiAutomator nodes are also short-lived while Compose recomposes. Snapshot
+     * each candidate's bounds immediately and perform all geometry checks on those
+     * immutable values so a stale UiObject2 cannot fail the benchmark.
+     */
+    private fun waitForVisiblePhotoThumbnail(device: UiDevice): TapPoint? {
         val deadlineMs = SystemClock.elapsedRealtime() + THUMBNAIL_TIMEOUT_MS
+        var lastCandidateBounds = ""
         while (SystemClock.elapsedRealtime() < deadlineMs) {
             val geometry = photoGridGeometry(device)
-            val describedNodes = device.findObjects(By.pkg(TARGET_PACKAGE)).filter { node ->
-                node.contentDescription?.toString()?.startsWith(BENCHMARK_PHOTO_DESC_PREFIX) == true
-            }
-            val candidates = describedNodes.filter { node -> isPhotoGridNode(node, geometry) }
+            val candidates = snapshotPhotoGridCandidates(device, geometry)
+            lastCandidateBounds = candidates
+                .take(12)
+                .joinToString(separator = ";") { candidate ->
+                    "${candidate.left},${candidate.top},${candidate.right},${candidate.bottom}"
+                }
+
             val visiblePhoto = candidates.firstOrNull { candidate ->
-                val centerY = candidate.visibleBounds.centerY()
                 candidates.any { other ->
-                    other !== candidate &&
-                        abs(other.visibleBounds.centerY() - centerY) <= geometry.rowTolerancePx
+                    other != candidate &&
+                        abs(other.centerY - candidate.centerY) <= geometry.rowTolerancePx
                 }
             }
-            if (visiblePhoto != null) return visiblePhoto
+            if (visiblePhoto != null) {
+                return TapPoint(visiblePhoto.centerX, visiblePhoto.centerY)
+            }
+
             device.waitForIdle()
             SystemClock.sleep(50)
         }
 
         val geometry = photoGridGeometry(device)
-        val bounds = device.findObjects(By.pkg(TARGET_PACKAGE))
-            .filter { node ->
-                node.contentDescription?.toString()?.startsWith(BENCHMARK_PHOTO_DESC_PREFIX) == true
-            }
-            .take(12)
-            .joinToString(separator = ";") { node ->
-                val rect = node.visibleBounds
-                "${rect.left},${rect.top},${rect.right},${rect.bottom}"
-            }
         println(
             "[phase3] thumbnailSelector timeout " +
                 "expectedCellPx=${geometry.expectedCellPx} " +
-                "expectedCardPx=${geometry.expectedCardPx} pbenchBounds=$bounds",
+                "expectedCardPx=${geometry.expectedCardPx} candidateBounds=$lastCandidateBounds",
         )
         return null
     }
+
+    private fun snapshotPhotoGridCandidates(
+        device: UiDevice,
+        geometry: PhotoGridGeometry,
+    ): List<PhotoGridCandidate> = device.findObjects(By.pkg(TARGET_PACKAGE))
+        .mapNotNull { node ->
+            runCatching {
+                val bounds = node.visibleBounds
+                PhotoGridCandidate(
+                    left = bounds.left,
+                    top = bounds.top,
+                    right = bounds.right,
+                    bottom = bounds.bottom,
+                )
+            }.getOrNull()
+        }
+        .filter { candidate -> isPhotoGridCandidate(candidate, geometry) }
+        .distinct()
 
     private fun photoGridGeometry(device: UiDevice): PhotoGridGeometry {
         val density = InstrumentationRegistry.getInstrumentation()
@@ -408,12 +430,14 @@ class PhotoBookMacrobenchmark {
         )
     }
 
-    private fun isPhotoGridNode(node: UiObject2, geometry: PhotoGridGeometry): Boolean {
-        val bounds = node.visibleBounds
-        val width = bounds.width()
-        val height = bounds.height()
+    private fun isPhotoGridCandidate(
+        candidate: PhotoGridCandidate,
+        geometry: PhotoGridGeometry,
+    ): Boolean {
+        val width = candidate.width
+        val height = candidate.height
         if (width <= 0 || height <= 0) return false
-        if (bounds.left < geometry.minLeftPx || bounds.right > geometry.maxRightPx) return false
+        if (candidate.left < geometry.minLeftPx || candidate.right > geometry.maxRightPx) return false
         if (abs(width - height) > geometry.tolerancePx) return false
 
         val matchesOuterCell =
@@ -478,6 +502,18 @@ class PhotoBookMacrobenchmark {
         val y: Int,
     )
 
+    private data class PhotoGridCandidate(
+        val left: Int,
+        val top: Int,
+        val right: Int,
+        val bottom: Int,
+    ) {
+        val width: Int get() = right - left
+        val height: Int get() = bottom - top
+        val centerX: Int get() = left + width / 2
+        val centerY: Int get() = top + height / 2
+    }
+
     private data class PhotoGridGeometry(
         val expectedCellPx: Float,
         val expectedCardPx: Float,
@@ -491,7 +527,6 @@ class PhotoBookMacrobenchmark {
         private const val TARGET_PACKAGE = "com.photobook.app"
         private const val TARGET_ACTIVITY = ".MainActivity"
         private const val REELS_ACTION_TEXT = "Reel Browsing"
-        private const val BENCHMARK_PHOTO_DESC_PREFIX = "PBENCH_"
         private const val STARTUP_ITERATIONS = 10
         private const val INTERACTION_ITERATIONS = 5
         private const val UI_TIMEOUT_MS = 8_000L
