@@ -3,12 +3,11 @@ set -euo pipefail
 
 # Phase-3 scale/device certification runner.
 #
-# Repository production source remains unchanged. For benchmark execution this
-# script may prepare an ephemeral release-like target in the local CI worktree:
-# debug signing, profileable tracing, the repo's pinned ProfileInstaller, and
-# (on x86_64 emulators only) an x86_64 APK split. Those workspace-only changes
-# are captured as evidence and are never committed. The benchmark test APK owns
-# and seeds its isolated Pictures/PhotoBookBenchmark MediaStore corpus.
+# Repository production source remains unchanged except for the explicitly reviewed
+# Phase-3 production fix. For benchmark execution this script may prepare an ephemeral
+# release-like target in the local CI worktree: debug signing, profileable tracing,
+# the repo's pinned ProfileInstaller, and (on x86_64 emulators only) an x86_64 APK
+# split. Every worktree/device mutation made here is restored on exit.
 # Use REQUIRE_PHYSICAL=1 for release-grade physical-device evidence.
 
 LIBRARY_SIZE="${LIBRARY_SIZE:-10000}"
@@ -16,6 +15,7 @@ STRESS_ITERATIONS="${STRESS_ITERATIONS:-12}"
 REQUIRE_PHYSICAL="${REQUIRE_PHYSICAL:-0}"
 OUT_DIR="${OUT_DIR:-build/reports/phase3/device-${LIBRARY_SIZE}}"
 PACKAGE="com.photobook.app"
+ROOM_TEST_CLASS="com.photobook.app.verification.IndexPersistenceInstrumentedTest"
 
 case "$LIBRARY_SIZE" in
   10000|50000|100000) ;;
@@ -75,6 +75,85 @@ if (( SDK < 29 )); then
   exit 1
 fi
 
+RUN_TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/photobook-phase3.XXXXXX")"
+BUILD_GRADLE="app/build.gradle.kts"
+BUILD_GRADLE_BACKUP="$RUN_TEMP_DIR/build.gradle.kts"
+RELEASE_MANIFEST="app/src/release/AndroidManifest.xml"
+RELEASE_MANIFEST_CREATED=0
+BATTERY_SIMULATED=0
+DEBUG_KEYSTORE_CREATED=0
+DEBUG_KEYSTORE=""
+ORIGINAL_WINDOW_ANIMATION="__unset__"
+ORIGINAL_TRANSITION_ANIMATION="__unset__"
+ORIGINAL_ANIMATOR_DURATION="__unset__"
+
+cp "$BUILD_GRADLE" "$BUILD_GRADLE_BACKUP"
+
+restore_global_setting() {
+  local key="$1"
+  local value="$2"
+  if [[ "$value" == "__unset__" ]]; then
+    return
+  fi
+  if [[ -z "$value" || "$value" == "null" ]]; then
+    "${ADB[@]}" shell settings delete global "$key" >/dev/null 2>&1 || true
+  else
+    "${ADB[@]}" shell settings put global "$key" "$value" >/dev/null 2>&1 || true
+  fi
+}
+
+cleanup_phase3() {
+  set +e
+  if [[ -f "$BUILD_GRADLE_BACKUP" ]]; then
+    cp "$BUILD_GRADLE_BACKUP" "$BUILD_GRADLE"
+  fi
+  if [[ "$RELEASE_MANIFEST_CREATED" == "1" ]]; then
+    rm -f "$RELEASE_MANIFEST"
+  fi
+  restore_global_setting window_animation_scale "$ORIGINAL_WINDOW_ANIMATION"
+  restore_global_setting transition_animation_scale "$ORIGINAL_TRANSITION_ANIMATION"
+  restore_global_setting animator_duration_scale "$ORIGINAL_ANIMATOR_DURATION"
+  if [[ "$BATTERY_SIMULATED" == "1" ]]; then
+    "${ADB[@]}" shell dumpsys battery reset >/dev/null 2>&1 || true
+  fi
+  if [[ "$DEBUG_KEYSTORE_CREATED" == "1" && -n "$DEBUG_KEYSTORE" ]]; then
+    rm -f "$DEBUG_KEYSTORE"
+  fi
+  rm -rf "$RUN_TEMP_DIR"
+}
+
+trap 'status=$?; trap - EXIT INT TERM; cleanup_phase3; exit "$status"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if [[ -e "$RELEASE_MANIFEST" ]]; then
+  echo "Refusing to overwrite existing $RELEASE_MANIFEST" >&2
+  exit 1
+fi
+
+ORIGINAL_WINDOW_ANIMATION="$("${ADB[@]}" shell settings get global window_animation_scale | tr -d '\r')"
+ORIGINAL_TRANSITION_ANIMATION="$("${ADB[@]}" shell settings get global transition_animation_scale | tr -d '\r')"
+ORIGINAL_ANIMATOR_DURATION="$("${ADB[@]}" shell settings get global animator_duration_scale | tr -d '\r')"
+
+"${ADB[@]}" shell dumpsys battery > "$OUT_DIR/battery-before.txt"
+BATTERY_BEFORE="$(cat "$OUT_DIR/battery-before.txt" | tr -d '\r')"
+if [[ "$IS_EMULATOR" == "1" ]]; then
+  "${ADB[@]}" shell dumpsys battery unplug >/dev/null
+  BATTERY_SIMULATED=1
+else
+  if printf '%s\n' "$BATTERY_BEFORE" \
+    | grep -Eiq '(AC powered|USB powered|Wireless powered|Dock powered): true'; then
+    echo "Physical Phase-3 device must be unplugged from all charging sources" >&2
+    exit 1
+  fi
+fi
+"${ADB[@]}" shell dumpsys battery > "$OUT_DIR/battery-benchmark-state.txt"
+if grep -Eiq '(AC powered|USB powered|Wireless powered|Dock powered): true' \
+  "$OUT_DIR/battery-benchmark-state.txt"; then
+  echo "Phase-3 core benchmark requires a non-charging device state" >&2
+  exit 1
+fi
+
 # Keep rendering measurements deterministic and avoid animation-scale noise.
 "${ADB[@]}" shell settings put global window_animation_scale 0
 "${ADB[@]}" shell settings put global transition_animation_scale 0
@@ -83,12 +162,7 @@ fi
 
 # Macrobenchmark needs a release-like, non-debuggable, profileable target that is
 # installable without production signing material. Prepare that only inside this
-# ephemeral worktree; the repository's normal release configuration is untouched.
-RELEASE_MANIFEST="app/src/release/AndroidManifest.xml"
-if [[ -e "$RELEASE_MANIFEST" ]]; then
-  echo "Refusing to overwrite existing $RELEASE_MANIFEST" >&2
-  exit 1
-fi
+# ephemeral worktree; cleanup_phase3 restores it on every exit path.
 mkdir -p "$(dirname "$RELEASE_MANIFEST")"
 cat > "$RELEASE_MANIFEST" <<'EOF'
 <?xml version="1.0" encoding="utf-8"?>
@@ -101,13 +175,13 @@ cat > "$RELEASE_MANIFEST" <<'EOF'
     </application>
 </manifest>
 EOF
+RELEASE_MANIFEST_CREATED=1
 cp "$RELEASE_MANIFEST" "$OUT_DIR/phase3-release-manifest-overlay.xml"
 
 # Production APKs intentionally ship ARM splits only. GitHub's KVM-backed Android
 # emulator is x86_64, so add x86_64 to this worktree only when that is the selected
 # device ABI. Also expose the repo's already-pinned ProfileInstaller 1.4.1 to the
-# ephemeral release target: Macrobenchmark on API 35 requires ProfileInstaller
-# 1.4.0+ for its profile-control broadcast. Fail closed if either expected line moves.
+# ephemeral release target. Fail closed if either expected line moves.
 PHASE3_X86="$([[ "$IS_EMULATOR" == "1" && "$ABI" == "x86_64" ]] && echo 1 || echo 0)"
 PHASE3_X86="$PHASE3_X86" python3 - <<'PY'
 import os
@@ -141,10 +215,16 @@ PY
 git diff -- app/build.gradle.kts > "$OUT_DIR/phase3-ci-build.patch" || true
 
 # AGP supports an injected signing override. Use an isolated throwaway debug key
-# so no release key or GitHub Secret is required or exposed.
-DEBUG_KEYSTORE="${PHASE3_DEBUG_KEYSTORE:-${TMPDIR:-/tmp}/photobook-phase3-debug.keystore}"
-if [[ ! -f "$DEBUG_KEYSTORE" ]]; then
-  rm -f "$DEBUG_KEYSTORE"
+# so no release key or GitHub Secret is required or exposed. A caller-supplied
+# keystore must already exist and is never deleted by this runner.
+if [[ -n "${PHASE3_DEBUG_KEYSTORE:-}" ]]; then
+  DEBUG_KEYSTORE="$PHASE3_DEBUG_KEYSTORE"
+  if [[ ! -f "$DEBUG_KEYSTORE" ]]; then
+    echo "PHASE3_DEBUG_KEYSTORE does not exist: $DEBUG_KEYSTORE" >&2
+    exit 1
+  fi
+else
+  DEBUG_KEYSTORE="$RUN_TEMP_DIR/photobook-phase3-debug.keystore"
   keytool -genkeypair \
     -keystore "$DEBUG_KEYSTORE" \
     -storepass android \
@@ -155,6 +235,7 @@ if [[ ! -f "$DEBUG_KEYSTORE" ]]; then
     -validity 10000 \
     -dname "CN=Android Debug,O=PhotoBook Phase3,C=US" \
     -noprompt >/dev/null 2>&1
+  DEBUG_KEYSTORE_CREATED=1
 fi
 DEBUG_KEYSTORE="$(cd "$(dirname "$DEBUG_KEYSTORE")" && pwd)/$(basename "$DEBUG_KEYSTORE")"
 
@@ -173,6 +254,34 @@ if ! printf '%s\n' "$TASK_LIST" | grep -Eq "^${CONNECTED_TASK}[[:space:]]"; then
     | tee "$OUT_DIR/available-connected-android-tests.txt" >&2
   printf '%s\n' "$TASK_LIST" > "$OUT_DIR/baselineprofile-tasks.txt"
   exit 1
+fi
+
+# Exercise the real Room database once, at the smallest matrix size, before the
+# scale corpus is seeded. This crosses both 200-row write and stale-delete
+# boundaries without adding a second emulator job or contaminating MediaStore.
+if [[ "$LIBRARY_SIZE" == "10000" ]]; then
+  echo "[phase3] running focused Room persistence regression"
+  set +e
+  ./gradlew :app:connectedDebugAndroidTest \
+    -Pandroid.testInstrumentationRunnerArguments.class="$ROOM_TEST_CLASS" \
+    --stacktrace \
+    | tee "$OUT_DIR/room-regression-gradle.log"
+  ROOM_TEST_STATUS=${PIPESTATUS[0]}
+  set -e
+
+  mkdir -p "$OUT_DIR/room-regression"
+  cp -R app/build/outputs/androidTest-results "$OUT_DIR/room-regression/" 2>/dev/null || true
+  cp -R app/build/reports/androidTests "$OUT_DIR/room-regression/" 2>/dev/null || true
+
+  # connectedDebugAndroidTest can leave the debug target installed. Remove it so
+  # the release-like Macrobenchmark install cannot collide with a different signer.
+  "${ADB[@]}" uninstall "${PACKAGE}.test" >/dev/null 2>&1 || true
+  "${ADB[@]}" uninstall "$PACKAGE" >/dev/null 2>&1 || true
+
+  if (( ROOM_TEST_STATUS != 0 )); then
+    echo "Focused Room persistence regression failed" >&2
+    exit "$ROOM_TEST_STATUS"
+  fi
 fi
 
 echo "[phase3] running :baselineprofile:$CONNECTED_TASK at librarySize=$LIBRARY_SIZE"

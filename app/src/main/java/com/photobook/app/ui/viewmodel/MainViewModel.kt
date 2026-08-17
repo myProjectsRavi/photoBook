@@ -1108,8 +1108,16 @@ class MainViewModel @Inject constructor(
             }
         }.preservingIntelligence(existing)
 
-        photoIndex.setRecords(rebuilt)
-        indexPersistence.save(rebuilt)
+        if (existing.isEmpty()) {
+            // On a first build, keep full Room/FTS persistence from overlapping structural
+            // PhotoIndex publication and the search/memory flows that publication wakes up.
+            indexPersistence.save(rebuilt)
+            photoIndex.setRecords(rebuilt)
+        } else {
+            // Preserve the established full-resync publication ordering for existing libraries.
+            photoIndex.setRecords(rebuilt)
+            indexPersistence.save(rebuilt)
+        }
     }
 
     private suspend fun processGenerationDelta(

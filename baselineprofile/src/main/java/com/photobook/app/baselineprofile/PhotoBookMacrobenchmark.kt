@@ -18,6 +18,7 @@ import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
 import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.ceil
 import org.junit.Before
 import org.junit.FixMethodOrder
@@ -78,6 +79,7 @@ class PhotoBookMacrobenchmark {
     @Test
     fun b_coldStartup() {
         ensureSteadyStateIndex()
+        forceStopTarget(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()))
 
         benchmarkRule.measureRepeated(
             packageName = TARGET_PACKAGE,
@@ -89,7 +91,7 @@ class PhotoBookMacrobenchmark {
             startupMode = StartupMode.COLD,
             setupBlock = {
                 // StartupMode.COLD kills the target process between setupBlock and
-                // measureBlock. Do not start PhotoBook here; the persisted index was
+                // measureBlock. Keep setup process-free; the persisted index was
                 // prepared before entering measureRepeated.
                 grantRuntimePermissions(device)
                 pressHome()
@@ -122,6 +124,7 @@ class PhotoBookMacrobenchmark {
     @Test
     fun d_firstVisibleThumbnailLatency() {
         ensureSteadyStateIndex()
+        forceStopTarget(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()))
         val samplesMs = mutableListOf<Long>()
 
         benchmarkRule.measureRepeated(
@@ -233,7 +236,7 @@ class PhotoBookMacrobenchmark {
                 prepareReadyAppForMeasurement(pressHomeAfterReady = false)
 
                 // The home action enables vertical paging; it does not itself open
-                // a viewer. Enable it once, then open an actual seeded thumbnail.
+                // a viewer. Enable it once, then open an actual visible photo card.
                 if (!reelsModeEnabled) {
                     requireReadyLibrary(device).click()
                     reelsModeEnabled = true
@@ -241,7 +244,7 @@ class PhotoBookMacrobenchmark {
                 }
 
                 val thumbnail = waitForVisiblePhotoThumbnail(device)
-                    ?: error("Reels benchmark requires a visible PBENCH photo thumbnail")
+                    ?: error("Reels benchmark requires a visible photo thumbnail")
                 thumbnail.click()
                 val viewerOpened = device.wait(Until.hasObject(By.desc("Close")), THUMBNAIL_TIMEOUT_MS)
                 check(viewerOpened) {
@@ -340,14 +343,87 @@ class PhotoBookMacrobenchmark {
     private fun waitForVisiblePhotoThumbnail(device: UiDevice): UiObject2? {
         val deadlineMs = SystemClock.elapsedRealtime() + THUMBNAIL_TIMEOUT_MS
         while (SystemClock.elapsedRealtime() < deadlineMs) {
-            val visiblePhoto = device.findObjects(By.clickable(true)).firstOrNull { node ->
-                node.contentDescription?.startsWith(BenchmarkMediaSeeder.DISPLAY_NAME_PREFIX) == true
+            val geometry = photoGridGeometry(device)
+            val clickable = device.findObjects(By.clickable(true))
+            val candidates = clickable.filter { node -> isPhotoGridNode(node, geometry) }
+            val visiblePhoto = candidates.firstOrNull { candidate ->
+                val centerY = candidate.visibleBounds.centerY()
+                candidates.any { other ->
+                    other !== candidate &&
+                        abs(other.visibleBounds.centerY() - centerY) <= geometry.rowTolerancePx
+                }
             }
             if (visiblePhoto != null) return visiblePhoto
             device.waitForIdle()
             SystemClock.sleep(50)
         }
+
+        val geometry = photoGridGeometry(device)
+        val bounds = device.findObjects(By.clickable(true))
+            .take(12)
+            .joinToString(separator = ";") { node ->
+                val rect = node.visibleBounds
+                "${rect.left},${rect.top},${rect.right},${rect.bottom}"
+            }
+        println(
+            "[phase3] thumbnailSelector timeout " +
+                "expectedCellPx=${geometry.expectedCellPx} " +
+                "expectedCardPx=${geometry.expectedCardPx} clickableBounds=$bounds",
+        )
         return null
+    }
+
+    private fun photoGridGeometry(device: UiDevice): PhotoGridGeometry {
+        val density = InstrumentationRegistry.getInstrumentation()
+            .targetContext.resources.displayMetrics.density
+            .coerceAtLeast(1f)
+        val horizontalInsetPx = RESULTS_HORIZONTAL_INSET_DP * density
+        val resultsWidthPx = (device.displayWidth - horizontalInsetPx * 2f).coerceAtLeast(1f)
+        val resultsWidthDp = resultsWidthPx / density
+        val columns = when {
+            resultsWidthDp >= 700f -> 5
+            resultsWidthDp >= 520f -> 4
+            else -> 3
+        }
+        val expectedCellPx = resultsWidthPx / columns
+        val expectedCardPx = expectedCellPx - PHOTO_CARD_PADDING_DP * 2f * density
+        val tolerancePx = PHOTO_SIZE_TOLERANCE_DP * density
+        return PhotoGridGeometry(
+            expectedCellPx = expectedCellPx,
+            expectedCardPx = expectedCardPx,
+            tolerancePx = tolerancePx,
+            rowTolerancePx = (ROW_ALIGNMENT_TOLERANCE_DP * density).toInt().coerceAtLeast(1),
+            minLeftPx = (horizontalInsetPx - tolerancePx).toInt(),
+            maxRightPx = (device.displayWidth - horizontalInsetPx + tolerancePx).toInt(),
+        )
+    }
+
+    private fun isPhotoGridNode(node: UiObject2, geometry: PhotoGridGeometry): Boolean {
+        if (!node.isEnabled) return false
+        val bounds = node.visibleBounds
+        val width = bounds.width()
+        val height = bounds.height()
+        if (width <= 0 || height <= 0) return false
+        if (bounds.left < geometry.minLeftPx || bounds.right > geometry.maxRightPx) return false
+        if (abs(width - height) > geometry.tolerancePx) return false
+
+        val matchesOuterCell =
+            abs(width - geometry.expectedCellPx) <= geometry.tolerancePx &&
+                abs(height - geometry.expectedCellPx) <= geometry.tolerancePx
+        val matchesPaddedCard =
+            abs(width - geometry.expectedCardPx) <= geometry.tolerancePx &&
+                abs(height - geometry.expectedCardPx) <= geometry.tolerancePx
+        return matchesOuterCell || matchesPaddedCard
+    }
+
+    private fun forceStopTarget(device: UiDevice) {
+        device.executeShellCommand("am force-stop $TARGET_PACKAGE")
+        val deadlineMs = SystemClock.elapsedRealtime() + PROCESS_STOP_TIMEOUT_MS
+        while (SystemClock.elapsedRealtime() < deadlineMs) {
+            if (device.executeShellCommand("pidof $TARGET_PACKAGE").trim().isEmpty()) return
+            SystemClock.sleep(100)
+        }
+        error("PhotoBook process remained alive after benchmark force-stop precondition")
     }
 
     private fun grantRuntimePermissions(device: UiDevice) {
@@ -388,6 +464,15 @@ class PhotoBookMacrobenchmark {
         return sortedValues[index]
     }
 
+    private data class PhotoGridGeometry(
+        val expectedCellPx: Float,
+        val expectedCardPx: Float,
+        val tolerancePx: Float,
+        val rowTolerancePx: Int,
+        val minLeftPx: Int,
+        val maxRightPx: Int,
+    )
+
     companion object {
         private const val TARGET_PACKAGE = "com.photobook.app"
         private const val TARGET_ACTIVITY = ".MainActivity"
@@ -396,6 +481,11 @@ class PhotoBookMacrobenchmark {
         private const val INTERACTION_ITERATIONS = 5
         private const val UI_TIMEOUT_MS = 8_000L
         private const val THUMBNAIL_TIMEOUT_MS = 60_000L
+        private const val PROCESS_STOP_TIMEOUT_MS = 5_000L
         private const val MAX_ANCESTOR_DEPTH = 4
+        private const val RESULTS_HORIZONTAL_INSET_DP = 20f
+        private const val PHOTO_CARD_PADDING_DP = 2f
+        private const val PHOTO_SIZE_TOLERANCE_DP = 10f
+        private const val ROW_ALIGNMENT_TOLERANCE_DP = 10f
     }
 }
