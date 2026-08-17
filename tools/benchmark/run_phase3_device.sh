@@ -107,7 +107,7 @@ find baselineprofile/build \
   -print \
   | sort > "$OUT_DIR/benchmark-result-files.txt" || true
 
-if ! "${ADB[@]}" shell pm path "$PACKAGE" >/dev/null 2>&1; then
+if ! "${ADB[@]}" shell pm path "$PACKAGE" 2>/dev/null | grep -q '^package:'; then
   echo "Target benchmark package is not installed after Macrobenchmark execution" >&2
   exit 1
 fi
