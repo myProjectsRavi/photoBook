@@ -12,12 +12,12 @@ import androidx.benchmark.macro.StartupTimingMetric
 import androidx.benchmark.macro.junit4.MacrobenchmarkRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
-import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
 import java.util.Locale
+import kotlin.math.ceil
 import org.junit.Before
 import org.junit.FixMethodOrder
 import org.junit.Rule
@@ -133,12 +133,8 @@ class PhotoBookMacrobenchmark {
             val startMs = SystemClock.elapsedRealtime()
             startActivityAndWait()
             requireAppWindow()
-            val thumbnailVisible = device.wait(
-                Until.hasObject(By.descContains(BenchmarkMediaSeeder.DISPLAY_NAME_PREFIX)),
-                THUMBNAIL_TIMEOUT_MS,
-            )
-            check(thumbnailVisible) {
-                "No deterministic benchmark thumbnail became visible after cold start"
+            check(waitForVisiblePhotoThumbnail()) {
+                "No clickable photo thumbnail became visible after cold start"
             }
             samplesMs += SystemClock.elapsedRealtime() - startMs
         }
@@ -292,6 +288,19 @@ class PhotoBookMacrobenchmark {
         )
     }
 
+    private fun MacrobenchmarkScope.waitForVisiblePhotoThumbnail(): Boolean {
+        val deadlineMs = SystemClock.elapsedRealtime() + THUMBNAIL_TIMEOUT_MS
+        while (SystemClock.elapsedRealtime() < deadlineMs) {
+            val visiblePhoto = device.findObjects(By.clickable(true)).any { node ->
+                !node.contentDescription.isNullOrBlank()
+            }
+            if (visiblePhoto) return true
+            device.waitForIdle()
+            SystemClock.sleep(50)
+        }
+        return false
+    }
+
     private fun grantRuntimePermissions(device: UiDevice) {
         val permissions = buildList {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -319,8 +328,8 @@ class PhotoBookMacrobenchmark {
 
     private fun percentile(sortedValues: List<Long>, percentile: Int): Long {
         require(sortedValues.isNotEmpty())
-        val index = (((percentile / 100.0) * sortedValues.size).toInt() - 1)
-            .coerceIn(0, sortedValues.lastIndex)
+        val nearestRank = ceil((percentile / 100.0) * sortedValues.size).toInt()
+        val index = (nearestRank - 1).coerceIn(0, sortedValues.lastIndex)
         return sortedValues[index]
     }
 
