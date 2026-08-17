@@ -5,10 +5,10 @@ set -euo pipefail
 #
 # Repository production source remains unchanged. For benchmark execution this
 # script may prepare an ephemeral release-like target in the local CI worktree:
-# debug signing, profileable tracing, and (on x86_64 emulators only) an x86_64
-# APK split. Those workspace-only changes are captured as evidence and are never
-# committed. The benchmark test APK owns and seeds its isolated
-# Pictures/PhotoBookBenchmark MediaStore corpus.
+# debug signing, profileable tracing, the repo's pinned ProfileInstaller, and
+# (on x86_64 emulators only) an x86_64 APK split. Those workspace-only changes
+# are captured as evidence and are never committed. The benchmark test APK owns
+# and seeds its isolated Pictures/PhotoBookBenchmark MediaStore corpus.
 # Use REQUIRE_PHYSICAL=1 for release-grade physical-device evidence.
 
 LIBRARY_SIZE="${LIBRARY_SIZE:-10000}"
@@ -105,22 +105,38 @@ cp "$RELEASE_MANIFEST" "$OUT_DIR/phase3-release-manifest-overlay.xml"
 
 # Production APKs intentionally ship ARM splits only. GitHub's KVM-backed Android
 # emulator is x86_64, so add x86_64 to this worktree only when that is the selected
-# device ABI. Fail closed if the expected production split declaration moves.
-if [[ "$IS_EMULATOR" == "1" && "$ABI" == "x86_64" ]]; then
-  python3 - <<'PY'
+# device ABI. Also expose the repo's already-pinned ProfileInstaller 1.4.1 to the
+# ephemeral release target: Macrobenchmark on API 35 requires ProfileInstaller
+# 1.4.0+ for its profile-control broadcast. Fail closed if either expected line moves.
+PHASE3_X86="$([[ "$IS_EMULATOR" == "1" && "$ABI" == "x86_64" ]] && echo 1 || echo 0)"
+PHASE3_X86="$PHASE3_X86" python3 - <<'PY'
+import os
 from pathlib import Path
 
 path = Path("app/build.gradle.kts")
 text = path.read_text()
-old = 'include("arm64-v8a", "armeabi-v7a")'
-new = 'include("arm64-v8a", "armeabi-v7a", "x86_64")'
-if text.count(old) != 1:
+
+if os.environ.get("PHASE3_X86") == "1":
+    old_abi = 'include("arm64-v8a", "armeabi-v7a")'
+    new_abi = 'include("arm64-v8a", "armeabi-v7a", "x86_64")'
+    if text.count(old_abi) != 1:
+        raise SystemExit(
+            "Expected exactly one production ABI split declaration before Phase-3 CI patch"
+        )
+    text = text.replace(old_abi, new_abi)
+
+profile_line = '    add("benchmarkImplementation", "androidx.profileinstaller:profileinstaller:1.4.1")'
+if text.count(profile_line) != 1:
     raise SystemExit(
-        "Expected exactly one production ABI split declaration before Phase-3 CI patch"
+        "Expected exactly one pinned benchmark ProfileInstaller dependency before Phase-3 CI patch"
     )
-path.write_text(text.replace(old, new))
+text = text.replace(
+    profile_line,
+    profile_line + '\n' +
+    '    add("releaseImplementation", "androidx.profileinstaller:profileinstaller:1.4.1")',
+)
+path.write_text(text)
 PY
-fi
 
 git diff -- app/build.gradle.kts > "$OUT_DIR/phase3-ci-build.patch" || true
 
