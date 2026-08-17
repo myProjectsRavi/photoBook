@@ -59,6 +59,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -175,13 +176,12 @@ class MainViewModel @Inject constructor(
         val timelineMarks = withContext(Dispatchers.Default) {
             buildTimelineMarks(filteredIds, records)
         }
-        val visibleIds = filteredIds.toSet()
 
         uiState.update { state ->
             state.copy(
                 photoCount = records.size,
                 resultCount = filteredIds.size,
-                selectedPhotoIds = clampSelectionToResultIds(state.selectedPhotoIds, visibleIds),
+                selectedPhotoIds = clampSelectionToResultIds(state.selectedPhotoIds, filteredIds),
                 timelineMarks = timelineMarks,
                 searchReady = !state.isIndexing,
                 viewerStartIndex = normalizeViewerIndex(
@@ -211,7 +211,20 @@ class MainViewModel @Inject constructor(
     private var hasInitializedIndex = false
     private var mediaObserver: ContentObserver? = null
     private var mediaRebuildJob: Job? = null
-    private var memoryRefreshJob: Job? = null
+    private val memoryRefreshRequests = Channel<List<PhotoRecord>>(capacity = Channel.CONFLATED)
+    private val memoryRefreshJob: Job = viewModelScope.launch(Dispatchers.Default) {
+        for (records in memoryRefreshRequests) {
+            val curated = memoryCurator.curate(records)
+            val onThisDay = memoryCurator.curateOnThisDay(records)
+            uiState.update { state ->
+                state.copy(
+                    memoryStories = curated,
+                    onThisDayStory = onThisDay,
+                )
+            }
+            OnThisDayWidgetProvider.cacheStory(context, onThisDay)
+        }
+    }
     private var latestSearchResultIds: List<Long> = emptyList()
     private var latestVisibleResultIds: List<Long> = emptyList()
     private var lastMemoryRecordsIdentity: Int = 0
@@ -1215,7 +1228,8 @@ class MainViewModel @Inject constructor(
 
     override fun onCleared() {
         mediaRebuildJob?.cancel()
-        memoryRefreshJob?.cancel()
+        memoryRefreshRequests.close()
+        memoryRefreshJob.cancel()
         mediaObserver?.let { observer ->
             context.contentResolver.unregisterContentObserver(observer)
         }
@@ -1243,9 +1257,17 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    private fun clampSelectionToResultIds(selectedPhotoIds: Set<Long>, visibleResultIds: Set<Long>): Set<Long> {
+    private fun clampSelectionToResultIds(
+        selectedPhotoIds: Set<Long>,
+        visibleResultIds: List<Long>,
+    ): Set<Long> {
         if (selectedPhotoIds.isEmpty() || visibleResultIds.isEmpty()) return emptySet()
-        return selectedPhotoIds.filterTo(linkedSetOf()) { it in visibleResultIds }
+        val visibleSelectedIds = HashSet<Long>(selectedPhotoIds.size * 4 / 3 + 1)
+        visibleResultIds.forEach { id ->
+            if (id in selectedPhotoIds) visibleSelectedIds.add(id)
+        }
+        if (visibleSelectedIds.isEmpty()) return emptySet()
+        return selectedPhotoIds.filterTo(linkedSetOf()) { it in visibleSelectedIds }
     }
 
     private fun normalizeViewerIndex(currentIndex: Int?, resultSize: Int): Int? {
@@ -1290,19 +1312,7 @@ class MainViewModel @Inject constructor(
         val identity = System.identityHashCode(records)
         if (identity == lastMemoryRecordsIdentity) return
         lastMemoryRecordsIdentity = identity
-
-        memoryRefreshJob?.cancel()
-        memoryRefreshJob = viewModelScope.launch(Dispatchers.Default) {
-            val curated = memoryCurator.curate(records)
-            val onThisDay = memoryCurator.curateOnThisDay(records)
-            uiState.update { state ->
-                state.copy(
-                    memoryStories = curated,
-                    onThisDayStory = onThisDay,
-                )
-            }
-            OnThisDayWidgetProvider.cacheStory(context, onThisDay)
-        }
+        memoryRefreshRequests.trySend(records)
     }
 
     private suspend fun runSearch(
