@@ -73,25 +73,24 @@ fi
 "${ADB[@]}" shell settings put global animator_duration_scale 0
 "${ADB[@]}" logcat -c || true
 
-# Resolve the exact generated connected-test task rather than hard-coding an AGP
-# variant name. PhotoBook currently produces a benchmarkBenchmark test variant.
+# The baselineprofile test module targets the app's benchmark build type with its
+# own benchmark build type, so AGP's intended connected variant is explicitly
+# benchmarkBenchmark. Other generated connected tasks (for example benchmarkRelease
+# and nonMinifiedBenchmark) are valid tasks but are not this certification target.
 echo "[phase3] resolving connected Macrobenchmark task"
 TASK_LIST="$(./gradlew :baselineprofile:tasks --all --console=plain)"
-mapfile -t CONNECTED_TASKS < <(
+CONNECTED_TASK="connectedBenchmarkBenchmarkAndroidTest"
+
+if ! printf '%s\n' "$TASK_LIST" | grep -Eq "^${CONNECTED_TASK}[[:space:]]"; then
+  echo "Expected :baselineprofile:$CONNECTED_TASK but it was not generated" >&2
   printf '%s\n' "$TASK_LIST" \
     | sed -n 's/^\(connected[^[:space:]]*AndroidTest\)[[:space:]].*/\1/p' \
-    | grep -i 'benchmark' \
-    | sort -u
-)
-
-if (( ${#CONNECTED_TASKS[@]} != 1 )); then
-  echo "Expected exactly one benchmark connected AndroidTest task; found ${#CONNECTED_TASKS[@]}" >&2
-  printf '%s\n' "${CONNECTED_TASKS[@]:-<none>}" >&2
+    | sort -u \
+    | tee "$OUT_DIR/available-connected-android-tests.txt" >&2
   printf '%s\n' "$TASK_LIST" > "$OUT_DIR/baselineprofile-tasks.txt"
   exit 1
 fi
 
-CONNECTED_TASK="${CONNECTED_TASKS[0]}"
 echo "[phase3] running :baselineprofile:$CONNECTED_TASK at librarySize=$LIBRARY_SIZE"
 
 ./gradlew ":baselineprofile:$CONNECTED_TASK" \
