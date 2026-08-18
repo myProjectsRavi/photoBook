@@ -348,16 +348,27 @@ class PhotoBookMacrobenchmark {
      * label. The label intentionally changes from file name to ML tags as local
      * intelligence finishes, so it is not a stable benchmark identifier.
      *
-     * UiAutomator nodes are also short-lived while Compose recomposes. Snapshot
-     * each candidate's bounds immediately and perform all geometry checks on those
-     * immutable values so a stale UiObject2 cannot fail the benchmark.
+     * Compose virtual semantics nodes are not reliably package-attributed in
+     * UiAutomator, but the photo Card is explicitly combinedClickable. Start from
+     * clickable semantics, snapshot bounds immediately, then identify a photo row
+     * by the deterministic grid geometry. This keeps live UiObject2 instances out
+     * of the selector result and avoids stale-node failures during recomposition.
      */
     private fun waitForVisiblePhotoThumbnail(device: UiDevice): TapPoint? {
         val deadlineMs = SystemClock.elapsedRealtime() + THUMBNAIL_TIMEOUT_MS
+        var lastClickableBounds = ""
         var lastCandidateBounds = ""
         while (SystemClock.elapsedRealtime() < deadlineMs) {
             val geometry = photoGridGeometry(device)
-            val candidates = snapshotPhotoGridCandidates(device, geometry)
+            val clickables = snapshotClickableBounds(device)
+            lastClickableBounds = clickables
+                .take(24)
+                .joinToString(separator = ";") { candidate ->
+                    "${candidate.left},${candidate.top},${candidate.right},${candidate.bottom}"
+                }
+            val candidates = clickables.filter { candidate ->
+                isPhotoGridCandidate(candidate, geometry)
+            }
             lastCandidateBounds = candidates
                 .take(12)
                 .joinToString(separator = ";") { candidate ->
@@ -382,28 +393,26 @@ class PhotoBookMacrobenchmark {
         println(
             "[phase3] thumbnailSelector timeout " +
                 "expectedCellPx=${geometry.expectedCellPx} " +
-                "expectedCardPx=${geometry.expectedCardPx} candidateBounds=$lastCandidateBounds",
+                "expectedCardPx=${geometry.expectedCardPx} " +
+                "clickableBounds=$lastClickableBounds candidateBounds=$lastCandidateBounds",
         )
         return null
     }
 
-    private fun snapshotPhotoGridCandidates(
-        device: UiDevice,
-        geometry: PhotoGridGeometry,
-    ): List<PhotoGridCandidate> = device.findObjects(By.pkg(TARGET_PACKAGE))
-        .mapNotNull { node ->
-            runCatching {
-                val bounds = node.visibleBounds
-                PhotoGridCandidate(
-                    left = bounds.left,
-                    top = bounds.top,
-                    right = bounds.right,
-                    bottom = bounds.bottom,
-                )
-            }.getOrNull()
-        }
-        .filter { candidate -> isPhotoGridCandidate(candidate, geometry) }
-        .distinct()
+    private fun snapshotClickableBounds(device: UiDevice): List<PhotoGridCandidate> =
+        device.findObjects(By.clickable(true))
+            .mapNotNull { node ->
+                runCatching {
+                    val bounds = node.visibleBounds
+                    PhotoGridCandidate(
+                        left = bounds.left,
+                        top = bounds.top,
+                        right = bounds.right,
+                        bottom = bounds.bottom,
+                    )
+                }.getOrNull()
+            }
+            .distinct()
 
     private fun photoGridGeometry(device: UiDevice): PhotoGridGeometry {
         val density = InstrumentationRegistry.getInstrumentation()
