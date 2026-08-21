@@ -36,6 +36,9 @@ class PhotoBookMacrobenchmark {
     @get:Rule
     val benchmarkRule = MacrobenchmarkRule()
 
+    private var defaultImePackage: String? = null
+    private var defaultImeResolved = false
+
     @Before
     fun prepareScaleFixture() {
         BenchmarkMediaSeeder.ensureSeeded()
@@ -330,6 +333,15 @@ class PhotoBookMacrobenchmark {
     ): UiObject2 {
         val deadlineMs = SystemClock.elapsedRealtime() + timeoutMs
         while (SystemClock.elapsedRealtime() < deadlineMs) {
+            // Search auto-focus is intentionally enabled once the library becomes ready. On
+            // smaller emulator viewports the IME can then cover the action row (and the grid),
+            // making UiAutomator falsely report that "Reel Browsing" never became visible.
+            // Dismiss only a currently visible configured IME; never issue an unconditional
+            // Back press that could navigate out of PhotoBook while indexing is still running.
+            if (dismissVisibleIme(device)) {
+                device.waitForIdle()
+            }
+
             val action = clickableAncestor(device.findObject(By.text(REELS_ACTION_TEXT)))
             if (action?.isEnabled == true) {
                 return action
@@ -359,6 +371,13 @@ class PhotoBookMacrobenchmark {
         var lastClickableBounds = ""
         var lastCandidateBounds = ""
         while (SystemClock.elapsedRealtime() < deadlineMs) {
+            // The app auto-focuses search when it reaches ready state. Ensure the results
+            // viewport, rather than the input method, owns the lower part of the screen before
+            // interpreting clickable bounds as grid geometry.
+            if (dismissVisibleIme(device)) {
+                device.waitForIdle()
+            }
+
             val geometry = photoGridGeometry(device)
             val clickables = snapshotClickableBounds(device)
             lastClickableBounds = clickables
@@ -397,6 +416,35 @@ class PhotoBookMacrobenchmark {
                 "clickableBounds=$lastClickableBounds candidateBounds=$lastCandidateBounds",
         )
         return null
+    }
+
+    /**
+     * Dismiss the visible system input method without hard-coding Gboard. The default IME
+     * package is resolved once from Android's secure setting; UiAutomator's package query only
+     * matches it while its window is visible. This keeps Back strictly conditional so the
+     * benchmark cannot accidentally leave the target app when no keyboard is present.
+     */
+    private fun dismissVisibleIme(device: UiDevice): Boolean {
+        val imePackage = resolveDefaultImePackage(device) ?: return false
+        if (!device.hasObject(By.pkg(imePackage))) return false
+
+        device.pressBack()
+        device.waitForIdle()
+        SystemClock.sleep(200)
+        println("[phase3] dismissed visible IME package=$imePackage")
+        return true
+    }
+
+    private fun resolveDefaultImePackage(device: UiDevice): String? {
+        if (defaultImeResolved) return defaultImePackage
+        defaultImeResolved = true
+        defaultImePackage = device.executeShellCommand("settings get secure default_input_method")
+            .trim()
+            .substringBefore('/')
+            .takeIf { packageName ->
+                packageName.isNotBlank() && packageName != "null" && '.' in packageName
+            }
+        return defaultImePackage
     }
 
     private fun snapshotClickableBounds(device: UiDevice): List<PhotoGridCandidate> =
