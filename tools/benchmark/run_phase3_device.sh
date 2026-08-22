@@ -16,6 +16,15 @@ REQUIRE_PHYSICAL="${REQUIRE_PHYSICAL:-0}"
 OUT_DIR="${OUT_DIR:-build/reports/phase3/device-${LIBRARY_SIZE}}"
 PACKAGE="com.photobook.app"
 ROOM_TEST_CLASS="com.photobook.app.verification.IndexPersistenceInstrumentedTest"
+EXPECTED_MACROBENCHMARKS=(
+  "coldStartup"
+  "firstThumbnail"
+  "gridScroll"
+  "initialIndexReady"
+  "reelsOpen"
+  "search"
+  "warmStartup"
+)
 
 case "$LIBRARY_SIZE" in
   10000|50000|100000) ;;
@@ -306,6 +315,7 @@ fi
 
 echo "[phase3] running :baselineprofile:$CONNECTED_TASK at librarySize=$LIBRARY_SIZE"
 
+set +e
 ./gradlew ":baselineprofile:$CONNECTED_TASK" \
   -Pandroid.injected.signing.store.file="$DEBUG_KEYSTORE" \
   -Pandroid.injected.signing.store.password=android \
@@ -315,6 +325,8 @@ echo "[phase3] running :baselineprofile:$CONNECTED_TASK at librarySize=$LIBRARY_
   -Pandroid.testInstrumentationRunnerArguments.photobook.librarySize="$LIBRARY_SIZE" \
   --stacktrace \
   | tee "$OUT_DIR/macrobenchmark-gradle.log"
+MACROBENCHMARK_STATUS=${PIPESTATUS[0]}
+set -e
 
 # Preserve benchmark JSON / Perfetto result locations for later forensic review.
 find baselineprofile/build \
@@ -323,9 +335,105 @@ find baselineprofile/build \
   -print \
   | sort > "$OUT_DIR/benchmark-result-files.txt" || true
 
-if ! "${ADB[@]}" shell pm path "$PACKAGE" 2>/dev/null | grep -q '^package:'; then
-  echo "Target benchmark package is not installed after Macrobenchmark execution" >&2
+# Do not trust Gradle's final exit code by itself: AGP/UTP may fail in its
+# post-test APK cleanup after every Macrobenchmark assertion has already passed.
+# Parse the authoritative JUnit XML and require exactly the expected Phase-3
+# benchmarks with zero failures/errors before any recovery is allowed.
+MACRO_XML="$(find baselineprofile/build/outputs/androidTest-results -type f -name 'TEST-*.xml' -print 2>/dev/null | sort | tail -n 1)"
+if [[ -z "$MACRO_XML" || ! -f "$MACRO_XML" ]]; then
+  echo "Macrobenchmark JUnit XML was not produced" >&2
   exit 1
+fi
+cp "$MACRO_XML" "$OUT_DIR/macrobenchmark-results.xml"
+
+EXPECTED_MACROBENCHMARKS_CSV="$(IFS=,; echo "${EXPECTED_MACROBENCHMARKS[*]}")"
+EXPECTED_MACROBENCHMARKS="$EXPECTED_MACROBENCHMARKS_CSV" \
+MACRO_XML="$MACRO_XML" \
+python3 - <<'PY'
+import os
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+xml_path = Path(os.environ["MACRO_XML"])
+expected = set(filter(None, os.environ["EXPECTED_MACROBENCHMARKS"].split(",")))
+root = ET.parse(xml_path).getroot()
+
+failures = int(root.attrib.get("failures", "0"))
+errors = int(root.attrib.get("errors", "0"))
+if failures != 0 or errors != 0:
+    raise SystemExit(f"Macrobenchmark XML reports failures={failures} errors={errors}")
+
+seen = set()
+for testcase in root.iter("testcase"):
+    classname = testcase.attrib.get("classname", "")
+    name = testcase.attrib.get("name", "")
+    if classname.endswith("PhotoBookMacrobenchmark"):
+        seen.add(name.split("[")[0])
+        if testcase.find("failure") is not None or testcase.find("error") is not None:
+            raise SystemExit(f"Macrobenchmark testcase failed: {name}")
+
+missing = sorted(expected - seen)
+unexpected = sorted(seen - expected)
+if missing:
+    raise SystemExit(f"Missing required Macrobenchmark testcase(s): {', '.join(missing)}")
+if unexpected:
+    raise SystemExit(f"Unexpected PhotoBook Macrobenchmark testcase(s): {', '.join(unexpected)}")
+
+print("validated_macrobenchmarks=" + ",".join(sorted(seen)))
+PY
+
+if (( MACROBENCHMARK_STATUS != 0 )); then
+  if ! grep -Fq 'Exception thrown during onAfterAll invocation of plugin AndroidTestApkInstallerPlugin: device offline' \
+      "$OUT_DIR/macrobenchmark-gradle.log"; then
+    echo "Macrobenchmark Gradle task failed for an unrecognized reason" >&2
+    exit "$MACROBENCHMARK_STATUS"
+  fi
+  echo "[phase3] accepting known post-test UTP cleanup failure after XML-verified benchmark success"
+fi
+
+# UTP is allowed to remove the tested APK after connectedAndroidTest. Recover ADB
+# first if cleanup left it offline, then reinstall the exact release-like APK
+# produced by this same Macrobenchmark build before lifecycle stress. Shared
+# MediaStore fixtures survive package reinstall and remain the certified scale corpus.
+adb_ready=false
+for attempt in $(seq 1 30); do
+  if "${ADB[@]}" get-state 2>/dev/null | grep -q '^device$'; then
+    adb_ready=true
+    break
+  fi
+  adb kill-server >/dev/null 2>&1 || true
+  adb start-server >/dev/null 2>&1 || true
+  sleep 2
+done
+if [[ "$adb_ready" != "true" ]]; then
+  echo "ADB did not recover after Macrobenchmark cleanup" >&2
+  exit 1
+fi
+
+if ! "${ADB[@]}" shell pm path "$PACKAGE" 2>/dev/null | grep -q '^package:'; then
+  TARGET_APK="$(find app/build/outputs/apk -type f -name '*.apk' -print 2>/dev/null \
+    | grep -E '/(benchmark|release)/' \
+    | if [[ "$ABI" == "x86_64" ]]; then grep -E '(x86_64|x86-64)'; else cat; fi \
+    | sort \
+    | tail -n 1)"
+  if [[ -z "$TARGET_APK" || ! -f "$TARGET_APK" ]]; then
+    echo "Could not locate the exact Phase-3 target APK for post-test reinstall" >&2
+    find app/build/outputs/apk -type f -name '*.apk' -print 2>/dev/null | sort >&2 || true
+    exit 1
+  fi
+  echo "[phase3] reinstalling post-test target APK: $TARGET_APK"
+  "${ADB[@]}" install -r "$TARGET_APK" > "$OUT_DIR/post-test-reinstall.txt"
+fi
+
+if ! "${ADB[@]}" shell pm path "$PACKAGE" 2>/dev/null | grep -q '^package:'; then
+  echo "Target benchmark package is unavailable after post-test recovery" >&2
+  exit 1
+fi
+
+if (( SDK >= 33 )); then
+  "${ADB[@]}" shell pm grant "$PACKAGE" android.permission.READ_MEDIA_IMAGES >/dev/null 2>&1 || true
+else
+  "${ADB[@]}" shell pm grant "$PACKAGE" android.permission.READ_EXTERNAL_STORAGE >/dev/null 2>&1 || true
 fi
 
 "${ADB[@]}" shell dumpsys meminfo "$PACKAGE" > "$OUT_DIR/meminfo-before-stress.txt" || true
@@ -333,7 +441,7 @@ fi
 "${ADB[@]}" shell dumpsys cpuinfo > "$OUT_DIR/cpuinfo-before-stress.txt" || true
 
 # Reuse the existing lifecycle/process-death/permission/low-memory harness against
-# the exact benchmark-installed target package and the seeded scale corpus.
+# the exact benchmark-built target package and the seeded scale corpus.
 PACKAGE="$PACKAGE" \
 ITERATIONS="$STRESS_ITERATIONS" \
 OUT_DIR="$OUT_DIR/lifecycle-stress" \
