@@ -324,7 +324,7 @@ set +e
   -Pandroid.testInstrumentationRunnerArguments.androidx.benchmark.enabledRules=Macrobenchmark \
   -Pandroid.testInstrumentationRunnerArguments.photobook.librarySize="$LIBRARY_SIZE" \
   --stacktrace \
-  | tee "$OUT_DIR/macrobenchmark-gradle.log"
+  2>&1 | tee "$OUT_DIR/macrobenchmark-gradle.log"
 MACROBENCHMARK_STATUS=${PIPESTATUS[0]}
 set -e
 
