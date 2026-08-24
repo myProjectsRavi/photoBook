@@ -17,13 +17,13 @@ OUT_DIR="${OUT_DIR:-build/reports/phase3/device-${LIBRARY_SIZE}}"
 PACKAGE="com.photobook.app"
 ROOM_TEST_CLASS="com.photobook.app.verification.IndexPersistenceInstrumentedTest"
 EXPECTED_MACROBENCHMARKS=(
-  "coldStartup"
-  "firstThumbnail"
-  "gridScroll"
-  "initialIndexReady"
-  "reelsOpen"
-  "search"
-  "warmStartup"
+  "a_initialIndexReadyLatency"
+  "b_coldStartup"
+  "c_warmStartup"
+  "d_firstVisibleThumbnailLatency"
+  "e_gridScrollFrameTiming"
+  "f_searchTypingAndResultsFrameTiming"
+  "g_reelsVerticalSwipeFrameTiming"
 )
 
 case "$LIBRARY_SIZE" in
