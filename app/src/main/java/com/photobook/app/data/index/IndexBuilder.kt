@@ -103,10 +103,12 @@ class IndexBuilder @Inject constructor(
         val exifElapsedMs = SystemClock.elapsedRealtime() - exifStartMs
 
         var geocodeElapsedMs = 0L
-        val shouldGeocode = exif.latitude != null && exif.longitude != null
-        val geo = if (shouldGeocode) {
+        val latitude = exif.latitude
+        val longitude = exif.longitude
+        val shouldGeocode = latitude != null && longitude != null
+        val geo = if (latitude != null && longitude != null) {
             val geocodeStartMs = SystemClock.elapsedRealtime()
-            offlineGeocoder.reverseGeocode(exif.latitude, exif.longitude).also {
+            offlineGeocoder.reverseGeocode(latitude, longitude).also {
                 geocodeElapsedMs = SystemClock.elapsedRealtime() - geocodeStartMs
             }
         } else {
