@@ -59,9 +59,10 @@ def main() -> None:
     if not args.macro_log.is_file():
         raise SystemExit(f"Missing Macrobenchmark log: {args.macro_log}")
 
+    logcat_text = args.logcat.read_text(errors="replace")
     raw_lines: list[str] = []
     markers: list[dict[str, str]] = []
-    for line in args.logcat.read_text(errors="replace").splitlines():
+    for line in logcat_text.splitlines():
         marker = parse_marker(line)
         if marker is not None:
             raw_lines.append(line)
@@ -101,8 +102,9 @@ def main() -> None:
         raise SystemExit("Invalid geocodeCount")
 
     macro_text = args.macro_log.read_text(errors="replace")
+    index_ready_text = macro_text + "\n" + logcat_text
     index_ready_matches = [
-        match for match in INDEX_READY_RE.finditer(macro_text)
+        match for match in INDEX_READY_RE.finditer(index_ready_text)
         if int(match.group("size")) == args.library_size
     ]
     if not index_ready_matches:
