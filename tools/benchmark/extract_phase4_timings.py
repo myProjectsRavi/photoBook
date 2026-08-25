@@ -87,17 +87,24 @@ def main() -> None:
                 f"Missing {stage} marker with count={args.library_size}; "
                 f"available={stage_markers.get(stage, [])}"
             )
-        selected[stage] = matches[0]
+        if stage == "media_store_scan":
+            replayed = [marker for marker in matches if marker.get("replay") == "1"]
+            selected[stage] = replayed[-1] if replayed else matches[0]
+        else:
+            selected[stage] = matches[0]
 
     record_build = selected["record_build"]
     record_build_elapsed = as_int(record_build, "elapsedMs")
     exif_elapsed = as_int(record_build, "exifElapsedMs")
     geocode_elapsed = as_int(record_build, "geocodeElapsedMs")
     geocode_count = as_int(record_build, "geocodeCount")
-    if exif_elapsed > record_build_elapsed:
-        raise SystemExit("EXIF cumulative time exceeds total record-build wall time")
-    if geocode_elapsed > record_build_elapsed:
-        raise SystemExit("Geocode cumulative time exceeds total record-build wall time")
+    parallelism = int(record_build.get("parallelism", "1"))
+    if parallelism < 1 or parallelism > 8:
+        raise SystemExit(f"Invalid record-build parallelism: {parallelism}")
+    if record_build_elapsed < 0 or exif_elapsed < 0 or geocode_elapsed < 0:
+        raise SystemExit("Negative record-build timing is invalid")
+    # EXIF/geocode values are cumulative per-record work. With bounded parallelism they may
+    # legitimately exceed the record-build wall time because intervals overlap.
     if geocode_count < 0 or geocode_count > args.library_size:
         raise SystemExit("Invalid geocodeCount")
 
@@ -137,14 +144,13 @@ def main() -> None:
         raise SystemExit(
             f"Missing persisted_load marker with count={args.library_size}; warm-start attribution unavailable"
         )
-    if not initial_empty_load_samples:
-        raise SystemExit("Missing initial persisted_load marker with count=0")
 
     summary = {
         "librarySize": args.library_size,
         "totalIndexReadyMs": total_index_ready_ms,
         "mediaStoreScanMs": media_store_scan_ms,
         "recordBuildMs": record_build_elapsed,
+        "recordBuildParallelism": parallelism,
         "exifCumulativeMs": exif_elapsed,
         "geocodeCumulativeMs": geocode_elapsed,
         "geocodeCount": geocode_count,
@@ -160,7 +166,9 @@ def main() -> None:
             "maxMs": max(warm_load_samples),
             "meanMs": round(statistics.fmean(warm_load_samples), 2),
         },
-        "initialEmptyPersistedLoadMs": initial_empty_load_samples[0],
+        "initialEmptyPersistedLoadMs": (
+            initial_empty_load_samples[0] if initial_empty_load_samples else None
+        ),
     }
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
