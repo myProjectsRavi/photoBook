@@ -131,19 +131,21 @@ class IndexPersistence @Inject constructor(
                 return@withTransaction
             }
 
-            val existingIds = photoDao.getAllIds().toSet()
-            val entities = records.map { it.toPhotoEntity() }
-            entities.chunked(DB_BATCH_SIZE).forEach { batch ->
-                photoDao.upsertPhotos(batch)
+            // Keep first-build persistence bounded. Materializing PhotoEntity + FTS rows for an
+            // entire 50k/100k library at once can overlap full-index publication and exhaust the
+            // normal Android app heap. One stale-ID set plus one 200-row conversion batch keeps
+            // the transaction atomic while bounding transient persistence allocations.
+            val staleIds = photoDao.getAllIds().toMutableSet()
+            var startIndex = 0
+            while (startIndex < records.size) {
+                val endIndex = (startIndex + DB_BATCH_SIZE).coerceAtMost(records.size)
+                val entities = records.subList(startIndex, endIndex).map { it.toPhotoEntity() }
+                photoDao.upsertPhotos(entities)
+                photoDao.upsertFtsRows(entities.map { it.toFtsEntity() })
+                entities.forEach { entity -> staleIds.remove(entity.id) }
+                startIndex = endIndex
             }
-            entities.map { it.toFtsEntity() }
-                .chunked(DB_BATCH_SIZE)
-                .forEach { batch ->
-                    photoDao.upsertFtsRows(batch)
-                }
 
-            val incomingIds = entities.asSequence().map { it.id }.toSet()
-            val staleIds = existingIds - incomingIds
             deleteByIdsInternal(staleIds.toList())
         }
     }

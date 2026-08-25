@@ -1,66 +1,181 @@
 package com.photobook.app.baselineprofile
 
+import android.os.Build
 import android.os.SystemClock
 import android.view.KeyEvent
+import androidx.benchmark.macro.ExperimentalMetricApi
 import androidx.benchmark.macro.FrameTimingMetric
 import androidx.benchmark.macro.MacrobenchmarkScope
+import androidx.benchmark.macro.MemoryUsageMetric
 import androidx.benchmark.macro.StartupMode
 import androidx.benchmark.macro.StartupTimingMetric
 import androidx.benchmark.macro.junit4.MacrobenchmarkRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
+import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
+import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.ceil
+import org.junit.Before
+import org.junit.FixMethodOrder
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.junit.runners.MethodSorters
 
 @RunWith(AndroidJUnit4::class)
 @LargeTest
+@FixMethodOrder(MethodSorters.NAME_ASCENDING)
+@OptIn(ExperimentalMetricApi::class)
 class PhotoBookMacrobenchmark {
 
     @get:Rule
     val benchmarkRule = MacrobenchmarkRule()
 
+    private var defaultImePackage: String? = null
+    private var defaultImeResolved = false
+
+    @Before
+    fun prepareScaleFixture() {
+        BenchmarkMediaSeeder.ensureSeeded()
+    }
+
+    /**
+     * Measures the one-time first-library index build without wrapping the whole
+     * operation in Perfetto. At 50k/100k a tens-of-minutes trace can itself fill
+     * emulator storage and invalidate the measurement. The subsequent tests reuse
+     * the persisted Room index produced here and measure steady-state behavior with
+     * normal Macrobenchmark traces.
+     */
     @Test
-    fun coldStartup() {
+    fun a_initialIndexReadyLatency() {
+        val librarySize = BenchmarkMediaSeeder.requestedLibrarySize()
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+
+        device.executeShellCommand("pm clear $TARGET_PACKAGE")
+        grantRuntimePermissions(device)
+        device.pressHome()
+
+        val startMs = SystemClock.elapsedRealtime()
+        launchTargetApp(device)
+        requireAppWindow(device)
+        requireReadyLibrary(device, indexReadyTimeoutMs(librarySize))
+        val elapsedMs = SystemClock.elapsedRealtime() - startMs
+
+        check(elapsedMs > 0L) { "Initial index-ready latency was not captured" }
+        val photosPerSecond = librarySize * 1_000.0 / elapsedMs.toDouble()
+        println(
+            String.format(
+                Locale.US,
+                "[phase3] indexReady librarySize=%d elapsedMs=%d photosPerSecond=%.2f",
+                librarySize,
+                elapsedMs,
+                photosPerSecond,
+            ),
+        )
+    }
+
+    @Test
+    fun b_coldStartup() {
+        ensureSteadyStateIndex()
+        forceStopTarget(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()))
+
         benchmarkRule.measureRepeated(
             packageName = TARGET_PACKAGE,
-            metrics = listOf(StartupTimingMetric()),
+            metrics = listOf(
+                StartupTimingMetric(),
+                MemoryUsageMetric(MemoryUsageMetric.Mode.Max),
+            ),
             iterations = STARTUP_ITERATIONS,
             startupMode = StartupMode.COLD,
-            setupBlock = { pressHome() },
+            setupBlock = {
+                // StartupMode.COLD kills the target process between setupBlock and
+                // measureBlock. Keep setup process-free; the persisted index was
+                // prepared before entering measureRepeated.
+                grantRuntimePermissions(device)
+                pressHome()
+            },
         ) {
             startActivityAndWait()
         }
     }
 
     @Test
-    fun warmStartup() {
+    fun c_warmStartup() {
+        ensureSteadyStateIndex()
+
         benchmarkRule.measureRepeated(
             packageName = TARGET_PACKAGE,
-            metrics = listOf(StartupTimingMetric()),
+            metrics = listOf(
+                StartupTimingMetric(),
+                MemoryUsageMetric(MemoryUsageMetric.Mode.Max),
+            ),
             iterations = STARTUP_ITERATIONS,
             startupMode = StartupMode.WARM,
-            setupBlock = { pressHome() },
+            setupBlock = {
+                prepareReadyAppForMeasurement()
+            },
         ) {
             startActivityAndWait()
         }
     }
 
     @Test
-    fun gridScrollFrameTiming() {
+    fun d_firstVisibleThumbnailLatency() {
+        ensureSteadyStateIndex()
+        forceStopTarget(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()))
+        val samplesMs = mutableListOf<Long>()
+
         benchmarkRule.measureRepeated(
             packageName = TARGET_PACKAGE,
-            metrics = listOf(FrameTimingMetric()),
+            metrics = listOf(
+                StartupTimingMetric(),
+                MemoryUsageMetric(MemoryUsageMetric.Mode.Max),
+            ),
+            iterations = STARTUP_ITERATIONS,
+            startupMode = StartupMode.COLD,
+            setupBlock = {
+                grantRuntimePermissions(device)
+                pressHome()
+            },
+        ) {
+            val startMs = SystemClock.elapsedRealtime()
+            startActivityAndWait()
+            requireAppWindow(device)
+            check(waitForVisiblePhotoThumbnail(device) != null) {
+                "No benchmark photo thumbnail became visible after cold start"
+            }
+            samplesMs += SystemClock.elapsedRealtime() - startMs
+        }
+
+        val sorted = samplesMs.sorted()
+        println(
+            "[phase3] firstThumbnail " +
+                "librarySize=${BenchmarkMediaSeeder.requestedLibrarySize()} " +
+                "p50Ms=${percentile(sorted, 50)} " +
+                "p95Ms=${percentile(sorted, 95)} " +
+                "maxMs=${sorted.last()}",
+        )
+    }
+
+    @Test
+    fun e_gridScrollFrameTiming() {
+        ensureSteadyStateIndex()
+
+        benchmarkRule.measureRepeated(
+            packageName = TARGET_PACKAGE,
+            metrics = listOf(
+                FrameTimingMetric(),
+                MemoryUsageMetric(MemoryUsageMetric.Mode.Max),
+            ),
             iterations = INTERACTION_ITERATIONS,
             startupMode = null,
             setupBlock = {
-                pressHome()
-                startActivityAndWait()
-                requireAppWindow()
-                requireReadyLibrary()
+                prepareReadyAppForMeasurement(pressHomeAfterReady = false)
             },
         ) {
             repeat(8) {
@@ -77,17 +192,19 @@ class PhotoBookMacrobenchmark {
     }
 
     @Test
-    fun searchTypingAndResultsFrameTiming() {
+    fun f_searchTypingAndResultsFrameTiming() {
+        ensureSteadyStateIndex()
+
         benchmarkRule.measureRepeated(
             packageName = TARGET_PACKAGE,
-            metrics = listOf(FrameTimingMetric()),
+            metrics = listOf(
+                FrameTimingMetric(),
+                MemoryUsageMetric(MemoryUsageMetric.Mode.Max),
+            ),
             iterations = INTERACTION_ITERATIONS,
             startupMode = null,
             setupBlock = {
-                pressHome()
-                startActivityAndWait()
-                requireAppWindow()
-                requireReadyLibrary()
+                prepareReadyAppForMeasurement(pressHomeAfterReady = false)
                 val search = device.findObject(By.clazz("android.widget.EditText"))
                     ?: error("PhotoBook search EditText was not exposed to UI Automator")
                 search.click()
@@ -106,35 +223,38 @@ class PhotoBookMacrobenchmark {
     }
 
     @Test
-    fun reelsVerticalSwipeFrameTiming() {
+    fun g_reelsVerticalSwipeFrameTiming() {
+        ensureSteadyStateIndex()
+        var reelsModeEnabled = false
+        var reelsThumbnailCenter: TapPoint? = null
+
         benchmarkRule.measureRepeated(
             packageName = TARGET_PACKAGE,
-            metrics = listOf(FrameTimingMetric()),
+            metrics = listOf(
+                FrameTimingMetric(),
+                MemoryUsageMetric(MemoryUsageMetric.Mode.Max),
+            ),
             iterations = INTERACTION_ITERATIONS,
             startupMode = null,
             setupBlock = {
-                pressHome()
-                startActivityAndWait()
-                requireAppWindow()
-                val reelsToggle = requireReadyLibrary()
-                reelsToggle.click()
-                device.waitForIdle()
+                prepareReadyAppForMeasurement(pressHomeAfterReady = false)
 
-                // Phase-0 benchmark devices are seeded with deterministic media fixtures.
-                device.swipe(
-                    device.displayWidth / 2,
-                    (device.displayHeight * 0.82f).toInt(),
-                    device.displayWidth / 2,
-                    (device.displayHeight * 0.55f).toInt(),
-                    10,
-                )
-                device.click(
-                    device.displayWidth / 6,
-                    (device.displayHeight * 0.72f).toInt(),
-                )
-                val viewerOpened = device.wait(Until.hasObject(By.desc("Close")), UI_TIMEOUT_MS)
+                // The home action enables vertical paging; it does not itself open
+                // a viewer. Enable it once, then open an actual visible photo card.
+                if (!reelsModeEnabled) {
+                    requireReadyLibrary(device).click()
+                    reelsModeEnabled = true
+                    device.waitForIdle()
+                }
+
+                val thumbnailCenter = reelsThumbnailCenter
+                    ?: waitForVisiblePhotoThumbnail(device)
+                    ?: error("Reels benchmark requires a visible photo thumbnail")
+                reelsThumbnailCenter = thumbnailCenter
+                device.click(thumbnailCenter.x, thumbnailCenter.y)
+                val viewerOpened = device.wait(Until.hasObject(By.desc("Close")), THUMBNAIL_TIMEOUT_MS)
                 check(viewerOpened) {
-                    "Reels benchmark requires a seeded fixture library and a visible first photo"
+                    "Reels benchmark could not open the seeded photo viewer"
                 }
             },
         ) {
@@ -151,7 +271,55 @@ class PhotoBookMacrobenchmark {
         }
     }
 
-    private fun MacrobenchmarkScope.requireAppWindow() {
+    /**
+     * Establishes the persistent steady-state index outside a Macrobenchmark trace.
+     * This is intentionally idempotent: after a_initialIndexReadyLatency it should
+     * return quickly, while an individually invoked test can still self-prepare.
+     */
+    private fun ensureSteadyStateIndex() {
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        grantRuntimePermissions(device)
+        device.pressHome()
+        launchTargetApp(device)
+        requireAppWindow(device)
+        requireReadyLibrary(
+            device = device,
+            timeoutMs = indexReadyTimeoutMs(BenchmarkMediaSeeder.requestedLibrarySize()),
+        )
+        device.pressHome()
+    }
+
+    private fun MacrobenchmarkScope.prepareReadyAppForMeasurement(
+        pressHomeAfterReady: Boolean = true,
+    ) {
+        grantRuntimePermissions(device)
+        pressHome()
+        startActivityAndWait()
+        requireAppWindow(device)
+
+        // A previous interaction iteration may have left the photo viewer open.
+        // Close it before locating home-screen controls for the next iteration.
+        device.findObject(By.desc("Close"))?.let { close ->
+            close.click()
+            device.waitForIdle()
+        }
+
+        requireReadyLibrary(device)
+        if (pressHomeAfterReady) {
+            pressHome()
+        }
+    }
+
+    private fun launchTargetApp(device: UiDevice) {
+        val output = device.executeShellCommand(
+            "am start -W -n $TARGET_PACKAGE/$TARGET_ACTIVITY",
+        )
+        check(!output.contains("Error", ignoreCase = true)) {
+            "Unable to launch PhotoBook: $output"
+        }
+    }
+
+    private fun requireAppWindow(device: UiDevice) {
         val visible = device.wait(
             Until.hasObject(By.pkg(TARGET_PACKAGE).depth(0)),
             UI_TIMEOUT_MS,
@@ -159,9 +327,21 @@ class PhotoBookMacrobenchmark {
         check(visible) { "PhotoBook window did not become visible" }
     }
 
-    private fun MacrobenchmarkScope.requireReadyLibrary(): UiObject2 {
-        val deadlineMs = SystemClock.elapsedRealtime() + READY_TIMEOUT_MS
+    private fun requireReadyLibrary(
+        device: UiDevice,
+        timeoutMs: Long = BenchmarkMediaSeeder.readyTimeoutMs(),
+    ): UiObject2 {
+        val deadlineMs = SystemClock.elapsedRealtime() + timeoutMs
         while (SystemClock.elapsedRealtime() < deadlineMs) {
+            // Search auto-focus is intentionally enabled once the library becomes ready. On
+            // smaller emulator viewports the IME can then cover the action row (and the grid),
+            // making UiAutomator falsely report that "Reel Browsing" never became visible.
+            // Dismiss only a currently visible configured IME; never issue an unconditional
+            // Back press that could navigate out of PhotoBook while indexing is still running.
+            if (dismissVisibleIme(device)) {
+                device.waitForIdle()
+            }
+
             val action = clickableAncestor(device.findObject(By.text(REELS_ACTION_TEXT)))
             if (action?.isEnabled == true) {
                 return action
@@ -171,8 +351,184 @@ class PhotoBookMacrobenchmark {
         }
         error(
             "PhotoBook did not reach its ready state before benchmark measurement; " +
-                "the seeded fixture library may still be indexing",
+                "librarySize=${BenchmarkMediaSeeder.requestedLibrarySize()} timeoutMs=$timeoutMs",
         )
+    }
+
+    /**
+     * Finds a visible grid card without depending on PhotoThumbnail's accessibility
+     * label. The label intentionally changes from file name to ML tags as local
+     * intelligence finishes, so it is not a stable benchmark identifier.
+     *
+     * Compose virtual semantics nodes are not reliably package-attributed in
+     * UiAutomator, but the photo Card is explicitly combinedClickable. Start from
+     * clickable semantics, snapshot bounds immediately, then identify a photo row
+     * by the deterministic grid geometry. This keeps live UiObject2 instances out
+     * of the selector result and avoids stale-node failures during recomposition.
+     */
+    private fun waitForVisiblePhotoThumbnail(device: UiDevice): TapPoint? {
+        val deadlineMs = SystemClock.elapsedRealtime() + THUMBNAIL_TIMEOUT_MS
+        var lastClickableBounds = ""
+        var lastCandidateBounds = ""
+        while (SystemClock.elapsedRealtime() < deadlineMs) {
+            // The app auto-focuses search when it reaches ready state. Ensure the results
+            // viewport, rather than the input method, owns the lower part of the screen before
+            // interpreting clickable bounds as grid geometry.
+            if (dismissVisibleIme(device)) {
+                device.waitForIdle()
+            }
+
+            val geometry = photoGridGeometry(device)
+            val clickables = snapshotClickableBounds(device)
+            lastClickableBounds = clickables
+                .take(24)
+                .joinToString(separator = ";") { candidate ->
+                    "${candidate.left},${candidate.top},${candidate.right},${candidate.bottom}"
+                }
+            val candidates = clickables.filter { candidate ->
+                isPhotoGridCandidate(candidate, geometry)
+            }
+            lastCandidateBounds = candidates
+                .take(12)
+                .joinToString(separator = ";") { candidate ->
+                    "${candidate.left},${candidate.top},${candidate.right},${candidate.bottom}"
+                }
+
+            val visiblePhoto = candidates.firstOrNull { candidate ->
+                candidates.any { other ->
+                    other != candidate &&
+                        abs(other.centerY - candidate.centerY) <= geometry.rowTolerancePx
+                }
+            }
+            if (visiblePhoto != null) {
+                return TapPoint(visiblePhoto.centerX, visiblePhoto.centerY)
+            }
+
+            device.waitForIdle()
+            SystemClock.sleep(50)
+        }
+
+        val geometry = photoGridGeometry(device)
+        println(
+            "[phase3] thumbnailSelector timeout " +
+                "expectedCellPx=${geometry.expectedCellPx} " +
+                "expectedCardPx=${geometry.expectedCardPx} " +
+                "clickableBounds=$lastClickableBounds candidateBounds=$lastCandidateBounds",
+        )
+        return null
+    }
+
+    /**
+     * Dismiss the visible system input method without hard-coding Gboard. The default IME
+     * package is resolved once from Android's secure setting; UiAutomator's package query only
+     * matches it while its window is visible. This keeps Back strictly conditional so the
+     * benchmark cannot accidentally leave the target app when no keyboard is present.
+     */
+    private fun dismissVisibleIme(device: UiDevice): Boolean {
+        val imePackage = resolveDefaultImePackage(device) ?: return false
+        if (!device.hasObject(By.pkg(imePackage))) return false
+
+        device.pressBack()
+        device.waitForIdle()
+        SystemClock.sleep(200)
+        println("[phase3] dismissed visible IME package=$imePackage")
+        return true
+    }
+
+    private fun resolveDefaultImePackage(device: UiDevice): String? {
+        if (defaultImeResolved) return defaultImePackage
+        defaultImeResolved = true
+        defaultImePackage = device.executeShellCommand("settings get secure default_input_method")
+            .trim()
+            .substringBefore('/')
+            .takeIf { packageName ->
+                packageName.isNotBlank() && packageName != "null" && '.' in packageName
+            }
+        return defaultImePackage
+    }
+
+    private fun snapshotClickableBounds(device: UiDevice): List<PhotoGridCandidate> =
+        device.findObjects(By.clickable(true))
+            .mapNotNull { node ->
+                runCatching {
+                    val bounds = node.visibleBounds
+                    PhotoGridCandidate(
+                        left = bounds.left,
+                        top = bounds.top,
+                        right = bounds.right,
+                        bottom = bounds.bottom,
+                    )
+                }.getOrNull()
+            }
+            .distinct()
+
+    private fun photoGridGeometry(device: UiDevice): PhotoGridGeometry {
+        val density = InstrumentationRegistry.getInstrumentation()
+            .targetContext.resources.displayMetrics.density
+            .coerceAtLeast(1f)
+        val horizontalInsetPx = RESULTS_HORIZONTAL_INSET_DP * density
+        val resultsWidthPx = (device.displayWidth - horizontalInsetPx * 2f).coerceAtLeast(1f)
+        val resultsWidthDp = resultsWidthPx / density
+        val columns = when {
+            resultsWidthDp >= 700f -> 5
+            resultsWidthDp >= 520f -> 4
+            else -> 3
+        }
+        val expectedCellPx = resultsWidthPx / columns
+        val expectedCardPx = expectedCellPx - PHOTO_CARD_PADDING_DP * 2f * density
+        val tolerancePx = PHOTO_SIZE_TOLERANCE_DP * density
+        return PhotoGridGeometry(
+            expectedCellPx = expectedCellPx,
+            expectedCardPx = expectedCardPx,
+            tolerancePx = tolerancePx,
+            rowTolerancePx = (ROW_ALIGNMENT_TOLERANCE_DP * density).toInt().coerceAtLeast(1),
+            minLeftPx = (horizontalInsetPx - tolerancePx).toInt(),
+            maxRightPx = (device.displayWidth - horizontalInsetPx + tolerancePx).toInt(),
+        )
+    }
+
+    private fun isPhotoGridCandidate(
+        candidate: PhotoGridCandidate,
+        geometry: PhotoGridGeometry,
+    ): Boolean {
+        val width = candidate.width
+        val height = candidate.height
+        if (width <= 0 || height <= 0) return false
+        if (candidate.left < geometry.minLeftPx || candidate.right > geometry.maxRightPx) return false
+        if (abs(width - height) > geometry.tolerancePx) return false
+
+        val matchesOuterCell =
+            abs(width - geometry.expectedCellPx) <= geometry.tolerancePx &&
+                abs(height - geometry.expectedCellPx) <= geometry.tolerancePx
+        val matchesPaddedCard =
+            abs(width - geometry.expectedCardPx) <= geometry.tolerancePx &&
+                abs(height - geometry.expectedCardPx) <= geometry.tolerancePx
+        return matchesOuterCell || matchesPaddedCard
+    }
+
+    private fun forceStopTarget(device: UiDevice) {
+        device.executeShellCommand("am force-stop $TARGET_PACKAGE")
+        val deadlineMs = SystemClock.elapsedRealtime() + PROCESS_STOP_TIMEOUT_MS
+        while (SystemClock.elapsedRealtime() < deadlineMs) {
+            if (device.executeShellCommand("pidof $TARGET_PACKAGE").trim().isEmpty()) return
+            SystemClock.sleep(100)
+        }
+        error("PhotoBook process remained alive after benchmark force-stop precondition")
+    }
+
+    private fun grantRuntimePermissions(device: UiDevice) {
+        val permissions = buildList {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add("android.permission.READ_MEDIA_IMAGES")
+            }
+            add("android.permission.ACCESS_MEDIA_LOCATION")
+            add("android.permission.READ_EXTERNAL_STORAGE")
+        }
+        permissions.forEach { permission ->
+            runCatching {
+                device.executeShellCommand("pm grant $TARGET_PACKAGE $permission")
+            }
+        }
     }
 
     private fun clickableAncestor(initial: UiObject2?): UiObject2? {
@@ -185,13 +541,58 @@ class PhotoBookMacrobenchmark {
         return null
     }
 
+    private fun indexReadyTimeoutMs(librarySize: Int): Long = when (librarySize) {
+        in 1..10_000 -> 4L * 60_000L
+        in 10_001..50_000 -> 20L * 60_000L
+        else -> 45L * 60_000L
+    }
+
+    private fun percentile(sortedValues: List<Long>, percentile: Int): Long {
+        require(sortedValues.isNotEmpty())
+        val nearestRank = ceil((percentile / 100.0) * sortedValues.size).toInt()
+        val index = (nearestRank - 1).coerceIn(0, sortedValues.lastIndex)
+        return sortedValues[index]
+    }
+
+    private data class TapPoint(
+        val x: Int,
+        val y: Int,
+    )
+
+    private data class PhotoGridCandidate(
+        val left: Int,
+        val top: Int,
+        val right: Int,
+        val bottom: Int,
+    ) {
+        val width: Int get() = right - left
+        val height: Int get() = bottom - top
+        val centerX: Int get() = left + width / 2
+        val centerY: Int get() = top + height / 2
+    }
+
+    private data class PhotoGridGeometry(
+        val expectedCellPx: Float,
+        val expectedCardPx: Float,
+        val tolerancePx: Float,
+        val rowTolerancePx: Int,
+        val minLeftPx: Int,
+        val maxRightPx: Int,
+    )
+
     companion object {
         private const val TARGET_PACKAGE = "com.photobook.app"
+        private const val TARGET_ACTIVITY = ".MainActivity"
         private const val REELS_ACTION_TEXT = "Reel Browsing"
         private const val STARTUP_ITERATIONS = 10
         private const val INTERACTION_ITERATIONS = 5
         private const val UI_TIMEOUT_MS = 8_000L
-        private const val READY_TIMEOUT_MS = 30_000L
+        private const val THUMBNAIL_TIMEOUT_MS = 60_000L
+        private const val PROCESS_STOP_TIMEOUT_MS = 5_000L
         private const val MAX_ANCESTOR_DEPTH = 4
+        private const val RESULTS_HORIZONTAL_INSET_DP = 20f
+        private const val PHOTO_CARD_PADDING_DP = 2f
+        private const val PHOTO_SIZE_TOLERANCE_DP = 10f
+        private const val ROW_ALIGNMENT_TOLERANCE_DP = 10f
     }
 }

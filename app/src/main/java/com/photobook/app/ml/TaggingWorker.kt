@@ -22,6 +22,7 @@ import com.photobook.app.util.Constants
 import com.photobook.app.util.LocalDiagnostics
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
 @HiltWorker
@@ -39,6 +40,7 @@ class TaggingWorker @AssistedInject constructor(
         return runCatching {
             runTaggingWork()
         }.getOrElse { error ->
+            if (error is CancellationException) throw error
             LocalDiagnostics.record(
                 context = applicationContext,
                 area = "tagging-worker",
@@ -118,7 +120,7 @@ class TaggingWorker @AssistedInject constructor(
                 } else {
                     null
                 }
-                
+
                 bitmap?.recycle()
 
                 pendingIndexUpdates += PhotoIndex.PhotoIntelligenceUpdate(
@@ -178,6 +180,7 @@ class TaggingWorker @AssistedInject constructor(
                 .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
                 .setRequiresBatteryNotLow(true)
                 .setRequiresCharging(true)
+                .setRequiresDeviceIdle(true)
                 .build()
 
             val request = OneTimeWorkRequestBuilder<TaggingWorker>()
@@ -186,7 +189,7 @@ class TaggingWorker @AssistedInject constructor(
 
             WorkManager.getInstance(context).enqueueUniqueWork(
                 Constants.ML_WORKER_NAME,
-                ExistingWorkPolicy.KEEP,
+                ExistingWorkPolicy.REPLACE,
                 request,
             )
         }

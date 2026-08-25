@@ -26,7 +26,7 @@ fi
 "${ADB[@]}" get-state >/dev/null
 SDK="$("${ADB[@]}" shell getprop ro.build.version.sdk | tr -d '\r')"
 MODEL="$("${ADB[@]}" shell getprop ro.product.model | tr -d '\r')"
-RAM_KB="$("${ADB[@]}" shell awk '/MemTotal/ {print $2}' /proc/meminfo | tr -d '\r')"
+RAM_KB="$("${ADB[@]}" shell cat /proc/meminfo | tr -d '\r' | awk '/MemTotal/ {print $2; exit}')"
 
 cat > "$OUT_DIR/device.txt" <<EOF
 package=$PACKAGE
