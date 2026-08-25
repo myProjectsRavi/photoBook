@@ -9,9 +9,12 @@ import com.photobook.app.data.model.RawPhotoData
 import com.photobook.app.data.source.ExifExtractor
 import com.photobook.app.data.source.MediaStoreScanner
 import com.photobook.app.util.DateUtils
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 
 class IndexBuilder @Inject constructor(
     private val mediaStoreScanner: MediaStoreScanner,
@@ -22,14 +25,22 @@ class IndexBuilder @Inject constructor(
     suspend fun buildIndex(onProgress: (processed: Int, total: Int) -> Unit = { _, _ -> }): List<PhotoRecord> {
         val scanStartMs = SystemClock.elapsedRealtime()
         val rawPhotos = mediaStoreScanner.scanAll()
+        val scanElapsedMs = SystemClock.elapsedRealtime() - scanStartMs
         Log.i(
             PHASE4_TAG,
-            "stage=media_store_scan elapsedMs=${SystemClock.elapsedRealtime() - scanStartMs} count=${rawPhotos.size}",
+            "stage=media_store_scan elapsedMs=$scanElapsedMs count=${rawPhotos.size}",
         )
-        return buildIndexFromRaw(
+        val records = buildIndexFromRaw(
             rawPhotos = rawPhotos,
             onProgress = onProgress,
         )
+        // Replay the initial scan timing after record construction so long 50k/100k runs retain
+        // this measurement even if Android's finite logcat buffer rotates the early marker out.
+        Log.i(
+            PHASE4_TAG,
+            "stage=media_store_scan elapsedMs=$scanElapsedMs count=${rawPhotos.size} replay=1",
+        )
+        return records
     }
 
     suspend fun buildIndexFromRaw(
@@ -45,49 +56,65 @@ class IndexBuilder @Inject constructor(
             var exifElapsedMs = 0L
             var geocodeElapsedMs = 0L
             var geocodeCount = 0
+            var processed = 0
+            val records = ArrayList<PhotoRecord>(rawPhotos.size)
             val buildStartMs = SystemClock.elapsedRealtime()
-            val records = rawPhotos.mapIndexed { index, raw ->
-                val record = buildRecord(
-                    raw = raw,
-                    onExifMeasured = { elapsedMs -> exifElapsedMs += elapsedMs },
-                    onGeocodeMeasured = { elapsedMs ->
-                        geocodeElapsedMs += elapsedMs
+
+            var startIndex = 0
+            while (startIndex < rawPhotos.size) {
+                val endIndex = (startIndex + RECORD_BUILD_PARALLELISM).coerceAtMost(rawPhotos.size)
+                val batchResults = coroutineScope {
+                    (startIndex until endIndex)
+                        .map { index ->
+                            async {
+                                buildRecord(rawPhotos[index])
+                            }
+                        }
+                        .awaitAll()
+                }
+
+                batchResults.forEach { result ->
+                    records += result.record
+                    exifElapsedMs += result.exifElapsedMs
+                    geocodeElapsedMs += result.geocodeElapsedMs
+                    if (result.didGeocode) {
                         geocodeCount += 1
-                    },
-                )
-                onProgress(index + 1, rawPhotos.size)
-                record
+                    }
+                    processed += 1
+                    onProgress(processed, rawPhotos.size)
+                }
+                startIndex = endIndex
             }
+
             Log.i(
                 PHASE4_TAG,
                 "stage=record_build elapsedMs=${SystemClock.elapsedRealtime() - buildStartMs} " +
                     "count=${rawPhotos.size} exifElapsedMs=$exifElapsedMs " +
-                    "geocodeElapsedMs=$geocodeElapsedMs geocodeCount=$geocodeCount",
+                    "geocodeElapsedMs=$geocodeElapsedMs geocodeCount=$geocodeCount " +
+                    "parallelism=$RECORD_BUILD_PARALLELISM",
             )
             records
         }
     }
 
-    private fun buildRecord(
-        raw: RawPhotoData,
-        onExifMeasured: (Long) -> Unit,
-        onGeocodeMeasured: (Long) -> Unit,
-    ): PhotoRecord {
+    private fun buildRecord(raw: RawPhotoData): MeasuredPhotoRecord {
         val exifStartMs = SystemClock.elapsedRealtime()
         val exif = exifExtractor.extract(raw.uriString, raw.filePath)
-        onExifMeasured(SystemClock.elapsedRealtime() - exifStartMs)
+        val exifElapsedMs = SystemClock.elapsedRealtime() - exifStartMs
 
-        val geo = if (exif.latitude != null && exif.longitude != null) {
+        var geocodeElapsedMs = 0L
+        val shouldGeocode = exif.latitude != null && exif.longitude != null
+        val geo = if (shouldGeocode) {
             val geocodeStartMs = SystemClock.elapsedRealtime()
             offlineGeocoder.reverseGeocode(exif.latitude, exif.longitude).also {
-                onGeocodeMeasured(SystemClock.elapsedRealtime() - geocodeStartMs)
+                geocodeElapsedMs = SystemClock.elapsedRealtime() - geocodeStartMs
             }
         } else {
             null
         }
 
         val dateParts = DateUtils.toDateParts(raw.dateAdded)
-        return PhotoRecord(
+        val record = PhotoRecord(
             id = raw.id,
             uriString = raw.uriString,
             filePath = raw.filePath,
@@ -119,9 +146,23 @@ class IndexBuilder @Inject constructor(
             isOcrProcessed = false,
             ocrStatus = IntelligenceStatus.PENDING,
         )
+        return MeasuredPhotoRecord(
+            record = record,
+            exifElapsedMs = exifElapsedMs,
+            geocodeElapsedMs = geocodeElapsedMs,
+            didGeocode = shouldGeocode,
+        )
     }
 
+    private data class MeasuredPhotoRecord(
+        val record: PhotoRecord,
+        val exifElapsedMs: Long,
+        val geocodeElapsedMs: Long,
+        val didGeocode: Boolean,
+    )
+
     companion object {
+        private const val RECORD_BUILD_PARALLELISM = 2
         private const val PHASE4_TAG = "PhotoBookPhase4"
     }
 }
