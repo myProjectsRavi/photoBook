@@ -10,6 +10,7 @@ PACKAGE="${PACKAGE:-com.photobook.app}"
 ACTIVITY="${ACTIVITY:-com.photobook.app/.MainActivity}"
 ITERATIONS="${ITERATIONS:-20}"
 OUT_DIR="${OUT_DIR:-build/reports/phase0/device-stress}"
+PRESERVE_LOGCAT="${PRESERVE_LOGCAT:-0}"
 
 mkdir -p "$OUT_DIR"
 
@@ -35,9 +36,12 @@ sdk=$SDK
 model=$MODEL
 ram_kb=$RAM_KB
 iterations=$ITERATIONS
+preserve_logcat=$PRESERVE_LOGCAT
 EOF
 
-"${ADB[@]}" logcat -c || true
+if [[ "$PRESERVE_LOGCAT" != "1" ]]; then
+  "${ADB[@]}" logcat -c || true
+fi
 "${ADB[@]}" shell dumpsys gfxinfo "$PACKAGE" reset >/dev/null 2>&1 || true
 
 launch_app() {
