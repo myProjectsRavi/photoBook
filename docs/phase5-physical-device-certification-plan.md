@@ -19,6 +19,8 @@ Phase 5 is certification-first. The initial branch must not change indexing, sea
 - Originals must not be modified by test tooling.
 - Physical-device evidence must record device model, Android/API level, RAM tier, library size, airplane-mode state, charging state, exact commit SHA, and whether Play Services is usable.
 - Emulator evidence and physical-device evidence must remain separately labelled.
+- Deterministic 10k/50k/100k scale seeding is allowed only on a dedicated test device whose visible image library contains no non-benchmark media. Never run deterministic scale seeding on a normal personal photo library.
+- Benchmark cleanup may delete only PhotoBook-owned `PBENCH_*` fixtures in `Pictures/PhotoBookBenchmark/`; it must refuse foreign media rather than remove it.
 - A reproducible crash, ANR, OOM, data-loss event, privacy regression, permission-state mismatch, or unexplained correctness mismatch blocks Phase 5 completion.
 
 ## Phase 5A — physical runtime replay
@@ -34,7 +36,11 @@ STRESS_ITERATIONS=12 \
 bash tools/benchmark/run_phase3_device.sh
 ```
 
-Run 50k/100k only where the device has sufficient free storage for deterministic seeding. Do not force destructive low-storage conditions on a personal phone.
+Deterministic scale certification must use a dedicated/wiped test device or test profile with no non-benchmark image rows visible to MediaStore. The runner must fail closed before seeding when `REQUIRE_PHYSICAL=1` detects any non-PhotoBook image row. This prevents both accidental processing of personal EXIF/media and false library-size measurements.
+
+Stale PhotoBook benchmark fixtures may be replaced, but only rows in `Pictures/PhotoBookBenchmark/` whose display names begin with `PBENCH_` are owned by the harness. A foreign file in that folder is a hard stop, not something the harness may delete.
+
+Run 50k/100k only where the dedicated test device has sufficient free storage for deterministic seeding. Do not force destructive low-storage conditions on a personal phone.
 
 The runner must fail if the selected target is an emulator when `REQUIRE_PHYSICAL=1`.
 
@@ -68,7 +74,7 @@ Do not claim 10k/50k/100k Macrobenchmark throughput on API 26-27 from this path.
 
 Synthetic PNGs are valid for deterministic scale/plumbing but are not proof of full-resolution decode, EXIF diversity, Reels soak, or ML/archive accuracy.
 
-Use a private, local-only representative corpus. Do not commit personal media or derived sensitive metadata to GitHub.
+Use a private, local-only representative corpus. Do not commit personal media or derived sensitive metadata to GitHub. This real-photo replay is a separate mode from deterministic scale seeding: do not run the destructive/replacing benchmark seeder against the representative or personal corpus.
 
 Required checks:
 
@@ -123,4 +129,4 @@ If Phase 5A/B/C reveal no production defect, stop without a production patch.
 - Phase 2: merged and verified.
 - Phase 3: merged; 10k/50k/100k constrained Android 15 KVM-emulator certification passed.
 - Phase 4: merged; bounded-two EXIF record construction improved first-index-ready latency while preserving correctness/stability.
-- Phase 5: certification planning only; no production behavior change approved yet.
+- Phase 5: certification planning and harness hardening only; no production behavior change approved yet.
