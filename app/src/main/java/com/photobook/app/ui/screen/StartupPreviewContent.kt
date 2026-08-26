@@ -16,7 +16,10 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -87,6 +90,7 @@ private fun StartupPreviewThumbnail(photo: PhotoRecord) {
     val thumbSize = remember {
         PerformanceProfiler.from(context).thumbnailRequestSizePx
     }
+    var imageReady by remember(photo.id, photo.uriString) { mutableStateOf(false) }
     val request = remember(photo.uriString, thumbSize) {
         ImageRequest.Builder(context)
             .data(photo.uriString)
@@ -97,12 +101,17 @@ private fun StartupPreviewThumbnail(photo: PhotoRecord) {
             .precision(Precision.EXACT)
             .build()
     }
+    val readyMarker = if (imageReady) {
+        Modifier.testTag(STARTUP_PREVIEW_THUMBNAIL_TAG)
+    } else {
+        Modifier
+    }
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(1f)
-            .testTag(STARTUP_PREVIEW_THUMBNAIL_TAG),
+            .then(readyMarker),
         shape = RoundedCornerShape(10.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
@@ -111,6 +120,8 @@ private fun StartupPreviewThumbnail(photo: PhotoRecord) {
             contentDescription = photo.fileName,
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop,
+            onSuccess = { imageReady = true },
+            onError = { imageReady = false },
         )
     }
 }
