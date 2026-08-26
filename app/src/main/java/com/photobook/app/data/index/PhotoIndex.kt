@@ -181,7 +181,14 @@ internal class LegacyPhotoIndexBackend : PhotoIndexBackend {
         mutex.withLock {
             recordsMap.clear()
             records.forEach { recordsMap[it.id] = it }
-            val sorted = records.sortedByDescending { it.dateAdded }
+            // Room's persisted-load query is already dateAdded DESC. Preserve the historical
+            // detached-list behavior for LEGACY, but avoid repeating an O(n log n) stable sort
+            // when the incoming order is already valid.
+            val sorted = if (records.isDateAddedDescending()) {
+                records.toList()
+            } else {
+                records.sortedByDescending { it.dateAdded }
+            }
             recordsFlow.value = sorted
             rebuildAuxiliarySets(sorted)
             bumpVersion()
@@ -318,7 +325,14 @@ internal class OverlayPhotoIndexBackend : PhotoIndexBackend {
         mutex.withLock {
             recordsMap.clear()
             records.forEach { recordsMap[it.id] = it }
-            val sorted = records.sortedByDescending { it.dateAdded }
+            // Persisted Room rows already arrive newest-first. Avoid a duplicate full-library
+            // sort on the hot cold-start path; any unsorted caller still takes the exact old
+            // stable sortedByDescending fallback.
+            val sorted = if (records.isDateAddedDescending()) {
+                records
+            } else {
+                records.sortedByDescending { it.dateAdded }
+            }
             val publicationVersion = beginPublication()
             rebuildAuxiliarySets(sorted)
             publishStructural(sorted, publicationVersion)
@@ -507,6 +521,18 @@ private data class AuxiliarySets(
     val cities: Set<String>,
     val tags: Set<String>,
 )
+
+/** O(n) fast-path guard for the persisted Room query, which is already ORDER BY dateAdded DESC. */
+private fun List<PhotoRecord>.isDateAddedDescending(): Boolean {
+    if (size < 2) return true
+    var previousDateAdded = this[0].dateAdded
+    for (index in 1 until size) {
+        val currentDateAdded = this[index].dateAdded
+        if (currentDateAdded > previousDateAdded) return false
+        previousDateAdded = currentDateAdded
+    }
+    return true
+}
 
 private fun buildAuxiliarySets(records: List<PhotoRecord>): AuxiliarySets {
     val folders = HashSet<String>((records.size / 10).coerceAtLeast(16))
