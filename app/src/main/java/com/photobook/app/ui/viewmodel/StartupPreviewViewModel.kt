@@ -51,6 +51,11 @@ class StartupPreviewViewModel @Inject constructor(
 
     private suspend fun loadTrustedPreview(): List<PhotoRecord> {
         val accessIsFull = PermissionUtils.photoAccessMode(context) == PermissionUtils.PhotoAccessMode.Full
+        if (!accessIsFull) {
+            Log.i(PHASE6_TAG, "stage=startup_preview trusted=false reason=photo_access_not_full")
+            return emptyList()
+        }
+
         val persistedVersion = sharedPreferences.getString(Constants.MEDIA_STORE_VERSION_KEY, null)
         val persistedGeneration = sharedPreferences
             .getLong(Constants.MEDIA_STORE_GENERATION_KEY, -1L)
@@ -60,15 +65,14 @@ class StartupPreviewViewModel @Inject constructor(
         val beforeGeneration = mediaStoreScanner.currentGenerationOrNull()
         if (
             !canUseStartupPreview(
-                hasFullPhotoAccess = accessIsFull,
+                hasFullPhotoAccess = true,
                 currentVersion = beforeVersion,
                 currentGeneration = beforeGeneration,
                 persistedVersion = persistedVersion,
                 persistedGeneration = persistedGeneration,
             )
         ) {
-            val reason = if (accessIsFull) "sync_token_mismatch" else "photo_access_not_full"
-            Log.i(PHASE6_TAG, "stage=startup_preview trusted=false reason=$reason")
+            Log.i(PHASE6_TAG, "stage=startup_preview trusted=false reason=sync_token_mismatch")
             return emptyList()
         }
 
@@ -78,18 +82,22 @@ class StartupPreviewViewModel @Inject constructor(
         // Close the race where MediaStore or permission state changes while the bounded Room query
         // is in flight. A stale preview is discarded rather than flashed on screen.
         val accessStillFull = PermissionUtils.photoAccessMode(context) == PermissionUtils.PhotoAccessMode.Full
+        if (!accessStillFull) {
+            Log.i(PHASE6_TAG, "stage=startup_preview trusted=false reason=photo_access_changed_during_load")
+            return emptyList()
+        }
         val afterVersion = mediaStoreScanner.currentMediaStoreVersion()
         val afterGeneration = mediaStoreScanner.currentGenerationOrNull()
         val remainedStable = beforeVersion == afterVersion && beforeGeneration == afterGeneration
         val stillTrusted = remainedStable && canUseStartupPreview(
-            hasFullPhotoAccess = accessStillFull,
+            hasFullPhotoAccess = true,
             currentVersion = afterVersion,
             currentGeneration = afterGeneration,
             persistedVersion = persistedVersion,
             persistedGeneration = persistedGeneration,
         )
         if (!stillTrusted) {
-            Log.i(PHASE6_TAG, "stage=startup_preview trusted=false reason=state_changed_during_load")
+            Log.i(PHASE6_TAG, "stage=startup_preview trusted=false reason=media_changed_during_load")
             return emptyList()
         }
 
