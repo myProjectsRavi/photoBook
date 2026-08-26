@@ -132,16 +132,19 @@ object BenchmarkMediaSeeder {
     private fun assertBenchmarkPathIsIsolated() {
         val context = InstrumentationRegistry.getInstrumentation().context
         val resolver = context.contentResolver
-        resolver.query(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            arrayOf(MediaStore.Images.Media.DISPLAY_NAME),
-            "${MediaStore.Images.Media.RELATIVE_PATH} = ?",
-            arrayOf(BENCHMARK_RELATIVE_PATH),
-            null,
-        )?.use { cursor ->
-            val displayNameIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-            while (cursor.moveToNext()) {
-                val displayName = cursor.getString(displayNameIndex)
+        val cursor = checkNotNull(
+            resolver.query(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.Images.Media.DISPLAY_NAME),
+                "${MediaStore.Images.Media.RELATIVE_PATH} = ?",
+                arrayOf(BENCHMARK_RELATIVE_PATH),
+                null,
+            ),
+        ) { "Unable to verify benchmark MediaStore isolation" }
+        cursor.use {
+            val displayNameIndex = it.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
+            while (it.moveToNext()) {
+                val displayName = it.getString(displayNameIndex)
                 check(displayName?.startsWith(DISPLAY_NAME_PREFIX) == true) {
                     "Benchmark path contains non-PhotoBook media; refusing to modify it"
                 }
@@ -152,14 +155,17 @@ object BenchmarkMediaSeeder {
     private fun countBenchmarkRows(): Int {
         val context = InstrumentationRegistry.getInstrumentation().context
         val resolver = context.contentResolver
-        return resolver.query(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            arrayOf(MediaStore.Images.Media._ID),
-            "${MediaStore.Images.Media.RELATIVE_PATH} = ? AND " +
-                "${MediaStore.Images.Media.DISPLAY_NAME} GLOB ?",
-            arrayOf(BENCHMARK_RELATIVE_PATH, "$DISPLAY_NAME_PREFIX*"),
-            null,
-        )?.use { cursor -> cursor.count } ?: 0
+        val cursor = checkNotNull(
+            resolver.query(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.Images.Media._ID),
+                "${MediaStore.Images.Media.RELATIVE_PATH} = ? AND " +
+                    "${MediaStore.Images.Media.DISPLAY_NAME} GLOB ?",
+                arrayOf(BENCHMARK_RELATIVE_PATH, "$DISPLAY_NAME_PREFIX*"),
+                null,
+            ),
+        ) { "Unable to count PhotoBook benchmark MediaStore rows" }
+        return cursor.use { it.count }
     }
 
     private fun createFixturePng(): ByteArray {
