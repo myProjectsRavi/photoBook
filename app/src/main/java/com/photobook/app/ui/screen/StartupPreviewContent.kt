@@ -2,6 +2,7 @@ package com.photobook.app.ui.screen
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -19,15 +20,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.platform.testTag
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
 import coil.size.Precision
+import com.photobook.app.R
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.util.PerformanceProfiler
 
@@ -48,21 +51,17 @@ fun StartupPreviewContent(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
-            text = "PhotoBook",
+            text = stringResource(R.string.welcome_title),
             style = MaterialTheme.typography.headlineSmall,
         )
         Text(
-            text = "Preparing your private library…",
+            text = stringResource(R.string.indexing_message),
             style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Start,
         )
         LinearProgressIndicator(
             progress = { progress.coerceIn(0f, 1f) },
             modifier = Modifier.fillMaxWidth(),
-        )
-        Text(
-            text = "Recent photos",
-            style = MaterialTheme.typography.labelLarge,
-            textAlign = TextAlign.Start,
         )
         LazyVerticalGrid(
             columns = GridCells.Fixed(3),
@@ -102,6 +101,7 @@ private fun StartupPreviewThumbnail(photo: PhotoRecord) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .aspectRatio(1f)
             .testTag(STARTUP_PREVIEW_THUMBNAIL_TAG),
         shape = RoundedCornerShape(10.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
@@ -109,7 +109,7 @@ private fun StartupPreviewThumbnail(photo: PhotoRecord) {
         AsyncImage(
             model = request,
             contentDescription = photo.fileName,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop,
         )
     }
