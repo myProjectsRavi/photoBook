@@ -1,0 +1,204 @@
+name: Phase 4 Index Measurement
+
+on:
+  push:
+    branches:
+      - "perf/phase4-index-startup"
+    paths:
+      - ".github/workflows/phase4-index-measurement.yml"
+      - "app/src/main/java/com/photobook/app/data/index/IndexBuilder.kt"
+      - "app/src/main/java/com/photobook/app/data/index/IndexPersistence.kt"
+      - "tools/benchmark/extract_phase4_timings.py"
+      - "tools/benchmark/phase0_device_stress.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  measure-index:
+    name: index-${{ matrix.library_size }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    strategy:
+      fail-fast: false
+      matrix:
+        library_size:
+          - 10000
+          - 50000
+          - 100000
+
+    concurrency:
+      group: phase4-index-${{ github.ref }}-${{ matrix.library_size }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Provision 2 GB Android 15 emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n 1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager 2>/dev/null | sort | tail -n 1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          SYSTEM_IMAGE="system-images;android-35;google_apis;x86_64"
+          AVD_NAME="photobook-phase4-api35"
+
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+
+          test -x "$SDKMANAGER"
+          test -x "$AVDMANAGER"
+          test -x "$ADB"
+
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 \
+            "emulator" \
+            "$SYSTEM_IMAGE"
+          test -x "$EMULATOR"
+
+          echo "no" | "$AVDMANAGER" create avd \
+            --force \
+            --name "$AVD_NAME" \
+            --package "$SYSTEM_IMAGE" \
+            --device "pixel_2" \
+            --path "$ANDROID_AVD_HOME/$AVD_NAME.avd"
+
+          test -f "$ANDROID_AVD_HOME/$AVD_NAME.ini"
+          test -d "$ANDROID_AVD_HOME/$AVD_NAME.avd"
+          "$EMULATOR" -list-avds | tee "$RUNNER_TEMP/phase4-avd-list.txt"
+          grep -Fxq "$AVD_NAME" "$RUNNER_TEMP/phase4-avd-list.txt"
+
+          if [[ ! -e /dev/kvm ]]; then
+            echo "GitHub Linux runner does not expose /dev/kvm; refusing software-emulated performance evidence."
+            exit 1
+          fi
+          sudo chmod 666 /dev/kvm
+          "$EMULATOR" -accel-check
+
+          nohup "$EMULATOR" \
+            -avd "$AVD_NAME" \
+            -no-window \
+            -no-audio \
+            -no-boot-anim \
+            -no-snapshot \
+            -no-metrics \
+            -gpu swiftshader_indirect \
+            -memory 2048 \
+            -cores 2 \
+            > "$RUNNER_TEMP/phase4-emulator.log" 2>&1 &
+          EMULATOR_PID=$!
+
+          device_ready=false
+          for attempt in $(seq 1 120); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then
+              device_ready=true
+              break
+            fi
+            if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then
+              echo "Android emulator exited before ADB became ready"
+              cat "$RUNNER_TEMP/phase4-emulator.log" || true
+              exit 1
+            fi
+            sleep 2
+          done
+          if [[ "$device_ready" != "true" ]]; then
+            echo "Timed out waiting for ADB device readiness"
+            cat "$RUNNER_TEMP/phase4-emulator.log" || true
+            exit 1
+          fi
+
+          boot_complete=false
+          for attempt in $(seq 1 120); do
+            if [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
+              boot_complete=true
+              break
+            fi
+            if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then
+              echo "Android emulator exited before boot completed"
+              cat "$RUNNER_TEMP/phase4-emulator.log" || true
+              exit 1
+            fi
+            sleep 2
+          done
+          if [[ "$boot_complete" != "true" ]]; then
+            echo "Timed out waiting for Android boot completion"
+            cat "$RUNNER_TEMP/phase4-emulator.log" || true
+            exit 1
+          fi
+
+          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          echo "$SDK_ROOT/emulator" >> "$GITHUB_PATH"
+
+          "$ADB" shell input keyevent 82 || true
+          echo "Android release: $("$ADB" shell getprop ro.build.version.release | tr -d '\r')"
+          echo "Android SDK: $("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"
+          echo "Android ABI: $("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r')"
+          RAM="$("$ADB" shell cat /proc/meminfo | tr -d '\r' | awk '/MemTotal/ {print $2 " kB"; exit}')"
+          echo "RAM: $RAM"
+
+      - name: Run certified scale harness with Phase 4 timing retention
+        env:
+          LIBRARY_SIZE: ${{ matrix.library_size }}
+          STRESS_ITERATIONS: "12"
+          REQUIRE_PHYSICAL: "0"
+          PRESERVE_LOGCAT: "1"
+          OUT_DIR: build/reports/phase4/device-${{ matrix.library_size }}
+        run: bash tools/benchmark/run_phase3_device.sh
+
+      - name: Extract and validate Phase 4 timings
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="build/reports/phase4/device-${{ matrix.library_size }}"
+          python3 tools/benchmark/extract_phase4_timings.py \
+            --logcat "$OUT/logcat.txt" \
+            --macro-log "$OUT/macrobenchmark-gradle.log" \
+            --library-size "${{ matrix.library_size }}" \
+            --output "$OUT/phase4-timing-summary.json" \
+            --raw-output "$OUT/phase4-timing-markers.txt"
+          cat "$OUT/phase4-timing-summary.json"
+
+      - name: Capture emulator diagnostics
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          OUT="build/reports/phase4/runner-${{ matrix.library_size }}"
+          mkdir -p "$OUT"
+          cp "$RUNNER_TEMP/phase4-emulator.log" "$OUT/emulator.log" 2>/dev/null || true
+          cp "$RUNNER_TEMP/phase4-avd-list.txt" "$OUT/avd-list.txt" 2>/dev/null || true
+          adb devices -l > "$OUT/adb-devices.txt" 2>/dev/null || true
+          adb shell df -h > "$OUT/device-disk.txt" 2>/dev/null || true
+          adb shell dumpsys battery > "$OUT/battery.txt" 2>/dev/null || true
+          adb shell getprop > "$OUT/getprop.txt" 2>/dev/null || true
+
+      - name: Upload Phase 4 evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: phase4-index-${{ matrix.library_size }}-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            baselineprofile/build/outputs/androidTest-results/
+            baselineprofile/build/reports/androidTests/
+            baselineprofile/build/outputs/managed_device_android_test_additional_output/
+            build/reports/phase4/

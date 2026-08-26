@@ -1,6 +1,8 @@
 package com.photobook.app.data.index
 
 import android.content.Context
+import android.os.SystemClock
+import android.util.Log
 import androidx.room.withTransaction
 import com.photobook.app.data.db.PhotoBookDatabase
 import com.photobook.app.data.db.PhotoDao
@@ -28,8 +30,13 @@ class IndexPersistence @Inject constructor(
 
     suspend fun load(): List<PhotoRecord> {
         return withContext(Dispatchers.IO) {
+            val loadStartMs = SystemClock.elapsedRealtime()
             val existing = photoDao.getAll().map { it.toPhotoRecord() }
             if (existing.isNotEmpty()) {
+                Log.i(
+                    PHASE4_TAG,
+                    "stage=persisted_load elapsedMs=${SystemClock.elapsedRealtime() - loadStartMs} count=${existing.size}",
+                )
                 return@withContext existing
             }
 
@@ -38,13 +45,22 @@ class IndexPersistence @Inject constructor(
                 replaceAll(imported)
                 runCatching { legacyIndexFile.delete() }
             }
+            Log.i(
+                PHASE4_TAG,
+                "stage=persisted_load elapsedMs=${SystemClock.elapsedRealtime() - loadStartMs} count=${imported.size}",
+            )
             imported
         }
     }
 
     suspend fun save(records: List<PhotoRecord>) {
         withContext(Dispatchers.IO) {
+            val persistStartMs = SystemClock.elapsedRealtime()
             replaceAll(records)
+            Log.i(
+                PHASE4_TAG,
+                "stage=room_fts_persist elapsedMs=${SystemClock.elapsedRealtime() - persistStartMs} count=${records.size}",
+            )
         }
     }
 
@@ -270,5 +286,6 @@ class IndexPersistence @Inject constructor(
 
     companion object {
         private const val DB_BATCH_SIZE = 200
+        private const val PHASE4_TAG = "PhotoBookPhase4"
     }
 }
