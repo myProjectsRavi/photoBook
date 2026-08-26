@@ -16,6 +16,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -40,9 +41,21 @@ class StartupPreviewViewModel @Inject constructor(
 
     private val _photos = MutableStateFlow<List<PhotoRecord>>(emptyList())
     val photos: StateFlow<List<PhotoRecord>> = _photos.asStateFlow()
+    private var loadJob: Job? = null
 
     init {
-        viewModelScope.launch {
+        refresh()
+    }
+
+    /**
+     * Clear first, then revalidate current permission + MediaStore state. Calling this on resume
+     * ensures a preview decoded under an earlier Full grant cannot remain visible after the user
+     * changes Android photo access while PhotoBook is backgrounded.
+     */
+    fun refresh() {
+        loadJob?.cancel()
+        _photos.value = emptyList()
+        loadJob = viewModelScope.launch {
             _photos.value = withContext(Dispatchers.IO) {
                 loadTrustedPreview()
             }
