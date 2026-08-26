@@ -50,13 +50,7 @@ class StartupPreviewViewModel @Inject constructor(
     }
 
     private suspend fun loadTrustedPreview(): List<PhotoRecord> {
-        // Never surface persisted/cached thumbnails while Android 14+ grants only selected-photo
-        // access. Full reconciliation remains authoritative for Limited/None transitions.
-        if (PermissionUtils.photoAccessMode(context) != PermissionUtils.PhotoAccessMode.Full) {
-            Log.i(PHASE6_TAG, "stage=startup_preview trusted=false reason=photo_access_not_full")
-            return emptyList()
-        }
-
+        val accessIsFull = PermissionUtils.photoAccessMode(context) == PermissionUtils.PhotoAccessMode.Full
         val persistedVersion = sharedPreferences.getString(Constants.MEDIA_STORE_VERSION_KEY, null)
         val persistedGeneration = sharedPreferences
             .getLong(Constants.MEDIA_STORE_GENERATION_KEY, -1L)
@@ -66,13 +60,15 @@ class StartupPreviewViewModel @Inject constructor(
         val beforeGeneration = mediaStoreScanner.currentGenerationOrNull()
         if (
             !canUseStartupPreview(
+                hasFullPhotoAccess = accessIsFull,
                 currentVersion = beforeVersion,
                 currentGeneration = beforeGeneration,
                 persistedVersion = persistedVersion,
                 persistedGeneration = persistedGeneration,
             )
         ) {
-            Log.i(PHASE6_TAG, "stage=startup_preview trusted=false reason=sync_token_mismatch")
+            val reason = if (accessIsFull) "sync_token_mismatch" else "photo_access_not_full"
+            Log.i(PHASE6_TAG, "stage=startup_preview trusted=false reason=$reason")
             return emptyList()
         }
 
@@ -85,7 +81,8 @@ class StartupPreviewViewModel @Inject constructor(
         val afterVersion = mediaStoreScanner.currentMediaStoreVersion()
         val afterGeneration = mediaStoreScanner.currentGenerationOrNull()
         val remainedStable = beforeVersion == afterVersion && beforeGeneration == afterGeneration
-        val stillTrusted = accessStillFull && remainedStable && canUseStartupPreview(
+        val stillTrusted = remainedStable && canUseStartupPreview(
+            hasFullPhotoAccess = accessStillFull,
             currentVersion = afterVersion,
             currentGeneration = afterGeneration,
             persistedVersion = persistedVersion,
