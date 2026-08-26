@@ -10,6 +10,9 @@ interface PhotoDao {
     @Query("SELECT * FROM photos ORDER BY dateAdded DESC")
     suspend fun getAll(): List<PhotoEntity>
 
+    @Query("SELECT * FROM photos ORDER BY dateAdded DESC LIMIT :limit")
+    suspend fun getRecent(limit: Int): List<PhotoEntity>
+
     @Query("SELECT COUNT(*) FROM photos")
     suspend fun getPhotoCount(): Int
 
