@@ -16,6 +16,8 @@ REQUIRE_PHYSICAL="${REQUIRE_PHYSICAL:-0}"
 OUT_DIR="${OUT_DIR:-build/reports/phase3/device-${LIBRARY_SIZE}}"
 PACKAGE="com.photobook.app"
 ROOM_TEST_CLASS="com.photobook.app.verification.IndexPersistenceInstrumentedTest"
+BENCHMARK_RELATIVE_PATH="Pictures/PhotoBookBenchmark/"
+BENCHMARK_DISPLAY_PREFIX="PBENCH_"
 EXPECTED_MACROBENCHMARKS=(
   "a_initialIndexReadyLatency"
   "b_coldStartup"
@@ -84,6 +86,26 @@ if (( SDK < 29 )); then
   exit 1
 fi
 
+# Deterministic scale certification indexes the device's complete visible image
+# library. On a physical device, require a dedicated/empty image library so the
+# benchmark cannot process personal media or misreport the requested corpus size.
+# Stale PhotoBook benchmark rows are permitted and are safely replaced below.
+if [[ "$REQUIRE_PHYSICAL" == "1" ]]; then
+  PHYSICAL_FOREIGN_WHERE="relative_path IS NULL OR relative_path!='$BENCHMARK_RELATIVE_PATH' OR _display_name IS NULL OR _display_name NOT GLOB '${BENCHMARK_DISPLAY_PREFIX}*'"
+  PHYSICAL_FOREIGN_ROWS="$("${ADB[@]}" shell content query \
+    --uri content://media/external/images/media \
+    --projection _id \
+    --where "$PHYSICAL_FOREIGN_WHERE" 2>&1)"
+  if grep -Eiq 'Error while accessing provider|Exception|SecurityException' <<<"$PHYSICAL_FOREIGN_ROWS"; then
+    echo "Unable to verify physical-device MediaStore isolation" >&2
+    exit 1
+  fi
+  if grep -Eq '^Row:' <<<"$PHYSICAL_FOREIGN_ROWS"; then
+    echo "Physical scale certification requires a dedicated device with no non-benchmark image rows; refusing to modify or benchmark this library" >&2
+    exit 1
+  fi
+fi
+
 RUN_TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/photobook-phase3.XXXXXX")"
 BUILD_GRADLE="app/build.gradle.kts"
 BUILD_GRADLE_BACKUP="$RUN_TEMP_DIR/build.gradle.kts"
@@ -92,6 +114,7 @@ RELEASE_MANIFEST_CREATED=0
 BATTERY_SIMULATED=0
 DEBUG_KEYSTORE_CREATED=0
 DEBUG_KEYSTORE=""
+BENCHMARK_MEDIA_CLEANED=0
 ORIGINAL_WINDOW_ANIMATION="__unset__"
 ORIGINAL_TRANSITION_ANIMATION="__unset__"
 ORIGINAL_ANIMATOR_DURATION="__unset__"
@@ -111,8 +134,60 @@ restore_global_setting() {
   fi
 }
 
+cleanup_benchmark_media() {
+  if [[ "$BENCHMARK_MEDIA_CLEANED" == "1" ]]; then
+    return 0
+  fi
+
+  local adb_ready=false
+  for attempt in $(seq 1 10); do
+    if "${ADB[@]}" get-state 2>/dev/null | grep -q '^device$'; then
+      adb_ready=true
+      break
+    fi
+    adb kill-server >/dev/null 2>&1 || true
+    adb start-server >/dev/null 2>&1 || true
+    sleep 1
+  done
+  if [[ "$adb_ready" != "true" ]]; then
+    echo "Unable to reconnect to the device for benchmark MediaStore cleanup" >&2
+    return 1
+  fi
+
+  local benchmark_where="relative_path='$BENCHMARK_RELATIVE_PATH' AND _display_name GLOB '${BENCHMARK_DISPLAY_PREFIX}*'"
+  local delete_output
+  delete_output="$("${ADB[@]}" shell content delete \
+    --uri content://media/external/images/media \
+    --where "$benchmark_where" 2>&1)"
+  if grep -Eiq 'Error while accessing provider|Exception|SecurityException' <<<"$delete_output"; then
+    echo "Benchmark MediaStore cleanup failed" >&2
+    return 1
+  fi
+
+  local residual
+  residual="$("${ADB[@]}" shell content query \
+    --uri content://media/external/images/media \
+    --projection _id \
+    --where "$benchmark_where" 2>&1)"
+  if grep -Eiq 'Error while accessing provider|Exception|SecurityException' <<<"$residual"; then
+    echo "Unable to verify benchmark MediaStore cleanup" >&2
+    return 1
+  fi
+  if grep -Eq '^Row:' <<<"$residual"; then
+    echo "Benchmark MediaStore cleanup left PhotoBook benchmark rows" >&2
+    return 1
+  fi
+
+  BENCHMARK_MEDIA_CLEANED=1
+  echo "[phase3] removed isolated PhotoBook benchmark MediaStore corpus"
+}
+
 cleanup_phase3() {
   set +e
+  if [[ "$BENCHMARK_MEDIA_CLEANED" != "1" ]]; then
+    cleanup_benchmark_media || \
+      echo "WARNING: unable to remove benchmark MediaStore corpus during failure cleanup" >&2
+  fi
   if [[ -f "$BUILD_GRADLE_BACKUP" ]]; then
     cp "$BUILD_GRADLE_BACKUP" "$BUILD_GRADLE"
   fi
@@ -411,17 +486,28 @@ if [[ "$adb_ready" != "true" ]]; then
 fi
 
 if ! "${ADB[@]}" shell pm path "$PACKAGE" 2>/dev/null | grep -q '^package:'; then
-  TARGET_APK="$(find app/build/outputs/apk -type f -name '*.apk' -print 2>/dev/null \
-    | grep -E '/(benchmark|release)/' \
-    | if [[ "$ABI" == "x86_64" ]]; then grep -E '(x86_64|x86-64)'; else cat; fi \
-    | sort \
-    | tail -n 1)"
-  if [[ -z "$TARGET_APK" || ! -f "$TARGET_APK" ]]; then
-    echo "Could not locate the exact Phase-3 target APK for post-test reinstall" >&2
+  case "$ABI" in
+    x86_64|arm64-v8a|armeabi-v7a) ;;
+    *)
+      echo "Unsupported device ABI for Phase-3 target APK recovery: $ABI" >&2
+      exit 1
+      ;;
+  esac
+
+  mapfile -t TARGET_APKS < <(
+    find app/build/outputs/apk -type f -name '*.apk' -print 2>/dev/null \
+      | grep -E '/(benchmark|release)/' \
+      | grep -F "$ABI" \
+      | sort
+  )
+  if (( ${#TARGET_APKS[@]} != 1 )); then
+    echo "Expected exactly one Phase-3 target APK matching device ABI $ABI; found ${#TARGET_APKS[@]}" >&2
+    printf '%s\n' "${TARGET_APKS[@]}" >&2
     find app/build/outputs/apk -type f -name '*.apk' -print 2>/dev/null | sort >&2 || true
     exit 1
   fi
-  echo "[phase3] reinstalling post-test target APK: $TARGET_APK"
+  TARGET_APK="${TARGET_APKS[0]}"
+  echo "[phase3] reinstalling ABI-matched post-test target APK: $TARGET_APK"
   "${ADB[@]}" install -r "$TARGET_APK" > "$OUT_DIR/post-test-reinstall.txt"
 fi
 
@@ -460,6 +546,11 @@ fi
 if grep -Eiq 'FATAL EXCEPTION|ANR in com\.photobook\.app|OutOfMemoryError' \
   "$OUT_DIR/crash-buffer.txt" "$OUT_DIR/logcat.txt"; then
   echo "FAIL: crash/ANR/OOM evidence found in Phase-3 device run" >&2
+  exit 1
+fi
+
+if ! cleanup_benchmark_media; then
+  echo "FAIL: unable to remove isolated benchmark MediaStore corpus" >&2
   exit 1
 fi
 
