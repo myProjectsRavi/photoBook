@@ -48,6 +48,8 @@ object BenchmarkMediaSeeder {
         val resolver = context.contentResolver
         val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
         val requested = requestedLibrarySize()
+
+        assertBenchmarkPathIsIsolated()
         val existing = countBenchmarkRows()
 
         if (existing == requested) {
@@ -58,10 +60,11 @@ object BenchmarkMediaSeeder {
         if (existing > 0) {
             val deleted = resolver.delete(
                 collection,
-                "${MediaStore.Images.Media.RELATIVE_PATH} = ?",
-                arrayOf(BENCHMARK_RELATIVE_PATH),
+                "${MediaStore.Images.Media.RELATIVE_PATH} = ? AND " +
+                    "${MediaStore.Images.Media.DISPLAY_NAME} GLOB ?",
+                arrayOf(BENCHMARK_RELATIVE_PATH, "$DISPLAY_NAME_PREFIX*"),
             )
-            println("[phase3] removed stale benchmark media rows: count=$deleted")
+            println("[phase3] removed stale PhotoBook benchmark media rows: count=$deleted")
         }
 
         val payload = createFixturePng()
@@ -121,14 +124,40 @@ object BenchmarkMediaSeeder {
         println("[phase3] MediaStore fixture ready: count=$finalCount")
     }
 
+    /**
+     * Never let deterministic benchmark setup delete a user's file that happens to
+     * share the benchmark folder. The benchmark path may contain only PhotoBook-owned
+     * PBENCH_* fixtures; otherwise fail without logging the foreign filename.
+     */
+    private fun assertBenchmarkPathIsIsolated() {
+        val context = InstrumentationRegistry.getInstrumentation().context
+        val resolver = context.contentResolver
+        resolver.query(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            arrayOf(MediaStore.Images.Media.DISPLAY_NAME),
+            "${MediaStore.Images.Media.RELATIVE_PATH} = ?",
+            arrayOf(BENCHMARK_RELATIVE_PATH),
+            null,
+        )?.use { cursor ->
+            val displayNameIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
+            while (cursor.moveToNext()) {
+                val displayName = cursor.getString(displayNameIndex)
+                check(displayName?.startsWith(DISPLAY_NAME_PREFIX) == true) {
+                    "Benchmark path contains non-PhotoBook media; refusing to modify it"
+                }
+            }
+        }
+    }
+
     private fun countBenchmarkRows(): Int {
         val context = InstrumentationRegistry.getInstrumentation().context
         val resolver = context.contentResolver
         return resolver.query(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             arrayOf(MediaStore.Images.Media._ID),
-            "${MediaStore.Images.Media.RELATIVE_PATH} = ?",
-            arrayOf(BENCHMARK_RELATIVE_PATH),
+            "${MediaStore.Images.Media.RELATIVE_PATH} = ? AND " +
+                "${MediaStore.Images.Media.DISPLAY_NAME} GLOB ?",
+            arrayOf(BENCHMARK_RELATIVE_PATH, "$DISPLAY_NAME_PREFIX*"),
             null,
         )?.use { cursor -> cursor.count } ?: 0
     }
