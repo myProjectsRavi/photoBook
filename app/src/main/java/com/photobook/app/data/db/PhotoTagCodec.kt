@@ -19,9 +19,10 @@ object PhotoTagCodec {
     }
 
     fun decode(encoded: String): List<MLTag> {
-        if (encoded.isBlank()) return emptyList()
+        val normalized = encoded.trim()
+        if (normalized.isEmpty() || normalized == "[]") return emptyList()
         return runCatching {
-            val array = JSONArray(encoded)
+            val array = JSONArray(normalized)
             buildList {
                 for (index in 0 until array.length()) {
                     val obj = array.optJSONObject(index) ?: continue
