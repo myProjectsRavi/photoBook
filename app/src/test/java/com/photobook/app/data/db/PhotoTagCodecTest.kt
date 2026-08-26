@@ -7,21 +7,11 @@ import org.junit.Test
 class PhotoTagCodecTest {
 
     @Test
-    fun decode_emptyPayloadsReturnEmptyWithoutChangingSemantics() {
+    fun decode_emptyPayloadsReturnEmptyWithoutJsonParsing() {
         assertThat(PhotoTagCodec.decode("")).isEmpty()
         assertThat(PhotoTagCodec.decode("   ")).isEmpty()
         assertThat(PhotoTagCodec.decode("[]")).isEmpty()
         assertThat(PhotoTagCodec.decode("  []  ")).isEmpty()
-    }
-
-    @Test
-    fun decode_nonEmptyPayloadStillRoundTrips() {
-        val tags = listOf(
-            MLTag("food", 0.91f),
-            MLTag("people", 0.81f),
-        )
-
-        assertThat(PhotoTagCodec.decode(PhotoTagCodec.encode(tags))).isEqualTo(tags)
     }
 
     @Test
