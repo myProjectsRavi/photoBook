@@ -20,6 +20,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -41,6 +42,7 @@ import com.photobook.app.util.PerformanceProfiler
  * Read-only startup surface. No photo card is clickable or long-clickable, so a partially hydrated
  * library can never drive selection, viewer, sharing, trash, Vault, Archive, or search behavior.
  */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun StartupPreviewContent(
     photos: List<PhotoRecord>,
