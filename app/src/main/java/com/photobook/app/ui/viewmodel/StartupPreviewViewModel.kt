@@ -5,7 +5,8 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.photobook.app.data.index.IndexPersistence
+import com.photobook.app.data.db.PhotoDao
+import com.photobook.app.data.db.toPhotoRecord
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.data.source.MediaStoreScanner
 import com.photobook.app.util.Constants
@@ -29,7 +30,7 @@ import kotlinx.coroutines.withContext
 @HiltViewModel
 class StartupPreviewViewModel @Inject constructor(
     private val mediaStoreScanner: MediaStoreScanner,
-    private val indexPersistence: IndexPersistence,
+    private val photoDao: PhotoDao,
     private val sharedPreferences: SharedPreferences,
 ) : ViewModel() {
 
@@ -65,7 +66,7 @@ class StartupPreviewViewModel @Inject constructor(
         }
 
         val loadStartMs = SystemClock.elapsedRealtime()
-        val recent = indexPersistence.loadRecent(STARTUP_PREVIEW_COUNT)
+        val recent = photoDao.getRecent(STARTUP_PREVIEW_COUNT).map { entity -> entity.toPhotoRecord() }
 
         // Close the race where MediaStore changes while the bounded Room query is in flight.
         val afterVersion = mediaStoreScanner.currentMediaStoreVersion()
