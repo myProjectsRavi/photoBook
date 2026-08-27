@@ -163,6 +163,7 @@ class PhysicalRunnerWrapperTest(unittest.TestCase):
             "#!/usr/bin/env bash\n"
             "touch delegated.txt\n"
             "printf 'mode=%s\\n' \"${REQUIRE_PHYSICAL:-unset}\"\n"
+            "printf 'stress=%s\\n' \"${STRESS_ITERATIONS:-unset}\"\n"
             "printf 'argc=%d\\n' \"$#\"\n"
             "i=0\n"
             "for arg in \"$@\"; do\n"
@@ -178,6 +179,7 @@ class PhysicalRunnerWrapperTest(unittest.TestCase):
             self._prepare_fixture(root)
             env = os.environ.copy()
             env.pop("REQUIRE_PHYSICAL", None)
+            env.pop("STRESS_ITERATIONS", None)
             result = subprocess.run(
                 ["bash", "tools/benchmark/run_phase5_physical_device.sh", "alpha", "two words"],
                 cwd=root,
@@ -188,10 +190,51 @@ class PhysicalRunnerWrapperTest(unittest.TestCase):
             )
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertEqual(
-                "mode=1\nargc=2\narg0=alpha\narg1=two words\n",
+                "mode=1\nstress=12\nargc=2\narg0=alpha\narg1=two words\n",
                 result.stdout,
             )
             self.assertTrue((root / "delegated.txt").exists())
+
+    def test_wrapper_accepts_stronger_stress_iterations(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            root = Path(work_dir)
+            self._prepare_fixture(root)
+            env = os.environ.copy()
+            env.pop("REQUIRE_PHYSICAL", None)
+            env["STRESS_ITERATIONS"] = "50"
+            result = subprocess.run(
+                ["bash", "tools/benchmark/run_phase5_physical_device.sh"],
+                cwd=root,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual("mode=1\nstress=50\nargc=0\n", result.stdout)
+            self.assertTrue((root / "delegated.txt").exists())
+
+    def test_wrapper_rejects_weakened_stress_iterations_before_delegation(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            root = Path(work_dir)
+            self._prepare_fixture(root)
+            for value in ("0", "-1", "01", "11", "twelve", "08", ""):
+                delegated = root / "delegated.txt"
+                delegated.unlink(missing_ok=True)
+                env = os.environ.copy()
+                env.pop("REQUIRE_PHYSICAL", None)
+                env["STRESS_ITERATIONS"] = value
+                result = subprocess.run(
+                    ["bash", "tools/benchmark/run_phase5_physical_device.sh"],
+                    cwd=root,
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(2, result.returncode, value)
+                self.assertIn("STRESS_ITERATIONS", result.stderr)
+                self.assertFalse(delegated.exists(), value)
 
     def test_wrapper_rejects_conflicting_override_before_delegation(self) -> None:
         with tempfile.TemporaryDirectory() as work_dir:
