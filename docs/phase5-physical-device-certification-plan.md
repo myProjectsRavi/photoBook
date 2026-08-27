@@ -27,22 +27,21 @@ Phase 5 is certification-first. The initial branch must not change indexing, sea
 
 ### API 29+ devices
 
-Reuse the existing certified scale runner; do not create a second indexing benchmark path:
+Use the Phase-5 physical-only wrapper, which forces `REQUIRE_PHYSICAL=1` and then delegates to the existing certified scale runner. Do not create a second indexing benchmark path:
 
 ```bash
-REQUIRE_PHYSICAL=1 \
 LIBRARY_SIZE=10000 \
 STRESS_ITERATIONS=12 \
-bash tools/benchmark/run_phase3_device.sh
+bash tools/benchmark/run_phase5_physical_device.sh
 ```
 
-Deterministic scale certification must use a dedicated/wiped test device or test profile with no non-benchmark image rows visible to MediaStore. The runner must fail closed before seeding when `REQUIRE_PHYSICAL=1` detects any non-PhotoBook image row. This prevents both accidental processing of personal EXIF/media and false library-size measurements.
+Deterministic scale certification must use a dedicated/wiped test device or test profile with no non-benchmark image rows visible to MediaStore. The physical wrapper forces the delegated runner into physical mode, where it must fail closed before seeding if it detects any non-PhotoBook image row. This prevents both accidental processing of personal EXIF/media and false library-size measurements.
 
 Stale PhotoBook benchmark fixtures may be replaced, but only rows in `Pictures/PhotoBookBenchmark/` whose display names begin with `PBENCH_` are owned by the harness. A foreign file in that folder is a hard stop, not something the harness may delete.
 
 Run 50k/100k only where the dedicated test device has sufficient free storage for deterministic seeding. Do not force destructive low-storage conditions on a personal phone.
 
-The runner must fail if the selected target is an emulator when `REQUIRE_PHYSICAL=1`.
+The delegated runner must fail if the selected target is an emulator; the physical wrapper must not permit a caller override that disables physical mode.
 
 ### Coverage matrix
 
