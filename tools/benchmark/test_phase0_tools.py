@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import binascii
 import json
+import os
 import random
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -149,6 +151,68 @@ class FixtureGeneratorTest(unittest.TestCase):
             self.assertEqual(101, summary["count"])
             self.assertEqual(fixtures.DEFAULT_SEED, summary["seed"])
             self.assertTrue(all(value > 0 for value in summary["scenarios"].values()))
+
+
+class PhysicalRunnerWrapperTest(unittest.TestCase):
+    def _prepare_fixture(self, root: Path) -> None:
+        tools = root / "tools" / "benchmark"
+        tools.mkdir(parents=True)
+        wrapper = TOOLS_DIR / "run_phase5_physical_device.sh"
+        (tools / wrapper.name).write_text(wrapper.read_text(encoding="utf-8"), encoding="utf-8")
+        (tools / "run_phase3_device.sh").write_text(
+            "#!/usr/bin/env bash\n"
+            "touch delegated.txt\n"
+            "printf 'mode=%s\\n' \"${REQUIRE_PHYSICAL:-unset}\"\n"
+            "printf 'argc=%d\\n' \"$#\"\n"
+            "i=0\n"
+            "for arg in \"$@\"; do\n"
+            "  printf 'arg%d=%s\\n' \"$i\" \"$arg\"\n"
+            "  i=$((i + 1))\n"
+            "done\n",
+            encoding="utf-8",
+        )
+
+    def test_wrapper_forces_physical_mode_and_forwards_arguments(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            root = Path(work_dir)
+            self._prepare_fixture(root)
+            env = os.environ.copy()
+            env.pop("REQUIRE_PHYSICAL", None)
+            result = subprocess.run(
+                ["bash", "tools/benchmark/run_phase5_physical_device.sh", "alpha", "two words"],
+                cwd=root,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(
+                "mode=1\nargc=2\narg0=alpha\narg1=two words\n",
+                result.stdout,
+            )
+            self.assertTrue((root / "delegated.txt").exists())
+
+    def test_wrapper_rejects_conflicting_override_before_delegation(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            root = Path(work_dir)
+            self._prepare_fixture(root)
+            for value in ("true", "yes", "01", "0", "-1", "2", ""):
+                delegated = root / "delegated.txt"
+                delegated.unlink(missing_ok=True)
+                env = os.environ.copy()
+                env["REQUIRE_PHYSICAL"] = value
+                result = subprocess.run(
+                    ["bash", "tools/benchmark/run_phase5_physical_device.sh"],
+                    cwd=root,
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(2, result.returncode, value)
+                self.assertIn("requires REQUIRE_PHYSICAL=1", result.stderr)
+                self.assertFalse(delegated.exists(), value)
 
 
 class ArtifactSizeClassifierTest(unittest.TestCase):

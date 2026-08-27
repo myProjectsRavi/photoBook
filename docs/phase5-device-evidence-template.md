@@ -55,13 +55,12 @@ Any failed preflight item stops deterministic scale certification.
 
 ## Phase 5A — API 29+ deterministic physical scale replay
 
-Use only on a dedicated/wiped physical test device or isolated test profile with no non-benchmark image rows visible to MediaStore.
+Use only on a dedicated/wiped physical test device or isolated test profile with no non-benchmark image rows visible to MediaStore. Use the physical-only wrapper below; it forces `REQUIRE_PHYSICAL=1` and refuses conflicting overrides before delegating to the certified scale runner.
 
 ```bash
-REQUIRE_PHYSICAL=1 \
 LIBRARY_SIZE=10000 \
 STRESS_ITERATIONS=12 \
-bash tools/benchmark/run_phase3_device.sh
+bash tools/benchmark/run_phase5_physical_device.sh
 ```
 
 Repeat at 50k/100k only when the dedicated device has sufficient free storage.
