@@ -28,12 +28,12 @@ For an attached emulator or development device:
 LIBRARY_SIZE=10000 bash tools/benchmark/run_phase3_device.sh
 ```
 
-For release-grade physical-device evidence, require a real device explicitly:
+For release-grade Phase 5 physical-device evidence, use the physical-only wrapper. It forces `REQUIRE_PHYSICAL=1`, refuses conflicting overrides, and delegates to the same certified scale runner:
 
 ```bash
-LIBRARY_SIZE=10000 REQUIRE_PHYSICAL=1 bash tools/benchmark/run_phase3_device.sh
-LIBRARY_SIZE=50000 REQUIRE_PHYSICAL=1 bash tools/benchmark/run_phase3_device.sh
-LIBRARY_SIZE=100000 REQUIRE_PHYSICAL=1 bash tools/benchmark/run_phase3_device.sh
+LIBRARY_SIZE=10000 bash tools/benchmark/run_phase5_physical_device.sh
+LIBRARY_SIZE=50000 bash tools/benchmark/run_phase5_physical_device.sh
+LIBRARY_SIZE=100000 bash tools/benchmark/run_phase5_physical_device.sh
 ```
 
 Recordings are written under `build/reports/phase3/`. GitHub-hosted emulator results are useful for deterministic regression detection and gross scale failures, but they are not a substitute for physical-device latency, thermals, battery, or OEM-storage certification.
