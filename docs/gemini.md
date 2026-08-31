@@ -21,7 +21,7 @@ Archive Food must remain conservative and purpose-specific: require semantic foo
 
 ## Release truth and workflow
 
-`app/build.gradle.kts` is authoritative for checked-in metadata: `versionCode = 19`, `versionName = "2.0.12"`, `targetSdk = 36`. Play Console state is external and must be verified at upload time, not documented as fact. `finish_release.sh` only builds and verifies; it does not push, open browsers, or upload.
+`app/build.gradle.kts` is authoritative for checked-in metadata: `versionCode = 21`, `versionName = "2.0.14"`, `targetSdk = 36`. Play Console state is external and must be verified at upload time, not documented as fact. `finish_release.sh` only builds and verifies; it does not push, open browsers, or upload.
 
 Release already enables R8 optimization and resource shrinking with the optimized Android defaults. Preserve this configuration and verify the signed AAB, size gates, and runtime-critical keep rules after release changes.
 
