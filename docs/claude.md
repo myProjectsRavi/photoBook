@@ -22,7 +22,7 @@ PhotoBook is a free, private, offline-first Android gallery. Preserve the local 
 
 ## Release truth
 
-- `app/build.gradle.kts` is the only checked-in release truth: `versionCode = 19`, `versionName = "2.0.12"`, `targetSdk = 36`.
+- `app/build.gradle.kts` is the only checked-in release truth: `versionCode = 21`, `versionName = "2.0.14"`, `targetSdk = 36`.
 - Release uses R8 optimization and resource shrinking with `proguard-android-optimize.txt`; keep the release shrinker enabled and validate the signed output after any keep-rule change.
 - Play Console consumption, track state, and upload eligibility are external preflight facts and must not be written as repository facts.
 - `finish_release.sh` is reproducible build-only: it discovers the repository root, derives metadata from Gradle, builds release artifacts, checks existence, merged manifest, sizes, and lint, and never pushes, opens a browser, or uploads.
