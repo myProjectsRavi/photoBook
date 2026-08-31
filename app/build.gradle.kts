@@ -75,8 +75,8 @@ android {
         applicationId = "com.photobook.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 19
-        versionName = "2.0.12"
+        versionCode = 21
+        versionName = "2.0.14"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
