@@ -1,0 +1,143 @@
+name: R8 Metadata Measurement (Disposable)
+
+on:
+  push:
+    branches:
+      - "exp/2.0.15-r8-metadata-measurement"
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [drop-sourcefile, drop-source-and-lines]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Inject ARM-only bundle, prune broad keeps, and metadata variant
+        shell: bash
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+
+          build = Path("app/build.gradle.kts")
+          s = build.read_text()
+          old_ndk = '            ndk {\n                debugSymbolLevel = "SYMBOL_TABLE"\n            }\n'
+          new_ndk = '            ndk {\n                debugSymbolLevel = "SYMBOL_TABLE"\n                abiFilters += listOf("arm64-v8a", "armeabi-v7a")\n            }\n'
+          if s.count(old_ndk) != 1:
+              raise SystemExit(f"release ndk block mismatch: {s.count(old_ndk)}")
+          s = s.replace(old_ndk, new_ndk, 1)
+          old_split = '        abi {\n            isEnable = true\n            reset()\n            include("arm64-v8a", "armeabi-v7a")'
+          new_split = '        abi {\n            isEnable = false\n            reset()\n            include("arm64-v8a", "armeabi-v7a")'
+          if s.count(old_split) != 1:
+              raise SystemExit(f"ABI split block mismatch: {s.count(old_split)}")
+          build.write_text(s.replace(old_split, new_split, 1))
+
+          rules = Path("app/proguard-rules.pro")
+          r = rules.read_text()
+          removable = [
+              '-keep class com.google.mlkit.** { *; }\n',
+              '-keep class androidx.security.crypto.** { *; }\n',
+              '-keep class com.google.crypto.tink.** { *; }\n',
+              '-keep class * extends androidx.room.RoomDatabase { *; }\n',
+              '-keep @androidx.room.Entity class * { *; }\n',
+              '-keep @androidx.room.Dao interface * { *; }\n',
+              '-keep class * extends androidx.work.Worker { *; }\n',
+              '-keep class * extends androidx.work.CoroutineWorker { *; }\n',
+              '-keep class * extends androidx.work.ListenableWorker { *; }\n',
+              '-keep class com.google.zxing.** { *; }\n',
+          ]
+          for rule in removable:
+              if r.count(rule) != 1:
+                  raise SystemExit(f"expected exactly one rule: {rule!r}; found {r.count(rule)}")
+              r = r.replace(rule, '', 1)
+
+          base_attrs = '-keepattributes SourceFile,LineNumberTable\n-renamesourcefileattribute SourceFile\n'
+          if r.count(base_attrs) != 1:
+              raise SystemExit(f"source/line attribute block mismatch: {r.count(base_attrs)}")
+          variant = os.environ['VARIANT']
+          if variant == 'drop-sourcefile':
+              replacement = '-keepattributes LineNumberTable\n'
+          elif variant == 'drop-source-and-lines':
+              replacement = ''
+          else:
+              raise SystemExit(f"unknown variant {variant}")
+          rules.write_text(r.replace(base_attrs, replacement, 1))
+          PY
+          echo "variant=$VARIANT"
+          git diff -- app/build.gradle.kts app/proguard-rules.pro
+
+      - name: Run unit tests, lint, and build measurement AAB
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew \
+            :app:testDebugUnitTest \
+            :app:lintDebug \
+            :app:bundleRelease \
+            -x :app:verifyReleaseBundleSize
+
+      - name: Report AAB size and metadata
+        shell: bash
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -euo pipefail
+          mkdir -p "build/reports/r8-metadata/$VARIANT"
+          python3 - <<'PY' | tee "build/reports/r8-metadata/$VARIANT/result.txt"
+          from pathlib import Path
+          import os, zipfile
+          aab = Path("app/build/outputs/bundle/release/app-release.aab")
+          if not aab.is_file():
+              raise SystemExit("AAB missing")
+          limit = 20 * 1024 * 1024
+          size = aab.stat().st_size
+          print(f"variant={os.environ['VARIANT']}")
+          print(f"aab_bytes={size}")
+          print(f"aab_mib={size / 1024 / 1024:.2f}")
+          print(f"under_20_mib={size <= limit}")
+          print(f"margin_bytes={limit - size}")
+          with zipfile.ZipFile(aab) as z:
+              names = z.namelist()
+              libs = [n for n in names if "/lib/" in n and n.endswith(".so")]
+              abis = sorted({n.split("/lib/", 1)[1].split("/", 1)[0] for n in libs})
+              print("abis=" + ",".join(abis))
+              mapping = next((z.getinfo(n) for n in names if n.endswith("/proguard.map")), None)
+              if mapping:
+                  print(f"mapping_compressed_bytes={mapping.compress_size}")
+                  print(f"mapping_uncompressed_bytes={mapping.file_size}")
+              dexes = [z.getinfo(n) for n in names if "/dex/classes" in n and n.endswith(".dex")]
+              print(f"dex_compressed_bytes={sum(i.compress_size for i in dexes)}")
+              print(f"dex_uncompressed_bytes={sum(i.file_size for i in dexes)}")
+              top = sorted((z.getinfo(n) for n in names), key=lambda i: i.compress_size, reverse=True)[:20]
+              for i in top:
+                  print(f"top compressed={i.compress_size} raw={i.file_size} path={i.filename}")
+          if abis != ["arm64-v8a", "armeabi-v7a"]:
+              raise SystemExit(f"Unexpected AAB ABIs: {abis}")
+          PY
+
+      - name: Upload measurement report
+        uses: actions/upload-artifact@v7
+        with:
+          name: r8-metadata-${{ matrix.variant }}-${{ github.run_id }}
+          path: build/reports/r8-metadata/${{ matrix.variant }}/result.txt
+          if-no-files-found: error
+          retention-days: 14
