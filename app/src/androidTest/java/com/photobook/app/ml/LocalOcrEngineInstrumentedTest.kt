@@ -15,7 +15,9 @@ class LocalOcrEngineInstrumentedTest {
 
     @Test
     fun recognizesMixedCaseEnglishAndNumbersLocally() = runBlocking {
-        val bitmap = Bitmap.createBitmap(1_600, 520, Bitmap.Config.ARGB_8888)
+        // Keep the complete fixture inside the bitmap. The previous 1,600 px canvas clipped the
+        // trailing digits on the API 35 emulator, turning "12345" into an OCR-visible "12".
+        val bitmap = Bitmap.createBitmap(2_400, 520, Bitmap.Config.ARGB_8888)
         try {
             val canvas = Canvas(bitmap)
             canvas.drawColor(Color.WHITE)
