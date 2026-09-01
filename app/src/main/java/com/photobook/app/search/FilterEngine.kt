@@ -49,11 +49,11 @@ class FilterEngine @Inject constructor(
         val tokens = queryParser.tokenize(normalized).map(tokenClassifier::classify)
         val filters = tokens.mapNotNull { token -> filterFactory.create(token, context) }
 
-        val filtered = if (filters.isEmpty()) {
-            records
-        } else {
-            records.asSequence().filter { photo -> filters.all { it(photo) } }.toList()
-        }
+        val filtered = records.asSequence().filter { photo ->
+            val smartMatch = filters.isNotEmpty() && filters.all { filter -> filter(photo) }
+            val literalOcrMatch = OcrQueryMatcher.matches(photo.ocrText, query)
+            smartMatch || literalOcrMatch
+        }.toList()
 
         val sorted = searchRanker.rank(
             records = filtered,
