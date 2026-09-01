@@ -29,6 +29,27 @@ class OcrTextSearchTest {
     }
 
     @Test
+    fun reservedSmartKeywords_stillReturnLiteralVisibleText() = runBlocking {
+        val index = PhotoIndex(PhotoIndexStrategy.V2)
+        index.setRecords(
+            listOf(
+                photo(1L, "payment food today"),
+                photo(2L, "unrelated holiday picture"),
+            ),
+        )
+        val engine = searchEngine(index)
+
+        listOf("payment", "PAYMENT", "food", "FOOD", "today", "TODAY").forEach { query ->
+            val result = engine.search(
+                query = query,
+                context = SearchContext(nowMillis = 2_000_000_000_000L),
+            )
+            assertThat(result.complete).isTrue()
+            assertThat(result.orderedIds).containsExactly(1L)
+        }
+    }
+
+    @Test
     fun singleDigitQuery_remainsSearchable() = runBlocking {
         val index = PhotoIndex(PhotoIndexStrategy.V2)
         index.setRecords(
@@ -42,6 +63,22 @@ class OcrTextSearchTest {
 
         assertThat(result.complete).isTrue()
         assertThat(result.orderedIds).containsExactly(1L)
+    }
+
+    @Test
+    fun singleLetterNoise_doesNotReturnWholeLibrary() = runBlocking {
+        val index = PhotoIndex(PhotoIndexStrategy.V2)
+        index.setRecords(
+            listOf(
+                photo(1L, "alpha"),
+                photo(2L, "beta"),
+            ),
+        )
+
+        val result = searchEngine(index).search("a")
+
+        assertThat(result.complete).isTrue()
+        assertThat(result.orderedIds).isEmpty()
     }
 
     private fun searchEngine(index: PhotoIndex): SearchEngineV2 {
@@ -61,7 +98,7 @@ class OcrTextSearchTest {
         return PhotoRecord(
             id = id,
             uriString = "content://ocr-search/$id",
-            filePath = "/storage/emulated/0/DCIM/Camera/$id.jpg",
+            filePath = "/storage/emulated/0/Pictures/Other/$id.jpg",
             fileName = "$id.jpg",
             dateAdded = 1_786_900_000_000L - id,
             year = 2026,
@@ -78,8 +115,8 @@ class OcrTextSearchTest {
             width = 1200,
             height = 900,
             mimeType = "image/jpeg",
-            folderName = "Camera",
-            folderPath = "DCIM/Camera",
+            folderName = "Other",
+            folderPath = "Pictures/Other",
             cameraModel = null,
             isFrontCamera = false,
             isHdr = false,
