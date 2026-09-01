@@ -21,4 +21,12 @@ class QueryParserTest {
 
         assertThat(normalized).isEqualTo("this_week near_me")
     }
+
+    @Test
+    fun normalize_isCaseInsensitiveForEnglishTextAndNumbers() {
+        assertThat(parser.normalize("PhotoBook ABC xyz 12345"))
+            .isEqualTo("photobook abc xyz 12345")
+        assertThat(parser.normalize("PHoToBoOk 12345"))
+            .isEqualTo("photobook 12345")
+    }
 }
