@@ -1,0 +1,163 @@
+name: Copy Text Peak Memory Proof (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-copytext-memory-proof
+
+permissions:
+  contents: read
+
+concurrency:
+  group: copytext-memory-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  measure-copytext-memory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Install emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+      - name: Provision constrained API 35 emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n 1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager 2>/dev/null | sort | tail -n 1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          IMAGE="system-images;android-35;google_apis;x86_64"
+          AVD="photobook-copytext-memory-api35"
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 emulator "$IMAGE"
+          echo no | "$AVDMANAGER" create avd --force --name "$AVD" --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/$AVD.avd"
+          test -e /dev/kvm || { echo 'KVM unavailable'; exit 1; }
+          sudo chmod 666 /dev/kvm
+          "$EMULATOR" -accel-check
+          nohup "$EMULATOR" -avd "$AVD" -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 2048 -cores 2 > "$RUNNER_TEMP/copytext-memory-emulator.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 120); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/copytext-memory-emulator.log"; exit 1; }
+            sleep 2
+          done
+          "$ADB" wait-for-device
+          for _ in $(seq 1 120); do
+            [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break
+            sleep 2
+          done
+          [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
+          echo "sdk=$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r') abi=$("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r') abilist=$("$ADB" shell getprop ro.product.cpu.abilist | tr -d '\r')"
+          echo "heapgrowthlimit=$("$ADB" shell getprop dalvik.vm.heapgrowthlimit | tr -d '\r') heapsize=$("$ADB" shell getprop dalvik.vm.heapsize | tr -d '\r')"
+      - name: Build exact app and memory instrumentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+      - name: Run real Copy Text while polling process memory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/reports/copytext-memory-proof
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+
+          app_apk="$(find app/build/outputs/apk/debug -type f -name '*arm64-v8a*.apk' | head -n 1)"
+          test_apk="$(find app/build/outputs/apk/androidTest/debug -type f -name '*.apk' | head -n 1)"
+          test -n "$app_apk" && test -f "$app_apk"
+          test -n "$test_apk" && test -f "$test_apk"
+          "$ADB" install -r "$app_apk"
+          "$ADB" install -r "$test_apk"
+
+          instrumentation="$("$ADB" shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n 1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
+          test -n "$instrumentation"
+          "$ADB" logcat -c
+          printf 'elapsed_ms\ttotal_pss_kb\tjava_heap_kb\tnative_heap_kb\n' > build/reports/copytext-memory-proof/meminfo-samples.tsv
+          printf 'heapgrowthlimit=%s\nheapsize=%s\n' \
+            "$("$ADB" shell getprop dalvik.vm.heapgrowthlimit | tr -d '\r')" \
+            "$("$ADB" shell getprop dalvik.vm.heapsize | tr -d '\r')" \
+            > build/reports/copytext-memory-proof/device-heap.txt
+
+          start_ms=$(date +%s%3N)
+          set +e
+          "$ADB" shell am instrument -w -r \
+            -e class com.photobook.app.feature.copytext.OnDevicePhotoTextExtractorMemoryInstrumentedTest \
+            "$instrumentation" > build/reports/copytext-memory-proof/instrumentation.txt 2>&1 &
+          inst_pid=$!
+          set -e
+
+          while kill -0 "$inst_pid" 2>/dev/null; do
+            now_ms=$(date +%s%3N)
+            snapshot="$("$ADB" shell dumpsys meminfo com.photobook.app 2>/dev/null | tr -d '\r' || true)"
+            if [[ -n "$snapshot" && "$snapshot" != *"No process found"* ]]; then
+              total_pss="$(printf '%s\n' "$snapshot" | awk '/TOTAL PSS:/ {gsub(/,/,"",$3); print $3; exit} /^[[:space:]]*TOTAL[[:space:]]+[0-9]/ {gsub(/,/,"",$2); print $2; exit}')"
+              java_heap="$(printf '%s\n' "$snapshot" | awk '/Java Heap:/ {gsub(/,/,"",$3); print $3; exit}')"
+              native_heap="$(printf '%s\n' "$snapshot" | awk '/Native Heap:/ {gsub(/,/,"",$3); print $3; exit}')"
+              if [[ "$total_pss" =~ ^[0-9]+$ ]]; then
+                printf '%s\t%s\t%s\t%s\n' \
+                  "$((now_ms - start_ms))" "$total_pss" "${java_heap:-}" "${native_heap:-}" \
+                  >> build/reports/copytext-memory-proof/meminfo-samples.tsv
+              fi
+            fi
+            sleep 0.25
+          done
+
+          set +e
+          wait "$inst_pid"
+          rc=$?
+          set -e
+          cat build/reports/copytext-memory-proof/instrumentation.txt
+          [[ $rc -eq 0 ]]
+          grep -Eq 'OK \(2 tests\)|OK \(2 test\)' build/reports/copytext-memory-proof/instrumentation.txt
+          if grep -Eqi 'FAILURES|INSTRUMENTATION_FAILED|Process crashed|OutOfMemoryError|OOM' build/reports/copytext-memory-proof/instrumentation.txt; then
+            echo 'Copy Text memory instrumentation reported failure/OOM'
+            exit 1
+          fi
+
+          samples=$(( $(wc -l < build/reports/copytext-memory-proof/meminfo-samples.tsv) - 1 ))
+          [[ $samples -gt 0 ]]
+          max_pss="$(tail -n +2 build/reports/copytext-memory-proof/meminfo-samples.tsv | awk -F '\t' 'BEGIN{m=0} $2+0>m{m=$2+0} END{print m}')"
+          max_java="$(tail -n +2 build/reports/copytext-memory-proof/meminfo-samples.tsv | awk -F '\t' 'BEGIN{m=0} $3+0>m{m=$3+0} END{print m}')"
+          max_native="$(tail -n +2 build/reports/copytext-memory-proof/meminfo-samples.tsv | awk -F '\t' 'BEGIN{m=0} $4+0>m{m=$4+0} END{print m}')"
+          printf 'samples=%s\npeak_total_pss_kb=%s\npeak_java_heap_kb=%s\npeak_native_heap_kb=%s\n' \
+            "$samples" "$max_pss" "$max_java" "$max_native" \
+            | tee build/reports/copytext-memory-proof/summary.txt
+
+          "$ADB" logcat -d > build/reports/copytext-memory-proof/logcat.txt
+          if grep -Eqi 'OutOfMemoryError|FATAL EXCEPTION.*photobook|lowmemorykiller.*photobook' build/reports/copytext-memory-proof/logcat.txt; then
+            echo 'Logcat contains PhotoBook OOM/fatal memory evidence'
+            exit 1
+          fi
+      - name: Capture source and emulator evidence
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          mkdir -p build/reports/copytext-memory-proof
+          printf 'head=%s\n' "$(git rev-parse HEAD)" > build/reports/copytext-memory-proof/source.txt
+          cp "$RUNNER_TEMP/copytext-memory-emulator.log" build/reports/copytext-memory-proof/emulator.log 2>/dev/null
+      - name: Upload memory evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: copytext-memory-proof-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: build/reports/copytext-memory-proof/
