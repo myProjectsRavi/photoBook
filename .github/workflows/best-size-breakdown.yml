@@ -1,0 +1,128 @@
+name: Best Size Breakdown (Disposable)
+
+on:
+  push:
+    branches:
+      - "exp/2.0.15-best-size-breakdown"
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Inject best-known ARM and keep-rule configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          build = Path("app/build.gradle.kts")
+          s = build.read_text()
+          old_ndk = '            ndk {\n                debugSymbolLevel = "SYMBOL_TABLE"\n            }\n'
+          new_ndk = '            ndk {\n                debugSymbolLevel = "SYMBOL_TABLE"\n                abiFilters += listOf("arm64-v8a", "armeabi-v7a")\n            }\n'
+          assert s.count(old_ndk) == 1
+          s = s.replace(old_ndk, new_ndk, 1)
+          old_split = '        abi {\n            isEnable = true\n            reset()\n            include("arm64-v8a", "armeabi-v7a")'
+          new_split = '        abi {\n            isEnable = false\n            reset()\n            include("arm64-v8a", "armeabi-v7a")'
+          assert s.count(old_split) == 1
+          build.write_text(s.replace(old_split, new_split, 1))
+
+          rules = Path("app/proguard-rules.pro")
+          r = rules.read_text()
+          removable = [
+              '-keep class com.google.mlkit.** { *; }\n',
+              '-keep class androidx.security.crypto.** { *; }\n',
+              '-keep class com.google.crypto.tink.** { *; }\n',
+              '-keep class * extends androidx.room.RoomDatabase { *; }\n',
+              '-keep @androidx.room.Entity class * { *; }\n',
+              '-keep @androidx.room.Dao interface * { *; }\n',
+              '-keep class * extends androidx.work.Worker { *; }\n',
+              '-keep class * extends androidx.work.CoroutineWorker { *; }\n',
+              '-keep class * extends androidx.work.ListenableWorker { *; }\n',
+              '-keep class com.google.zxing.** { *; }\n',
+          ]
+          for rule in removable:
+              assert r.count(rule) == 1, rule
+              r = r.replace(rule, '', 1)
+          rules.write_text(r)
+          PY
+          git diff -- app/build.gradle.kts app/proguard-rules.pro
+
+      - name: Build best-known AAB
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:bundleRelease -x :app:verifyReleaseBundleSize
+
+      - name: Attribute compressed bundle bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/reports/best-size-breakdown
+          python3 - <<'PY' | tee build/reports/best-size-breakdown/result.txt
+          from pathlib import Path
+          from collections import defaultdict
+          import zipfile
+
+          aab = Path("app/build/outputs/bundle/release/app-release.aab")
+          limit = 20 * 1024 * 1024
+          with zipfile.ZipFile(aab) as z:
+              infos = [i for i in z.infolist() if not i.is_dir()]
+              total = aab.stat().st_size
+              metadata = sum(i.compress_size for i in infos if i.filename.startswith("BUNDLE-METADATA/"))
+              base = sum(i.compress_size for i in infos if i.filename.startswith("base/"))
+              other = sum(i.compress_size for i in infos if not i.filename.startswith(("base/", "BUNDLE-METADATA/")))
+              print(f"aab_bytes={total}")
+              print(f"aab_mib={total/1024/1024:.3f}")
+              print(f"gate_bytes={limit}")
+              print(f"over_gate_bytes={max(total-limit,0)}")
+              print(f"bundle_metadata_compressed_bytes={metadata}")
+              print(f"base_module_compressed_bytes={base}")
+              print(f"other_compressed_bytes={other}")
+              print("\nTOP_50_COMPRESSED_ENTRIES")
+              for i in sorted(infos, key=lambda x: x.compress_size, reverse=True)[:50]:
+                  print(f"{i.compress_size:>10} | {i.file_size:>10} | {i.filename}")
+
+              cats = defaultdict(int)
+              for i in infos:
+                  n = i.filename
+                  if n.startswith("BUNDLE-METADATA/"):
+                      key = "BUNDLE-METADATA"
+                  elif "/lib/" in n and n.endswith(".so"):
+                      key = "native_libs"
+                  elif "/dex/" in n:
+                      key = "dex"
+                  elif "/assets/" in n:
+                      key = "assets"
+                  elif "/res/" in n or n.endswith("resources.pb"):
+                      key = "resources"
+                  else:
+                      key = "other"
+                  cats[key] += i.compress_size
+              print("\nCATEGORY_COMPRESSED_BYTES")
+              for k,v in sorted(cats.items(), key=lambda kv: kv[1], reverse=True):
+                  print(f"{k}={v}")
+          PY
+
+      - name: Upload breakdown
+        uses: actions/upload-artifact@v7
+        with:
+          name: best-size-breakdown-${{ github.run_id }}
+          path: build/reports/best-size-breakdown/result.txt
+          if-no-files-found: error
+          retention-days: 14
