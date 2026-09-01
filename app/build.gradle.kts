@@ -235,6 +235,9 @@ dependencies {
     implementation("androidx.hilt:hilt-work:1.2.0")
     kapt("androidx.hilt:hilt-compiler:1.2.0")
 
+    // Bundled Latin OCR: app-local, case-agnostic search indexing with no model download.
+    implementation("com.google.mlkit:text-recognition:16.0.1")
+
     // Keep the model app-local and use the standalone on-device LiteRT runtime;
     // no cloud inference or deferred model delivery is allowed.
     add("bundledLabelModel", bundledLabelModelDependency)
