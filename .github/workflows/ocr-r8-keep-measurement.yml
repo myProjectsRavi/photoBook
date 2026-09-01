@@ -1,0 +1,107 @@
+name: OCR R8 Keep Measurement (Disposable)
+
+on:
+  push:
+    branches:
+      - "exp/2.0.15-ocr-r8-keep-measurement"
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Inject ARM-only AAB and remove blanket ML Kit keep
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          build = Path("app/build.gradle.kts")
+          s = build.read_text()
+          old_ndk = '            ndk {\n                debugSymbolLevel = "SYMBOL_TABLE"\n            }\n'
+          new_ndk = '            ndk {\n                debugSymbolLevel = "SYMBOL_TABLE"\n                abiFilters += listOf("arm64-v8a", "armeabi-v7a")\n            }\n'
+          if s.count(old_ndk) != 1:
+              raise SystemExit(f"expected one release ndk block, found {s.count(old_ndk)}")
+          s = s.replace(old_ndk, new_ndk, 1)
+
+          old_split = '        abi {\n            isEnable = true\n            reset()\n            include("arm64-v8a", "armeabi-v7a")'
+          new_split = '        abi {\n            isEnable = false\n            reset()\n            include("arm64-v8a", "armeabi-v7a")'
+          if s.count(old_split) != 1:
+              raise SystemExit(f"expected one ABI split block, found {s.count(old_split)}")
+          build.write_text(s.replace(old_split, new_split, 1))
+
+          rules = Path("app/proguard-rules.pro")
+          r = rules.read_text()
+          blanket = '-keep class com.google.mlkit.** { *; }\n'
+          if r.count(blanket) != 1:
+              raise SystemExit(f"expected one blanket ML Kit keep rule, found {r.count(blanket)}")
+          rules.write_text(r.replace(blanket, '', 1))
+          PY
+          git diff -- app/build.gradle.kts app/proguard-rules.pro
+
+      - name: Run unit lint and build measurement AAB
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew \
+            :app:testDebugUnitTest \
+            :app:lintDebug \
+            :app:bundleRelease \
+            -x :app:verifyReleaseBundleSize
+
+      - name: Verify ABIs and report size
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/reports/ocr-r8-keep
+          python3 - <<'PY' | tee build/reports/ocr-r8-keep/result.txt
+          from pathlib import Path
+          import zipfile
+
+          aab = Path("app/build/outputs/bundle/release/app-release.aab")
+          if not aab.is_file():
+              raise SystemExit("AAB missing")
+          size = aab.stat().st_size
+          print(f"aab_bytes={size}")
+          print(f"aab_mib={size / 1024 / 1024:.2f}")
+          print(f"under_20_mib={size <= 20 * 1024 * 1024}")
+          with zipfile.ZipFile(aab) as z:
+              names = z.namelist()
+              libs = [n for n in names if "/lib/" in n and n.endswith(".so")]
+              abis = sorted({n.split("/lib/", 1)[1].split("/", 1)[0] for n in libs})
+              print("abis=" + ",".join(abis))
+              mapping = next((z.getinfo(n) for n in names if n.endswith("/proguard.map")), None)
+              if mapping:
+                  print(f"mapping_compressed_bytes={mapping.compress_size}")
+                  print(f"mapping_uncompressed_bytes={mapping.file_size}")
+              dex = next((z.getinfo(n) for n in names if n.endswith("/dex/classes.dex")), None)
+              if dex:
+                  print(f"dex_compressed_bytes={dex.compress_size}")
+                  print(f"dex_uncompressed_bytes={dex.file_size}")
+          expected = ["arm64-v8a", "armeabi-v7a"]
+          if abis != expected:
+              raise SystemExit(f"Unexpected AAB ABIs: {abis}")
+          PY
+
+      - name: Upload measurement report
+        uses: actions/upload-artifact@v7
+        with:
+          name: ocr-r8-keep-measurement-${{ github.run_id }}
+          path: build/reports/ocr-r8-keep/result.txt
+          if-no-files-found: error
+          retention-days: 14
