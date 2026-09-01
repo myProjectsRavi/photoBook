@@ -1,0 +1,161 @@
+name: Play Delivery Size (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-play-delivery-size
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    name: measure (${{ matrix.source }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [baseline-2.0.14, candidate-2.0.15]
+
+    steps:
+      - name: Checkout experiment workflow source
+        uses: actions/checkout@v6
+
+      - name: Checkout exact application source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.source }}" == "baseline-2.0.14" ]]; then
+            git fetch --depth=1 origin fe09bd528655d1c75979f1c1ce5d0f6c052bba48
+            git checkout --detach fe09bd528655d1c75979f1c1ce5d0f6c052bba48
+          else
+            git fetch --depth=1 origin 56968415f52de447d67a110a3faff71a22265b97
+            git checkout --detach 56968415f52de447d67a110a3faff71a22265b97
+          fi
+          echo "source_sha=$(git rev-parse HEAD)"
+          git status --short
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Inject best-known candidate packaging only
+        if: matrix.source == 'candidate-2.0.15'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          build = Path("app/build.gradle.kts")
+          s = build.read_text()
+          old_ndk = '            ndk {\n                debugSymbolLevel = "SYMBOL_TABLE"\n            }\n'
+          new_ndk = '            ndk {\n                debugSymbolLevel = "SYMBOL_TABLE"\n                abiFilters += listOf("arm64-v8a", "armeabi-v7a")\n            }\n'
+          if s.count(old_ndk) != 1:
+              raise SystemExit(f"release ndk block mismatch: {s.count(old_ndk)}")
+          s = s.replace(old_ndk, new_ndk, 1)
+
+          old_split = '        abi {\n            isEnable = true\n            reset()\n            include("arm64-v8a", "armeabi-v7a")'
+          new_split = '        abi {\n            isEnable = false\n            reset()\n            include("arm64-v8a", "armeabi-v7a")'
+          if s.count(old_split) != 1:
+              raise SystemExit(f"ABI split block mismatch: {s.count(old_split)}")
+          build.write_text(s.replace(old_split, new_split, 1))
+
+          rules = Path("app/proguard-rules.pro")
+          r = rules.read_text()
+          removable = [
+              '-keep class com.google.mlkit.** { *; }\n',
+              '-keep class androidx.security.crypto.** { *; }\n',
+              '-keep class com.google.crypto.tink.** { *; }\n',
+              '-keep class * extends androidx.room.RoomDatabase { *; }\n',
+              '-keep @androidx.room.Entity class * { *; }\n',
+              '-keep @androidx.room.Dao interface * { *; }\n',
+              '-keep class * extends androidx.work.Worker { *; }\n',
+              '-keep class * extends androidx.work.CoroutineWorker { *; }\n',
+              '-keep class * extends androidx.work.ListenableWorker { *; }\n',
+              '-keep class com.google.zxing.** { *; }\n',
+          ]
+          for rule in removable:
+              if r.count(rule) != 1:
+                  raise SystemExit(f"expected one broad keep rule, found {r.count(rule)}: {rule!r}")
+              r = r.replace(rule, '', 1)
+          rules.write_text(r)
+          PY
+          git diff -- app/build.gradle.kts app/proguard-rules.pro
+
+      - name: Build release bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:bundleRelease
+          stat -c 'aab_bytes=%s' app/build/outputs/bundle/release/app-release.aab
+
+      - name: Download and verify official bundletool
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --retry-delay 2 \
+            -o bundletool.jar \
+            https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar
+          echo 'a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29  bundletool.jar' | sha256sum -c -
+          java -jar bundletool.jar version
+
+      - name: Measure device-specific delivery
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/reports/play-delivery
+          cat > build/reports/play-delivery/arm64-api36.json <<'JSON'
+          {"supportedAbis":["arm64-v8a"],"supportedLocales":["en"],"screenDensity":420,"sdkVersion":36}
+          JSON
+          cat > build/reports/play-delivery/armeabi-api26.json <<'JSON'
+          {"supportedAbis":["armeabi-v7a"],"supportedLocales":["en"],"screenDensity":320,"sdkVersion":26}
+          JSON
+
+          REPORT=build/reports/play-delivery/result.txt
+          : > "$REPORT"
+          echo "source=${{ matrix.source }}" | tee -a "$REPORT"
+          echo "source_sha=$(git rev-parse HEAD)" | tee -a "$REPORT"
+          echo "bundletool_version=$(java -jar bundletool.jar version)" | tee -a "$REPORT"
+          echo "aab_bytes=$(stat -c %s app/build/outputs/bundle/release/app-release.aab)" | tee -a "$REPORT"
+
+          for spec in arm64-api36 armeabi-api26; do
+            echo "--- device=$spec" | tee -a "$REPORT"
+            java -jar bundletool.jar build-apks \
+              --bundle=app/build/outputs/bundle/release/app-release.aab \
+              --output="build/reports/play-delivery/$spec.apks" \
+              --device-spec="build/reports/play-delivery/$spec.json" \
+              --overwrite
+            echo "bundletool_get_size:" | tee -a "$REPORT"
+            java -jar bundletool.jar get-size total \
+              --apks="build/reports/play-delivery/$spec.apks" \
+              --device-spec="build/reports/play-delivery/$spec.json" | tee -a "$REPORT"
+            rm -rf "build/reports/play-delivery/$spec-extracted"
+            mkdir -p "build/reports/play-delivery/$spec-extracted"
+            unzip -q "build/reports/play-delivery/$spec.apks" '*.apk' -d "build/reports/play-delivery/$spec-extracted"
+            python3 - "$spec" "$REPORT" <<'PY'
+          import pathlib, sys
+          spec, report = sys.argv[1], pathlib.Path(sys.argv[2])
+          root = pathlib.Path(f"build/reports/play-delivery/{spec}-extracted")
+          apks = sorted(root.rglob("*.apk"))
+          total = sum(p.stat().st_size for p in apks)
+          with report.open("a") as f:
+              f.write(f"delivered_apk_count={len(apks)}\n")
+              f.write(f"delivered_apk_file_bytes_sum={total}\n")
+              for p in apks:
+                  f.write(f"apk_bytes={p.stat().st_size} path={p.relative_to(root)}\n")
+          PY
+          done
+          cat "$REPORT"
+
+      - name: Upload delivery report
+        uses: actions/upload-artifact@v7
+        with:
+          name: play-delivery-${{ matrix.source }}-${{ github.run_id }}
+          path: build/reports/play-delivery/result.txt
+          if-no-files-found: error
+          retention-days: 14
