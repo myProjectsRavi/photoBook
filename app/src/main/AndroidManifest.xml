@@ -7,6 +7,12 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Bundled ML Kit OCR pulls a telemetry transport backend whose library manifest declares
+         INTERNET. PhotoBook does not permit network access; remove that transitive capability at
+         manifest merge while retaining the bundled, app-local OCR runtime. -->
+    <uses-permission
+        android:name="android.permission.INTERNET"
+        tools:node="remove" />
     <uses-feature
         android:name="android.hardware.camera"
         android:required="false" />
