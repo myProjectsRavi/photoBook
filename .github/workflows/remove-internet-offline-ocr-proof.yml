@@ -1,0 +1,224 @@
+name: Remove Transitive INTERNET + Offline OCR Proof (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-remove-transitive-internet
+
+permissions:
+  contents: read
+
+concurrency:
+  group: remove-internet-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove-offline-release-and-ocr:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact experiment head
+        uses: actions/checkout@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Install emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+
+      - name: Provision API 35 emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n 1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager 2>/dev/null | sort | tail -n 1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          IMAGE="system-images;android-35;google_apis;x86_64"
+          AVD="photobook-remove-internet-api35"
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 emulator "$IMAGE"
+          echo no | "$AVDMANAGER" create avd --force --name "$AVD" --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/$AVD.avd"
+          test -e /dev/kvm || { echo 'KVM unavailable'; exit 1; }
+          sudo chmod 666 /dev/kvm
+          "$EMULATOR" -accel-check
+          nohup "$EMULATOR" -avd "$AVD" -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 2048 -cores 2 > "$RUNNER_TEMP/remove-internet-emulator.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 120); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/remove-internet-emulator.log"; exit 1; }
+            sleep 2
+          done
+          "$ADB" wait-for-device
+          for _ in $(seq 1 120); do
+            [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break
+            sleep 2
+          done
+          [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
+          echo "sdk=$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r') abi=$("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r') abilist=$("$ADB" shell getprop ro.product.cpu.abilist | tr -d '\r')"
+
+      - name: Build and prove packaged variants have no INTERNET
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          mkdir -p build/reports/remove-internet-proof
+          ./gradlew \
+            :app:testDebugUnitTest \
+            :app:lintDebug \
+            :app:assembleRelease \
+            :app:assembleDebug \
+            :app:assembleDebugAndroidTest
+
+          for variant in release debug; do
+            manifest="$(find "app/build/intermediates/merged_manifest/$variant" -type f -name AndroidManifest.xml | head -n 1)"
+            test -n "$manifest" && test -f "$manifest"
+            cp "$manifest" "build/reports/remove-internet-proof/$variant-merged-manifest.xml"
+            if grep -q 'android.permission.INTERNET' "$manifest"; then
+              echo "INTERNET present in $variant merged manifest"
+              exit 1
+            fi
+            echo "$variant_merged_manifest_internet=ABSENT"
+          done
+
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt 2>/dev/null | sort | tail -n 1)"
+          test -x "$AAPT"
+
+          : > build/reports/remove-internet-proof/apk-permissions.txt
+          found_release=false
+          while IFS= read -r apk; do
+            found_release=true
+            echo "--- release_apk=$apk" | tee -a build/reports/remove-internet-proof/apk-permissions.txt
+            "$AAPT" dump permissions "$apk" | tee -a build/reports/remove-internet-proof/apk-permissions.txt
+            if "$AAPT" dump permissions "$apk" | grep -q 'android.permission.INTERNET'; then
+              echo "INTERNET present in packaged release APK: $apk"
+              exit 1
+            fi
+          done < <(find app/build/outputs/apk/release -type f -name '*.apk' | sort)
+          [[ "$found_release" == true ]]
+
+          found_debug=false
+          while IFS= read -r apk; do
+            found_debug=true
+            echo "--- debug_apk=$apk" | tee -a build/reports/remove-internet-proof/apk-permissions.txt
+            "$AAPT" dump permissions "$apk" | tee -a build/reports/remove-internet-proof/apk-permissions.txt
+            if "$AAPT" dump permissions "$apk" | grep -q 'android.permission.INTERNET'; then
+              echo "INTERNET present in packaged debug APK: $apk"
+              exit 1
+            fi
+          done < <(find app/build/outputs/apk/debug -type f -name '*.apk' | sort)
+          [[ "$found_debug" == true ]]
+          echo 'packaged_apk_internet=ABSENT'
+
+          blame="$(find app/build/intermediates/manifest_merge_blame_file/release -type f -name '*blame*' | head -n 1)"
+          if [[ -n "$blame" && -f "$blame" ]]; then
+            cp "$blame" build/reports/remove-internet-proof/release-manifest-blame.txt
+          fi
+
+      - name: Install and run real bundled OCR with all usable network cut
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          uid="$(id -u)"
+
+          "$ADB" shell cmd connectivity airplane-mode enable || true
+          "$ADB" shell svc wifi disable || true
+          "$ADB" shell svc data disable || true
+          sudo iptables -I OUTPUT 1 -o lo -j ACCEPT
+          sudo iptables -I OUTPUT 2 -m owner --uid-owner "$uid" -j REJECT
+          cleanup() {
+            sudo iptables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null || true
+            sudo iptables -D OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          airplane="$("$ADB" shell settings get global airplane_mode_on 2>/dev/null | tr -d '\r')"
+          echo "airplane_mode=$airplane"
+          [[ "$airplane" == 1 ]]
+          if curl -fsS --connect-timeout 2 --max-time 3 https://www.google.com >/dev/null 2>&1; then
+            echo 'Host outbound network unexpectedly reachable'
+            exit 1
+          fi
+          if "$ADB" shell 'command -v ping >/dev/null 2>&1'; then
+            if "$ADB" shell ping -c 1 -W 1 8.8.8.8 >/dev/null 2>&1; then
+              echo 'Emulator outbound network unexpectedly reachable'
+              exit 1
+            fi
+          fi
+          echo 'offline_network_gate=PASS'
+
+          app_installed=false
+          while IFS= read -r apk; do
+            echo "Trying offline install: $apk"
+            if "$ADB" install -r "$apk"; then
+              app_installed=true
+              echo "installed_app_apk=$apk"
+              break
+            fi
+          done < <(find app/build/outputs/apk/debug -type f -name '*.apk' | sort -r)
+          [[ "$app_installed" == true ]]
+
+          test_apk="$(find app/build/outputs/apk/androidTest/debug -type f -name '*.apk' | head -n 1)"
+          test -n "$test_apk" && test -f "$test_apk"
+          "$ADB" install -r "$test_apk"
+
+          instrumentation="$("$ADB" shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n 1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
+          test -n "$instrumentation"
+          echo "instrumentation=$instrumentation"
+
+          "$ADB" shell dumpsys package com.photobook.app > build/reports/remove-internet-proof/package-after-install.txt
+          if sed -n '/requested permissions:/,/install permissions:/p' build/reports/remove-internet-proof/package-after-install.txt | grep -q 'android.permission.INTERNET'; then
+            echo 'Installed app still requests INTERNET'
+            exit 1
+          fi
+
+          set +e
+          "$ADB" shell am instrument -w -r \
+            -e class com.photobook.app.ml.LocalOcrEngineInstrumentedTest \
+            "$instrumentation" | tee build/reports/remove-internet-proof/offline-ocr-instrumentation.txt
+          rc=${PIPESTATUS[0]}
+          set -e
+          [[ $rc -eq 0 ]]
+          grep -Eq 'OK \(1 test\)|OK \(1 tests\)' build/reports/remove-internet-proof/offline-ocr-instrumentation.txt
+          if grep -Eq 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' build/reports/remove-internet-proof/offline-ocr-instrumentation.txt; then
+            echo 'OCR instrumentation reported failure'
+            exit 1
+          fi
+          echo 'offline_bundled_ocr=PASS'
+
+      - name: Capture evidence
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          mkdir -p build/reports/remove-internet-proof
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          "$ADB" logcat -d > build/reports/remove-internet-proof/logcat.txt 2>/dev/null
+          cp "$RUNNER_TEMP/remove-internet-emulator.log" build/reports/remove-internet-proof/emulator.log 2>/dev/null
+          printf 'head=%s\n' "$(git rev-parse HEAD)" > build/reports/remove-internet-proof/source.txt
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: remove-internet-offline-ocr-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: build/reports/remove-internet-proof/
