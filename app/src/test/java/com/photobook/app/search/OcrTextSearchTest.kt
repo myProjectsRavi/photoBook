@@ -88,6 +88,7 @@ class OcrTextSearchTest {
         val bResult = engine.search("b")
         assertThat(bResult.complete).isTrue()
         assertThat(bResult.orderedIds).containsExactly(4L)
+        Unit
     }
 
     private fun searchEngine(index: PhotoIndex): SearchEngineV2 {
