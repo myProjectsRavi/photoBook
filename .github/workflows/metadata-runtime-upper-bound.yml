@@ -1,0 +1,106 @@
+name: Metadata Runtime Upper Bound (Disposable)
+
+on:
+  push:
+    branches:
+      - "exp/2.0.15-metadata-runtime-upper-bound"
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Inject best-known config and exclude metadata parser runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          build = Path("app/build.gradle.kts")
+          s = build.read_text()
+          old_ndk = '            ndk {\n                debugSymbolLevel = "SYMBOL_TABLE"\n            }\n'
+          new_ndk = '            ndk {\n                debugSymbolLevel = "SYMBOL_TABLE"\n                abiFilters += listOf("arm64-v8a", "armeabi-v7a")\n            }\n'
+          assert s.count(old_ndk) == 1
+          s = s.replace(old_ndk, new_ndk, 1)
+          old_split = '        abi {\n            isEnable = true\n            reset()\n            include("arm64-v8a", "armeabi-v7a")'
+          new_split = '        abi {\n            isEnable = false\n            reset()\n            include("arm64-v8a", "armeabi-v7a")'
+          assert s.count(old_split) == 1
+          s = s.replace(old_split, new_split, 1)
+          old_dep = '    implementation("org.tensorflow:tensorflow-lite-metadata:0.1.0-rc2")\n'
+          new_dep = '    compileOnly("org.tensorflow:tensorflow-lite-metadata:0.1.0-rc2")\n'
+          assert s.count(old_dep) == 1
+          build.write_text(s.replace(old_dep, new_dep, 1))
+
+          rules = Path("app/proguard-rules.pro")
+          r = rules.read_text()
+          removable = [
+              '-keep class com.google.mlkit.** { *; }\n',
+              '-keep class androidx.security.crypto.** { *; }\n',
+              '-keep class com.google.crypto.tink.** { *; }\n',
+              '-keep class * extends androidx.room.RoomDatabase { *; }\n',
+              '-keep @androidx.room.Entity class * { *; }\n',
+              '-keep @androidx.room.Dao interface * { *; }\n',
+              '-keep class * extends androidx.work.Worker { *; }\n',
+              '-keep class * extends androidx.work.CoroutineWorker { *; }\n',
+              '-keep class * extends androidx.work.ListenableWorker { *; }\n',
+              '-keep class com.google.zxing.** { *; }\n',
+          ]
+          for rule in removable:
+              assert r.count(rule) == 1, rule
+              r = r.replace(rule, '', 1)
+          r += '\n# Disposable upper-bound only; missing runtime parser is intentional.\n-dontwarn org.tensorflow.lite.support.metadata.**\n-dontwarn com.google.flatbuffers.**\n'
+          rules.write_text(r)
+          PY
+          git diff -- app/build.gradle.kts app/proguard-rules.pro
+
+      - name: Build upper-bound AAB
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:bundleRelease -x :app:verifyReleaseBundleSize
+
+      - name: Report upper-bound size
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/reports/metadata-runtime-upper-bound
+          python3 - <<'PY' | tee build/reports/metadata-runtime-upper-bound/result.txt
+          from pathlib import Path
+          import zipfile
+          aab = Path("app/build/outputs/bundle/release/app-release.aab")
+          baseline = 21439687
+          limit = 20 * 1024 * 1024
+          total = aab.stat().st_size
+          print(f"aab_bytes={total}")
+          print(f"aab_mib={total/1024/1024:.3f}")
+          print(f"saved_vs_best_bytes={baseline-total}")
+          print(f"under_20_mib={total <= limit}")
+          print(f"headroom_bytes={limit-total}")
+          with zipfile.ZipFile(aab) as z:
+              dex = next(i for i in z.infolist() if i.filename.endswith('/dex/classes.dex'))
+              mapping = next(i for i in z.infolist() if i.filename.endswith('/proguard.map'))
+              print(f"dex_compressed_bytes={dex.compress_size}")
+              print(f"mapping_compressed_bytes={mapping.compress_size}")
+          PY
+
+      - name: Upload report
+        uses: actions/upload-artifact@v7
+        with:
+          name: metadata-runtime-upper-bound-${{ github.run_id }}
+          path: build/reports/metadata-runtime-upper-bound/result.txt
+          if-no-files-found: error
+          retention-days: 14
