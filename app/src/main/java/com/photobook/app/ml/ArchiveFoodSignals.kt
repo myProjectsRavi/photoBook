@@ -3,14 +3,12 @@ package com.photobook.app.ml
 import com.photobook.app.data.model.MLTag
 
 /**
- * Shared, conservative Food archive gate used by both Room prefiltering and final classification.
+ * Shared, conservative Food archive gate used by both local ML analysis and final classification.
  *
- * The generic compact color heuristic remains useful for search labels, but it is not strong
- * enough to authorize an Archive action. Food archive eligibility therefore requires a strong
- * semantic food label plus a prepared/served/packaged-food context from the current ML analysis,
- * and rejects any live-subject signal, including face-derived people/selfie tags. The caller must
- * pass only those ephemeral semantic signals; persisted records use the separate archive flag
- * plus this object's live-subject defense.
+ * A generic color heuristic is never enough to authorize an Archive action. Eligibility requires
+ * strong semantic food evidence plus either prepared/served-food semantics or packaging text from
+ * local OCR, and rejects any live-subject signal including people, pets, livestock, birds and
+ * wildlife. All matching is local and case-insensitive.
  */
 object ArchiveFoodSignals {
     const val MIN_SEMANTIC_FOOD_CONFIDENCE = 0.70f
@@ -48,20 +46,52 @@ object ArchiveFoodSignals {
         "wildlife",
     )
 
-    fun isEligible(tags: List<MLTag>): Boolean {
+    private val strongPackagingCues = listOf(
+        "nutrition facts",
+        "nutrition information",
+        "nutritional information",
+        "ingredients",
+        "serving size",
+        "net weight",
+        "net wt",
+        "best before",
+        "use by",
+    )
+
+    private val supportingPackagingCues = listOf(
+        "calories",
+        "kcal",
+        "protein",
+        "carbohydrate",
+        "carbohydrates",
+        "sodium",
+        "sugars",
+        "sugar",
+        "dietary fibre",
+        "dietary fiber",
+        "saturated fat",
+    )
+
+    fun isEligible(tags: List<MLTag>, ocrText: String = ""): Boolean {
         val hasSemanticFood = tags.any { tag ->
             tag.label.equals("food", ignoreCase = true) &&
                 tag.confidence >= MIN_SEMANTIC_FOOD_CONFIDENCE
         }
         if (!hasSemanticFood) return false
+        if (containsLiveSubject(tags)) return false
 
         val hasPreparedFoodContext = tags.any { tag ->
             tag.label.equals("prepared_food", ignoreCase = true) &&
                 tag.confidence >= MIN_PREPARED_FOOD_CONFIDENCE
         }
-        if (!hasPreparedFoodContext) return false
+        return hasPreparedFoodContext || hasPackagedFoodEvidence(ocrText)
+    }
 
-        return !containsLiveSubject(tags)
+    fun hasPackagedFoodEvidence(ocrText: String): Boolean {
+        val normalized = ocrText.lowercase().replace(Regex("\\s+"), " ").trim()
+        if (normalized.length < MIN_PACKAGING_TEXT_LENGTH) return false
+        if (strongPackagingCues.any(normalized::contains)) return true
+        return supportingPackagingCues.count(normalized::contains) >= MIN_SUPPORTING_PACKAGING_CUES
     }
 
     fun containsLiveSubject(tags: List<MLTag>): Boolean {
@@ -71,4 +101,7 @@ object ArchiveFoodSignals {
                 tag.confidence >= MIN_LIVE_SUBJECT_CONFIDENCE
         }
     }
+
+    private const val MIN_PACKAGING_TEXT_LENGTH = 12
+    private const val MIN_SUPPORTING_PACKAGING_CUES = 2
 }
