@@ -29,25 +29,12 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-
           build = Path("app/build.gradle.kts")
           s = build.read_text()
-          old = '''        jniLibs {
-            // Ensure native libs are stored uncompressed and 16KB page-aligned
-            // Required by Google Play for devices with 16KB memory pages
-            useLegacyPackaging = false
-        }
-'''
-          new = '''        jniLibs {
-            // Ensure native libs are stored uncompressed and 16KB page-aligned
-            // Required by Google Play for devices with 16KB memory pages
-            useLegacyPackaging = false
-            excludes += setOf("**/x86/**", "**/x86_64/**")
-        }
-'''
+          old = "        jniLibs {\n            // Ensure native libs are stored uncompressed and 16KB page-aligned\n            // Required by Google Play for devices with 16KB memory pages\n            useLegacyPackaging = false\n        }\n"
+          new = "        jniLibs {\n            // Ensure native libs are stored uncompressed and 16KB page-aligned\n            // Required by Google Play for devices with 16KB memory pages\n            useLegacyPackaging = false\n            excludes += setOf(\"**/x86/**\", \"**/x86_64/**\")\n        }\n"
           assert s.count(old) == 1, s.count(old)
           build.write_text(s.replace(old, new, 1))
-
           rules = Path("app/proguard-rules.pro")
           r = rules.read_text()
           removable = [
@@ -90,7 +77,6 @@ jobs:
           python3 - <<'PY' | tee build/reports/jni-exclude-packaging/result.txt
           from pathlib import Path
           import zipfile
-
           aab = Path("app/build/outputs/bundle/release/app-release.aab")
           limit = 20 * 1024 * 1024
           with zipfile.ZipFile(aab) as z:
