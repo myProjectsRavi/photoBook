@@ -297,13 +297,10 @@ tasks.register("verifyApkSize") {
 
 tasks.register("verifyReleaseBundleSize") {
     group = "verification"
-    description = "Guards the multi-ABI release AAB against unexpected aggregate bloat."
+    description = "Fails when any generated release AAB exceeds 20 MiB."
 
     doLast {
-        // The AAB aggregates architecture-specific bundled OCR payloads; Play does not deliver all
-        // of them to one device. Keep a separate tight aggregate guard while the 15 MiB APK gate
-        // above is the conservative per-device payload budget.
-        val maxBytes = 36L * 1024L * 1024L
+        val maxBytes = 20L * 1024L * 1024L
         val bundleRoot = layout.buildDirectory.dir("outputs/bundle/release").get().asFile
         check(bundleRoot.exists()) {
             "Release AAB size gate could not find ${bundleRoot.path}; run bundleRelease first."
@@ -321,7 +318,7 @@ tasks.register("verifyReleaseBundleSize") {
             val sizeMiB = sizeBytes.toDouble() / (1024.0 * 1024.0)
             println("releaseAab=${bundle.name} bytes=$sizeBytes mib=${"%.2f".format(sizeMiB)}")
             check(sizeBytes <= maxBytes) {
-                "Aggregate AAB size gate failed for ${bundle.path}: ${"%.2f".format(sizeMiB)} MiB > 36 MiB"
+                "Release bundle size gate failed for ${bundle.path}: ${"%.2f".format(sizeMiB)} MiB > 20 MiB"
             }
         }
     }
