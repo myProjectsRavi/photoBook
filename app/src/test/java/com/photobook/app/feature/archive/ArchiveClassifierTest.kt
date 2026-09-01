@@ -20,7 +20,7 @@ class ArchiveClassifierTest {
         assertThat(result).isNotNull()
         assertThat(result!!.confidence).isAtLeast(0.84)
         assertThat(result.reasons).contains("Payment app cue")
-        assertThat(result.reasons).contains("UPI cue")
+        assertThat(result.reasons).contains("Payment network/reference cue")
     }
 
     @Test
@@ -36,9 +36,45 @@ class ArchiveClassifierTest {
     }
 
     @Test
+    fun uppercasePaymentText_isCaseInsensitive() {
+        val photo = sampleScreenshot(
+            ocrText = "GOOGLE PAY PAYMENT SUCCESSFUL INR 500 UPI REFERENCE ID 778899",
+        )
+
+        val result = classifier.classify(photo, NOW_MS)
+
+        assertThat(result).isNotNull()
+        assertThat(result!!.category).isEqualTo(ArchiveCategory.Payments)
+    }
+
+    @Test
+    fun bankTransferScreenshot_matchesNetworkAmountAndStatusEvidence() {
+        val photo = sampleScreenshot(
+            ocrText = "NEFT transaction successful. INR 5,000 debited. Reference id 991122.",
+        )
+
+        val result = classifier.classify(photo, NOW_MS)
+
+        assertThat(result).isNotNull()
+        assertThat(result!!.reasons).contains("Payment network/reference cue")
+        assertThat(result.reasons).contains("Amount-like text")
+    }
+
+    @Test
     fun genericScreenshot_isRejected() {
         val photo = sampleScreenshot(
             ocrText = "Lunch plan, movie timings, and a reminder to call later.",
+        )
+
+        val result = classifier.classify(photo, NOW_MS)
+
+        assertThat(result).isNull()
+    }
+
+    @Test
+    fun amountOnlyScreenshot_isRejected() {
+        val photo = sampleScreenshot(
+            ocrText = "Shopping list total INR 1,200",
         )
 
         val result = classifier.classify(photo, NOW_MS)
@@ -127,6 +163,62 @@ class ArchiveClassifierTest {
         assertThat(result).isNotNull()
         assertThat(result!!.category).isEqualTo(ArchiveCategory.Food)
         assertThat(result.reasons).contains("Prepared food evidence")
+    }
+
+    @Test
+    fun foodCategoryEnabled_matchesPackagedFoodWithLocalOcrEvidence() {
+        val photo = samplePhoto(
+            mlTags = listOf(MLTag("food", 0.91f)),
+            archiveFoodCandidate = true,
+            ocrText = "NUTRITION FACTS Ingredients: oats sugar. NET WT 200 g. Protein 8 g.",
+        )
+
+        val result = classifier.classify(
+            photo = photo,
+            nowMs = NOW_MS,
+            enabledCategories = setOf(ArchiveCategory.Food),
+        )
+
+        assertThat(result).isNotNull()
+        assertThat(result!!.category).isEqualTo(ArchiveCategory.Food)
+        assertThat(result.reasons).contains("Packaged food evidence")
+    }
+
+    @Test
+    fun packagedFoodEvidenceWithoutSemanticCandidate_isRejected() {
+        val photo = samplePhoto(
+            mlTags = listOf(MLTag("food", 0.91f)),
+            archiveFoodCandidate = false,
+            ocrText = "Nutrition facts ingredients net weight 200 g",
+        )
+
+        val result = classifier.classify(
+            photo = photo,
+            nowMs = NOW_MS,
+            enabledCategories = setOf(ArchiveCategory.Food),
+        )
+
+        assertThat(result).isNull()
+    }
+
+    @Test
+    fun packagedFoodWithBirdSignal_isRejectedForArchive() {
+        val photo = samplePhoto(
+            mlTags = listOf(
+                MLTag("food", 0.91f),
+                MLTag("bird", 0.88f),
+            ),
+            archiveFoodCandidate = true,
+            ocrText = "Nutrition facts ingredients net weight 200 g",
+        )
+
+        val result = classifier.classify(
+            photo = photo,
+            nowMs = NOW_MS,
+            enabledCategories = setOf(ArchiveCategory.Food),
+        )
+
+        assertThat(result).isNull()
     }
 
     @Test
@@ -316,6 +408,8 @@ class ArchiveClassifierTest {
         dateAdded: Long = NOW_MS - (3L * 24L * 60L * 60L * 1000L),
         mlTags: List<MLTag> = emptyList(),
         archiveFoodCandidate: Boolean = false,
+        ocrText: String = "",
+        isOcrProcessed: Boolean = ocrText.isNotBlank(),
     ): PhotoRecord {
         return PhotoRecord(
             id = id,
@@ -346,6 +440,8 @@ class ArchiveClassifierTest {
             mlTags = mlTags,
             isArchiveFoodCandidate = archiveFoodCandidate,
             isMlProcessed = mlTags.isNotEmpty(),
+            ocrText = ocrText,
+            isOcrProcessed = isOcrProcessed,
         )
     }
 
