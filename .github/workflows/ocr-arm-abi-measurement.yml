@@ -27,23 +27,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path("app/build.gradle.kts")
-          text = path.read_text()
-          old = '''            ndk {
-                debugSymbolLevel = "SYMBOL_TABLE"
-            }
-'''
-          new = '''            ndk {
-                debugSymbolLevel = "SYMBOL_TABLE"
-                abiFilters += listOf("arm64-v8a", "armeabi-v7a")
-            }
-'''
-          if text.count(old) != 1:
-              raise SystemExit(f"Expected exactly one release ndk block, found {text.count(old)}")
-          path.write_text(text.replace(old, new, 1))
-          PY
+          python3 -c 'from pathlib import Path; p=Path("app/build.gradle.kts"); s=p.read_text(); old="            ndk {\n                debugSymbolLevel = \"SYMBOL_TABLE\"\n            }\n"; new="            ndk {\n                debugSymbolLevel = \"SYMBOL_TABLE\"\n                abiFilters += listOf(\"arm64-v8a\", \"armeabi-v7a\")\n            }\n"; assert s.count(old) == 1, f"expected one release ndk block, found {s.count(old)}"; p.write_text(s.replace(old,new,1))'
           git diff -- app/build.gradle.kts
 
       - name: Build measurement artifacts
