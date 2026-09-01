@@ -23,22 +23,20 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - name: Inject release-only ARM ABI filter
+      - name: Inject ARM-only AAB measurement config
         shell: bash
         run: |
           set -euo pipefail
-          python3 -c 'from pathlib import Path; p=Path("app/build.gradle.kts"); s=p.read_text(); old="            ndk {\n                debugSymbolLevel = \"SYMBOL_TABLE\"\n            }\n"; new="            ndk {\n                debugSymbolLevel = \"SYMBOL_TABLE\"\n                abiFilters += listOf(\"arm64-v8a\", \"armeabi-v7a\")\n            }\n"; assert s.count(old) == 1, f"expected one release ndk block, found {s.count(old)}"; p.write_text(s.replace(old,new,1))'
+          python3 -c 'from pathlib import Path; p=Path("app/build.gradle.kts"); s=p.read_text(); old="            ndk {\n                debugSymbolLevel = \"SYMBOL_TABLE\"\n            }\n"; new="            ndk {\n                debugSymbolLevel = \"SYMBOL_TABLE\"\n                abiFilters += listOf(\"arm64-v8a\", \"armeabi-v7a\")\n            }\n"; assert s.count(old) == 1, f"expected one release ndk block, found {s.count(old)}"; s=s.replace(old,new,1); split_old="        abi {\n            isEnable = true\n            reset()\n            include(\"arm64-v8a\", \"armeabi-v7a\")"; split_new="        abi {\n            isEnable = false\n            reset()\n            include(\"arm64-v8a\", \"armeabi-v7a\")"; assert s.count(split_old) == 1, f"expected one ABI split block, found {s.count(split_old)}"; p.write_text(s.replace(split_old,split_new,1))'
           git diff -- app/build.gradle.kts
 
-      - name: Build measurement artifacts
+      - name: Build AAB measurement artifact
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./gradlew
           ./gradlew \
-            :app:assembleRelease \
             :app:bundleRelease \
-            -x :app:verifyApkSize \
             -x :app:verifyReleaseBundleSize
 
       - name: Verify AAB ABIs and report size
