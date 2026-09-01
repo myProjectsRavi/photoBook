@@ -1,4 +1,4 @@
-name: OCR ARM ABI Measurement (Disposable)
+name: OCR ARM No-Obfuscation Measurement (Disposable)
 
 on:
   push:
@@ -23,43 +23,74 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - name: Inject ARM-only AAB measurement config
+      - name: Inject ARM-only AAB and no-obfuscation measurement config
         shell: bash
         run: |
           set -euo pipefail
-          python3 -c 'from pathlib import Path; p=Path("app/build.gradle.kts"); s=p.read_text(); old="            ndk {\n                debugSymbolLevel = \"SYMBOL_TABLE\"\n            }\n"; new="            ndk {\n                debugSymbolLevel = \"SYMBOL_TABLE\"\n                abiFilters += listOf(\"arm64-v8a\", \"armeabi-v7a\")\n            }\n"; assert s.count(old) == 1, f"expected one release ndk block, found {s.count(old)}"; s=s.replace(old,new,1); split_old="        abi {\n            isEnable = true\n            reset()\n            include(\"arm64-v8a\", \"armeabi-v7a\")"; split_new="        abi {\n            isEnable = false\n            reset()\n            include(\"arm64-v8a\", \"armeabi-v7a\")"; assert s.count(split_old) == 1, f"expected one ABI split block, found {s.count(split_old)}"; p.write_text(s.replace(split_old,split_new,1))'
-          git diff -- app/build.gradle.kts
+          python3 - <<'PY'
+          from pathlib import Path
 
-      - name: Build AAB measurement artifact
+          build = Path("app/build.gradle.kts")
+          s = build.read_text()
+          old_ndk = '            ndk {\n                debugSymbolLevel = "SYMBOL_TABLE"\n            }\n'
+          new_ndk = '            ndk {\n                debugSymbolLevel = "SYMBOL_TABLE"\n                abiFilters += listOf("arm64-v8a", "armeabi-v7a")\n            }\n'
+          if s.count(old_ndk) != 1:
+              raise SystemExit(f"expected one release ndk block, found {s.count(old_ndk)}")
+          s = s.replace(old_ndk, new_ndk, 1)
+
+          old_split = '        abi {\n            isEnable = true\n            reset()\n            include("arm64-v8a", "armeabi-v7a")'
+          new_split = '        abi {\n            isEnable = false\n            reset()\n            include("arm64-v8a", "armeabi-v7a")'
+          if s.count(old_split) != 1:
+              raise SystemExit(f"expected one ABI split block, found {s.count(old_split)}")
+          build.write_text(s.replace(old_split, new_split, 1))
+
+          rules = Path("app/proguard-rules.pro")
+          rules.write_text(rules.read_text() + "\n# Disposable measurement only: preserve shrinking/optimization, disable renaming.\n-dontobfuscate\n")
+          PY
+          git diff -- app/build.gradle.kts app/proguard-rules.pro
+
+      - name: Run release unit/lint and build measurement AAB
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./gradlew
           ./gradlew \
+            :app:testDebugUnitTest \
+            :app:lintDebug \
             :app:bundleRelease \
             -x :app:verifyReleaseBundleSize
 
-      - name: Verify AAB ABIs and report size
+      - name: Verify ABIs and report AAB metadata footprint
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p build/reports/ocr-arm-abi
-          python3 - <<'PY' | tee build/reports/ocr-arm-abi/result.txt
+          mkdir -p build/reports/ocr-arm-noobfuscation
+          python3 - <<'PY' | tee build/reports/ocr-arm-noobfuscation/result.txt
           from pathlib import Path
           import zipfile
+
           aab = Path("app/build/outputs/bundle/release/app-release.aab")
           if not aab.is_file():
               raise SystemExit("AAB missing")
           size = aab.stat().st_size
           print(f"aab_bytes={size}")
           print(f"aab_mib={size / 1024 / 1024:.2f}")
+          print(f"under_20_mib={size <= 20 * 1024 * 1024}")
           with zipfile.ZipFile(aab) as z:
-              libs = [n for n in z.namelist() if "/lib/" in n and n.endswith(".so")]
+              names = z.namelist()
+              libs = [n for n in names if "/lib/" in n and n.endswith(".so")]
               abis = sorted({n.split("/lib/", 1)[1].split("/", 1)[0] for n in libs})
               print("abis=" + ",".join(abis))
-              for n in sorted(libs):
-                  info = z.getinfo(n)
-                  print(f"{info.compress_size:>10} | {info.file_size:>10} | {n}")
+              mapping = next((z.getinfo(n) for n in names if n.endswith("/proguard.map")), None)
+              if mapping:
+                  print(f"mapping_compressed_bytes={mapping.compress_size}")
+                  print(f"mapping_uncompressed_bytes={mapping.file_size}")
+              else:
+                  print("mapping_absent=true")
+              dex = next((z.getinfo(n) for n in names if n.endswith("/dex/classes.dex")), None)
+              if dex:
+                  print(f"dex_compressed_bytes={dex.compress_size}")
+                  print(f"dex_uncompressed_bytes={dex.file_size}")
           expected = ["arm64-v8a", "armeabi-v7a"]
           if abis != expected:
               raise SystemExit(f"Unexpected AAB ABIs: {abis}")
@@ -68,7 +99,7 @@ jobs:
       - name: Upload measurement report
         uses: actions/upload-artifact@v7
         with:
-          name: ocr-arm-abi-measurement-${{ github.run_id }}
-          path: build/reports/ocr-arm-abi/result.txt
+          name: ocr-arm-noobfuscation-${{ github.run_id }}
+          path: build/reports/ocr-arm-noobfuscation/result.txt
           if-no-files-found: error
           retention-days: 14
