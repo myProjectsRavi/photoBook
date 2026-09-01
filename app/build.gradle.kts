@@ -175,8 +175,9 @@ android {
             isEnable = true
             reset()
             include("arm64-v8a", "armeabi-v7a")
-            // No universal APK. Preserve the production 30 MiB hard ceiling here; Play-delivered
-            // download/install size is measured separately from the generated per-ABI APK bytes.
+            // No universal APK. Preserve the production 30 MiB hard ceiling here. The user-facing
+            // Google Play delivered download/install size is a separate release metric and must be
+            // measured and minimized before this candidate can be approved.
             isUniversalApk = false
         }
     }
