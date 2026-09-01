@@ -7,6 +7,13 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
     <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- PhotoBook is intentionally offline. Bundled ML Kit OCR brings a transitive diagnostics
+         transport manifest that requests INTERNET; remove that capability from every app variant. -->
+    <uses-permission
+        android:name="android.permission.INTERNET"
+        tools:node="remove" />
+
     <uses-feature
         android:name="android.hardware.camera"
         android:required="false" />
