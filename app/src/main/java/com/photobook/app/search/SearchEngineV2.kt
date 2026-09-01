@@ -65,7 +65,9 @@ class SearchEngineV2 @Inject constructor(
         val hits = ArrayList<SearchHit>(hitCapacity)
 
         val complete = forEachSource(sourceSnapshot, candidateIds) { ordinal, photo ->
-            if (filters.isEmpty() || filters.all { filter -> filter(photo) }) {
+            val smartMatch = filters.isNotEmpty() && filters.all { filter -> filter(photo) }
+            val literalOcrMatch = OcrQueryMatcher.matches(photo.ocrText, query)
+            if (smartMatch || literalOcrMatch) {
                 hits += SearchHit(
                     id = photo.id,
                     dateAdded = photo.dateAdded,
