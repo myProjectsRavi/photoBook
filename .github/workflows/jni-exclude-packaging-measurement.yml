@@ -1,0 +1,122 @@
+name: JNI Exclude Packaging Measurement (Disposable)
+
+on:
+  push:
+    branches:
+      - "exp/2.0.15-jni-exclude-packaging"
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Inject JNI exclusions and best-known R8 pruning
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          build = Path("app/build.gradle.kts")
+          s = build.read_text()
+          old = '''        jniLibs {
+            // Ensure native libs are stored uncompressed and 16KB page-aligned
+            // Required by Google Play for devices with 16KB memory pages
+            useLegacyPackaging = false
+        }
+'''
+          new = '''        jniLibs {
+            // Ensure native libs are stored uncompressed and 16KB page-aligned
+            // Required by Google Play for devices with 16KB memory pages
+            useLegacyPackaging = false
+            excludes += setOf("**/x86/**", "**/x86_64/**")
+        }
+'''
+          assert s.count(old) == 1, s.count(old)
+          build.write_text(s.replace(old, new, 1))
+
+          rules = Path("app/proguard-rules.pro")
+          r = rules.read_text()
+          removable = [
+              '-keep class com.google.mlkit.** { *; }\n',
+              '-keep class androidx.security.crypto.** { *; }\n',
+              '-keep class com.google.crypto.tink.** { *; }\n',
+              '-keep class * extends androidx.room.RoomDatabase { *; }\n',
+              '-keep @androidx.room.Entity class * { *; }\n',
+              '-keep @androidx.room.Dao interface * { *; }\n',
+              '-keep class * extends androidx.work.Worker { *; }\n',
+              '-keep class * extends androidx.work.CoroutineWorker { *; }\n',
+              '-keep class * extends androidx.work.ListenableWorker { *; }\n',
+              '-keep class com.google.zxing.** { *; }\n',
+          ]
+          for rule in removable:
+              assert r.count(rule) == 1, rule
+              r = r.replace(rule, '', 1)
+          rules.write_text(r)
+          PY
+          git diff -- app/build.gradle.kts app/proguard-rules.pro
+
+      - name: Unit tests, lint, APK splits, and AAB
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew \
+            :app:testDebugUnitTest \
+            :app:lintDebug \
+            :app:assembleRelease \
+            :app:bundleRelease \
+            :app:verifyApkSize \
+            -x :app:verifyReleaseBundleSize
+
+      - name: Verify split APKs and AAB ABI contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/reports/jni-exclude-packaging
+          python3 - <<'PY' | tee build/reports/jni-exclude-packaging/result.txt
+          from pathlib import Path
+          import zipfile
+
+          aab = Path("app/build/outputs/bundle/release/app-release.aab")
+          limit = 20 * 1024 * 1024
+          with zipfile.ZipFile(aab) as z:
+              libs = [n for n in z.namelist() if "/lib/" in n and n.endswith(".so")]
+              abis = sorted({n.split("/lib/",1)[1].split("/",1)[0] for n in libs})
+          print(f"aab_bytes={aab.stat().st_size}")
+          print(f"aab_mib={aab.stat().st_size/1024/1024:.3f}")
+          print(f"under_20_mib={aab.stat().st_size <= limit}")
+          print("aab_abis=" + ",".join(abis))
+          apks = sorted(Path("app/build/outputs/apk/release").rglob("*.apk"))
+          print(f"apk_count={len(apks)}")
+          for apk in apks:
+              with zipfile.ZipFile(apk) as z:
+                  apk_libs = [n for n in z.namelist() if n.startswith("lib/") and n.endswith(".so")]
+                  apk_abis = sorted({n.split("/",2)[1] for n in apk_libs})
+              print(f"apk={apk.name} bytes={apk.stat().st_size} abis={','.join(apk_abis)}")
+          if abis != ["arm64-v8a", "armeabi-v7a"]:
+              raise SystemExit(f"Unexpected AAB ABIs: {abis}")
+          if len(apks) != 2:
+              raise SystemExit(f"Expected two release split APKs, found {len(apks)}")
+          PY
+
+      - name: Upload report
+        uses: actions/upload-artifact@v7
+        with:
+          name: jni-exclude-packaging-${{ github.run_id }}
+          path: build/reports/jni-exclude-packaging/result.txt
+          if-no-files-found: error
+          retention-days: 14
