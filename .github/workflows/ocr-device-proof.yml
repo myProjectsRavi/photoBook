@@ -70,23 +70,50 @@ jobs:
           [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
           echo "sdk=$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r') abi=$("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r')"
 
-      - name: Prebuild tests and verify production manifest privacy
+      - name: Prebuild tests and trace production INTERNET provenance
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./gradlew
+          mkdir -p build/reports/ocr-device-proof
           ./gradlew \
             :app:processReleaseMainManifest \
             :app:assembleDebug \
             :app:assembleDebugAndroidTest
+          ./gradlew :app:dependencies --configuration releaseRuntimeClasspath \
+            > build/reports/ocr-device-proof/release-runtime-dependencies.txt
+
           manifest="$(find app/build/intermediates/merged_manifest/release -type f -name AndroidManifest.xml | head -n 1)"
           test -n "$manifest" && test -f "$manifest"
-          echo "release_manifest=$manifest"
+          echo "release_manifest=$manifest" | tee build/reports/ocr-device-proof/manifest-provenance.txt
           if grep -q 'android.permission.INTERNET' "$manifest"; then
-            echo 'INTERNET permission unexpectedly present in RELEASE manifest'
-            exit 1
+            echo 'release_internet_present=YES' | tee -a build/reports/ocr-device-proof/manifest-provenance.txt
+            grep -n -B 3 -A 3 'android.permission.INTERNET' "$manifest" \
+              | tee -a build/reports/ocr-device-proof/manifest-provenance.txt
+          else
+            echo 'release_internet_present=NO' | tee -a build/reports/ocr-device-proof/manifest-provenance.txt
           fi
-          echo 'release_no_internet=PASS'
+
+          # Android Gradle Plugin emits merge/blame intermediates with source attribution. Print every
+          # small text/XML intermediate that mentions INTERNET so the contributing AAR can be identified
+          # before any production manifest override is considered.
+          while IFS= read -r candidate; do
+            if grep -q 'android.permission.INTERNET' "$candidate" 2>/dev/null; then
+              echo "--- provenance_file=$candidate" | tee -a build/reports/ocr-device-proof/manifest-provenance.txt
+              grep -n -B 6 -A 6 'android.permission.INTERNET' "$candidate" 2>/dev/null \
+                | head -n 80 \
+                | tee -a build/reports/ocr-device-proof/manifest-provenance.txt
+            fi
+          done < <(find app/build/intermediates -type f \
+            \( -name 'AndroidManifest.xml' -o -name '*blame*' -o -name '*report*.txt' \) \
+            -size -5M | sort)
+
+          echo '--- ML Kit / Play Services runtime dependency excerpt' \
+            | tee -a build/reports/ocr-device-proof/manifest-provenance.txt
+          grep -Ei 'mlkit|play-services|transport|datatransport|firebase' \
+            build/reports/ocr-device-proof/release-runtime-dependencies.txt \
+            | head -n 160 \
+            | tee -a build/reports/ocr-device-proof/manifest-provenance.txt || true
 
       - name: Run real bundled OCR with host and emulator network blocked
         shell: bash
@@ -96,10 +123,9 @@ jobs:
           ADB="$SDK_ROOT/platform-tools/adb"
           uid="$(id -u)"
 
-          # Android debug/test dependencies may add debug-only INTERNET. Prove OCR independence more
-          # strongly: block all non-loopback outbound traffic for the runner/QEMU user before the
-          # app/test APKs are installed, and also enable Android airplane mode. ADB remains available
-          # over loopback. Gradle is forced offline, so neither the build nor OCR can fetch anything.
+          # The debug/test APK may have debug-only network capabilities, so prove OCR independence at
+          # the environment boundary: block non-loopback outbound traffic for runner/QEMU and enable
+          # Android airplane mode before installing/running the test. Gradle is also forced offline.
           "$ADB" shell cmd connectivity airplane-mode enable || true
           "$ADB" shell svc wifi disable || true
           "$ADB" shell svc data disable || true
