@@ -67,19 +67,28 @@ class OcrTextSearchTest {
     }
 
     @Test
-    fun singleLetterNoise_doesNotReturnWholeLibrary() = runBlocking {
+    fun singleLetterQuery_matchesStandaloneTokenOnly_caseInsensitively() = runBlocking {
         val index = PhotoIndex(PhotoIndexStrategy.V2)
         index.setRecords(
             listOf(
                 photo(1L, "alpha"),
                 photo(2L, "beta"),
+                photo(3L, "section A row"),
+                photo(4L, "section b row"),
             ),
         )
+        val engine = searchEngine(index)
 
-        val result = searchEngine(index).search("a")
+        listOf("a", "A").forEach { query ->
+            val result = engine.search(query)
+            assertThat(result.complete).isTrue()
+            assertThat(result.orderedIds).containsExactly(3L)
+        }
 
-        assertThat(result.complete).isTrue()
-        assertThat(result.orderedIds).isEmpty()
+        val bResult = engine.search("b")
+        assertThat(bResult.complete).isTrue()
+        assertThat(bResult.orderedIds).containsExactly(4L)
+        Unit
     }
 
     private fun searchEngine(index: PhotoIndex): SearchEngineV2 {
