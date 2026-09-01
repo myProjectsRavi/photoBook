@@ -1,0 +1,42 @@
+name: Single Letter OCR Verification (Disposable)
+
+on:
+  push:
+    branches:
+      - "exp/2.0.15-single-letter-ocr"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Run focused and full unit verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew \
+            :app:testDebugUnitTest \
+            :app:lintDebug
+
+      - name: Verify exact single-letter regression test exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'fun singleLetterQuery_matchesStandaloneTokenOnly_caseInsensitively()' \
+            app/src/test/java/com/photobook/app/search/OcrTextSearchTest.kt
+          grep -F 'token[0].isLetterOrDigit()' \
+            app/src/main/java/com/photobook/app/search/OcrQueryMatcher.kt
