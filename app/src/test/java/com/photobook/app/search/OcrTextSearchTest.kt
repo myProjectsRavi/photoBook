@@ -63,6 +63,7 @@ class OcrTextSearchTest {
 
         assertThat(result.complete).isTrue()
         assertThat(result.orderedIds).containsExactly(1L)
+        Unit
     }
 
     @Test
