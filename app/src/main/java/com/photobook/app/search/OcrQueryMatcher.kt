@@ -36,7 +36,7 @@ object OcrQueryMatcher {
     }
 
     private fun isUsefulQueryToken(token: String): Boolean {
-        return token.length >= 2 || (token.length == 1 && token[0].isDigit())
+        return token.length >= 2 || (token.length == 1 && token[0].isLetterOrDigit())
     }
 
     private val NON_ALPHANUMERIC = Regex("[^\\p{L}\\p{N}]+")
