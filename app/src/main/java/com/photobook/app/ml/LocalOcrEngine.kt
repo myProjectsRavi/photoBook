@@ -43,7 +43,7 @@ class LocalOcrEngine @Inject constructor() {
         val task = try {
             recognizer.process(image)
         } catch (error: Exception) {
-            if (continuation.isActive) continuation.cancel(CancellationException("OCR start failed", error))
+            if (continuation.isActive) continuation.resumeWith(Result.failure(error))
             return@suspendCancellableCoroutine
         } catch (error: LinkageError) {
             if (continuation.isActive) continuation.resumeWith(Result.failure(error))
