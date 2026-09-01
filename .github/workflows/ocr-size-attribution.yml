@@ -1,0 +1,113 @@
+name: OCR Size Attribution (Disposable)
+
+on:
+  push:
+    branches:
+      - "exp/2.0.15-ocr-size-attribution"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ocr-size-attribution-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Build release artifacts without changing policy gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew \
+            :app:assembleRelease \
+            :app:bundleRelease \
+            -x :app:verifyApkSize \
+            -x :app:verifyReleaseBundleSize
+
+      - name: Attribute release ZIP footprint
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/reports/ocr-size
+          python3 - <<'PY' | tee build/reports/ocr-size/attribution.txt
+          from pathlib import Path
+          from collections import defaultdict
+          import zipfile
+
+          artifacts = sorted(Path("app/build/outputs").rglob("*.aab")) + sorted(
+              Path("app/build/outputs").rglob("*release*.apk")
+          )
+          if not artifacts:
+              raise SystemExit("No release AAB/APK artifacts found")
+
+          def category(name: str) -> str:
+              normalized = name.lower()
+              if "/lib/" in normalized or normalized.startswith("lib/") or "/lib." in normalized:
+                  return "native-lib"
+              if "assets/" in normalized:
+                  return "asset"
+              if normalized.endswith(".dex") or "/dex/" in normalized:
+                  return "dex"
+              if "/res/" in normalized or normalized.startswith("res/"):
+                  return "resource"
+              if "manifest" in normalized or normalized.endswith("resources.pb"):
+                  return "manifest-resource-table"
+              return "other"
+
+          for artifact in artifacts:
+              print(f"\n=== {artifact} ===")
+              print(f"artifact_bytes={artifact.stat().st_size}")
+              with zipfile.ZipFile(artifact) as archive:
+                  entries = [entry for entry in archive.infolist() if not entry.is_dir()]
+                  compressed_total = sum(entry.compress_size for entry in entries)
+                  uncompressed_total = sum(entry.file_size for entry in entries)
+                  print(f"zip_entry_compressed_bytes={compressed_total}")
+                  print(f"zip_entry_uncompressed_bytes={uncompressed_total}")
+
+                  groups = defaultdict(lambda: [0, 0, 0])
+                  for entry in entries:
+                      bucket = groups[category(entry.filename)]
+                      bucket[0] += entry.compress_size
+                      bucket[1] += entry.file_size
+                      bucket[2] += 1
+                  print("-- category totals: compressed | uncompressed | files --")
+                  for name, values in sorted(groups.items(), key=lambda item: item[1][0], reverse=True):
+                      print(f"{name}: {values[0]} | {values[1]} | {values[2]}")
+
+                  print("-- top 50 entries by compressed bytes --")
+                  for entry in sorted(entries, key=lambda item: item.compress_size, reverse=True)[:50]:
+                      print(f"{entry.compress_size:>10} | {entry.file_size:>10} | {entry.filename}")
+
+                  print("-- OCR/ML/native/model-related entries --")
+                  needles = ("ocr", "mlkit", "tflite", "tensorflow", "litert", "model", ".so")
+                  related = [
+                      entry for entry in entries
+                      if any(needle in entry.filename.lower() for needle in needles)
+                  ]
+                  for entry in sorted(related, key=lambda item: item.compress_size, reverse=True):
+                      print(f"{entry.compress_size:>10} | {entry.file_size:>10} | {entry.filename}")
+          PY
+
+      - name: Upload size attribution report
+        uses: actions/upload-artifact@v7
+        with:
+          name: ocr-size-attribution-${{ github.run_id }}
+          path: build/reports/ocr-size/attribution.txt
+          if-no-files-found: error
+          retention-days: 14
