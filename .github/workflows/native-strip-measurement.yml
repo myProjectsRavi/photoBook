@@ -1,0 +1,126 @@
+name: Native Strip Measurement (Disposable)
+
+on:
+  push:
+    branches:
+      - "exp/2.0.15-native-strip-measurement"
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Inject best-known ARM measurement config
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          build = Path("app/build.gradle.kts")
+          s = build.read_text()
+          old_ndk = '            ndk {\n                debugSymbolLevel = "SYMBOL_TABLE"\n            }\n'
+          new_ndk = '            ndk {\n                debugSymbolLevel = "SYMBOL_TABLE"\n                abiFilters += listOf("arm64-v8a", "armeabi-v7a")\n            }\n'
+          if s.count(old_ndk) != 1:
+              raise SystemExit("release ndk block mismatch")
+          s = s.replace(old_ndk, new_ndk, 1)
+          old_split = '        abi {\n            isEnable = true\n            reset()\n            include("arm64-v8a", "armeabi-v7a")'
+          new_split = '        abi {\n            isEnable = false\n            reset()\n            include("arm64-v8a", "armeabi-v7a")'
+          if s.count(old_split) != 1:
+              raise SystemExit("ABI split block mismatch")
+          build.write_text(s.replace(old_split, new_split, 1))
+          rules = Path("app/proguard-rules.pro")
+          r = rules.read_text()
+          blanket = '-keep class com.google.mlkit.** { *; }\n'
+          if r.count(blanket) != 1:
+              raise SystemExit("blanket ML Kit keep rule mismatch")
+          rules.write_text(r.replace(blanket, '', 1))
+          PY
+
+      - name: Build ARM release AAB
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:bundleRelease -x :app:verifyReleaseBundleSize
+
+      - name: Inspect and simulate native stripping
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/reports/native-strip/extracted build/reports/native-strip/stripped
+          AAB=app/build/outputs/bundle/release/app-release.aab
+          unzip -q "$AAB" 'base/lib/*/*.so' -d build/reports/native-strip/extracted
+
+          STRIP=""
+          for candidate in \
+            "$(command -v llvm-strip || true)" \
+            "$(find "${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}/ndk" -type f -name llvm-strip 2>/dev/null | sort -V | tail -n 1 || true)" \
+            "$(command -v strip || true)"; do
+            if [[ -n "$candidate" && -x "$candidate" ]]; then STRIP="$candidate"; break; fi
+          done
+          if [[ -z "$STRIP" ]]; then
+            echo "No strip tool available" >&2
+            exit 2
+          fi
+          echo "strip_tool=$STRIP" | tee build/reports/native-strip/result.txt
+
+          python3 - <<'PY' >> build/reports/native-strip/result.txt
+          from pathlib import Path
+          import zipfile
+          aab=Path('app/build/outputs/bundle/release/app-release.aab')
+          with zipfile.ZipFile(aab) as z:
+              for n in sorted(x for x in z.namelist() if '/lib/' in x and x.endswith('.so')):
+                  i=z.getinfo(n)
+                  print(f"aab_entry before compressed={i.compress_size} raw={i.file_size} path={n}")
+          PY
+
+          while IFS= read -r so; do
+            rel="${so#build/reports/native-strip/extracted/}"
+            out="build/reports/native-strip/stripped/$rel"
+            mkdir -p "$(dirname "$out")"
+            cp "$so" "$out"
+            before=$(stat -c %s "$out")
+            echo "--- $rel" >> build/reports/native-strip/result.txt
+            file "$out" >> build/reports/native-strip/result.txt || true
+            readelf -S -W "$out" 2>/dev/null | grep -E '\.(symtab|strtab|debug_|gnu_debug|comment)' >> build/reports/native-strip/result.txt || true
+            if "$STRIP" --strip-unneeded "$out" 2>>build/reports/native-strip/result.txt; then
+              after=$(stat -c %s "$out")
+              echo "raw_before=$before raw_after=$after raw_saved=$((before-after))" >> build/reports/native-strip/result.txt
+            else
+              echo "strip_failed raw_before=$before" >> build/reports/native-strip/result.txt
+            fi
+          done < <(find build/reports/native-strip/extracted -type f -name '*.so' | sort)
+
+          python3 - <<'PY' >> build/reports/native-strip/result.txt
+          from pathlib import Path
+          import zlib
+          root=Path('build/reports/native-strip/stripped')
+          total=0
+          for p in sorted(root.rglob('*.so')):
+              b=p.read_bytes(); c=zlib.compress(b,9)
+              total += len(c)
+              print(f"stripped_zlib={len(c)} raw={len(b)} path={p.relative_to(root)}")
+          print(f"stripped_total_zlib={total}")
+          PY
+          cat build/reports/native-strip/result.txt
+
+      - name: Upload native strip report
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-strip-measurement-${{ github.run_id }}
+          path: build/reports/native-strip/result.txt
+          if-no-files-found: error
+          retention-days: 14
