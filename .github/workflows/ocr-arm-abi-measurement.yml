@@ -1,0 +1,92 @@
+name: OCR ARM ABI Measurement (Disposable)
+
+on:
+  push:
+    branches:
+      - "exp/2.0.15-ocr-size-attribution"
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Inject release-only ARM ABI filter
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("app/build.gradle.kts")
+          text = path.read_text()
+          old = '''            ndk {
+                debugSymbolLevel = "SYMBOL_TABLE"
+            }
+'''
+          new = '''            ndk {
+                debugSymbolLevel = "SYMBOL_TABLE"
+                abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            }
+'''
+          if text.count(old) != 1:
+              raise SystemExit(f"Expected exactly one release ndk block, found {text.count(old)}")
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git diff -- app/build.gradle.kts
+
+      - name: Build measurement artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew \
+            :app:assembleRelease \
+            :app:bundleRelease \
+            -x :app:verifyApkSize \
+            -x :app:verifyReleaseBundleSize
+
+      - name: Verify AAB ABIs and report size
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/reports/ocr-arm-abi
+          python3 - <<'PY' | tee build/reports/ocr-arm-abi/result.txt
+          from pathlib import Path
+          import zipfile
+          aab = Path("app/build/outputs/bundle/release/app-release.aab")
+          if not aab.is_file():
+              raise SystemExit("AAB missing")
+          size = aab.stat().st_size
+          print(f"aab_bytes={size}")
+          print(f"aab_mib={size / 1024 / 1024:.2f}")
+          with zipfile.ZipFile(aab) as z:
+              libs = [n for n in z.namelist() if "/lib/" in n and n.endswith(".so")]
+              abis = sorted({n.split("/lib/", 1)[1].split("/", 1)[0] for n in libs})
+              print("abis=" + ",".join(abis))
+              for n in sorted(libs):
+                  info = z.getinfo(n)
+                  print(f"{info.compress_size:>10} | {info.file_size:>10} | {n}")
+          expected = ["arm64-v8a", "armeabi-v7a"]
+          if abis != expected:
+              raise SystemExit(f"Unexpected AAB ABIs: {abis}")
+          PY
+
+      - name: Upload measurement report
+        uses: actions/upload-artifact@v7
+        with:
+          name: ocr-arm-abi-measurement-${{ github.run_id }}
+          path: build/reports/ocr-arm-abi/result.txt
+          if-no-files-found: error
+          retention-days: 14
