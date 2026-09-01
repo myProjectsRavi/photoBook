@@ -40,7 +40,8 @@ class ArchiveClassifier @Inject constructor() {
         if (!isScreenshot(photo, metadataText)) return null
 
         val hasPaymentAppCue = PAYMENT_APP_CUES.any { cue -> combinedText.contains(cue) }
-        val hasUpiCue = UPI_CUES.any { cue -> combinedText.contains(cue) } || UPI_ID_REGEX.containsMatchIn(combinedText)
+        val hasPaymentNetworkCue = PAYMENT_NETWORK_CUES.any { cue -> combinedText.contains(cue) } ||
+            UPI_ID_REGEX.containsMatchIn(combinedText)
         val transactionCueCount = TRANSACTION_CUES.count { cue -> combinedText.contains(cue) }
         val hasAmountCue = AMOUNT_REGEX.containsMatchIn(combinedText)
 
@@ -50,22 +51,22 @@ class ArchiveClassifier @Inject constructor() {
 
         val eligible = when {
             hasPaymentAppCue && hasAmountCue && transactionCueCount >= 1 -> true
-            hasPaymentAppCue && hasUpiCue && transactionCueCount >= 1 -> true
-            hasUpiCue && hasAmountCue && transactionCueCount >= 2 -> true
+            hasPaymentAppCue && hasPaymentNetworkCue && transactionCueCount >= 1 -> true
+            hasPaymentNetworkCue && hasAmountCue && transactionCueCount >= 2 -> true
             else -> false
         }
         if (!eligible) return null
 
         val reasons = buildList {
             if (hasPaymentAppCue) add("Payment app cue")
-            if (hasUpiCue) add("UPI cue")
+            if (hasPaymentNetworkCue) add("Payment network/reference cue")
             if (hasAmountCue) add("Amount-like text")
             if (transactionCueCount > 0) add("Transaction status")
         }
         val confidence = (
             BASE_CONFIDENCE +
                 (if (hasPaymentAppCue) 0.08 else 0.0) +
-                (if (hasUpiCue) 0.06 else 0.0) +
+                (if (hasPaymentNetworkCue) 0.06 else 0.0) +
                 (if (hasAmountCue) 0.06 else 0.0) +
                 minOf(transactionCueCount, 3) * 0.03
             ).coerceAtMost(MAX_CONFIDENCE)
@@ -90,18 +91,24 @@ class ArchiveClassifier @Inject constructor() {
             .filter { tag -> tag.label.equals("prepared_food", ignoreCase = true) }
             .map { tag -> tag.confidence }
             .maxOrNull()
-            ?: return null
-        if (preparedFoodConfidence < ArchiveFoodSignals.MIN_PREPARED_FOOD_CONFIDENCE) return null
+        val hasPreparedFoodEvidence =
+            preparedFoodConfidence != null &&
+                preparedFoodConfidence >= ArchiveFoodSignals.MIN_PREPARED_FOOD_CONFIDENCE
+        val hasPackagedFoodEvidence = ArchiveFoodSignals.hasPackagedFoodEvidence(photo.ocrText)
+        if (!hasPreparedFoodEvidence && !hasPackagedFoodEvidence) return null
 
         val confidence = (
             FOOD_BASE_CONFIDENCE +
-                ArchiveFoodSignals.MIN_SEMANTIC_FOOD_CONFIDENCE * FOOD_CONFIDENCE_WEIGHT
+                ArchiveFoodSignals.MIN_SEMANTIC_FOOD_CONFIDENCE * FOOD_CONFIDENCE_WEIGHT +
+                (if (hasPackagedFoodEvidence) PACKAGED_FOOD_CONFIDENCE_BONUS else 0.0)
             )
             .coerceIn(FOOD_MIN_OUTPUT_CONFIDENCE, MAX_CONFIDENCE)
         return ArchiveClassification(
             category = ArchiveCategory.Food,
             confidence = confidence,
-            reasons = listOf("Prepared food evidence"),
+            reasons = listOf(
+                if (hasPreparedFoodEvidence) "Prepared food evidence" else "Packaged food evidence",
+            ),
         )
     }
 
@@ -128,7 +135,7 @@ class ArchiveClassifier @Inject constructor() {
 
     private fun hasStrongMetadataPaymentCue(metadataText: String): Boolean {
         val hasPaymentApp = PAYMENT_APP_CUES.any { cue -> metadataText.contains(cue) }
-        val hasPaymentTerm = UPI_CUES.any { cue -> metadataText.contains(cue) } ||
+        val hasPaymentTerm = PAYMENT_NETWORK_CUES.any { cue -> metadataText.contains(cue) } ||
             TRANSACTION_CUES.any { cue -> metadataText.contains(cue) }
         return hasPaymentApp && hasPaymentTerm
     }
@@ -147,6 +154,7 @@ class ArchiveClassifier @Inject constructor() {
         private const val MAX_CONFIDENCE = 0.98
         private const val FOOD_BASE_CONFIDENCE = 0.64
         private const val FOOD_CONFIDENCE_WEIGHT = 0.30
+        private const val PACKAGED_FOOD_CONFIDENCE_BONUS = 0.03
         private const val FOOD_MIN_OUTPUT_CONFIDENCE = 0.84
         private const val FRESH_GRACE_MS = 24L * 60L * 60L * 1000L
 
@@ -170,7 +178,7 @@ class ArchiveClassifier @Inject constructor() {
             "freecharge",
         )
 
-        private val UPI_CUES = listOf(
+        private val PAYMENT_NETWORK_CUES = listOf(
             "upi",
             "utr",
             "vpa",
@@ -178,6 +186,10 @@ class ArchiveClassifier @Inject constructor() {
             "txn id",
             "reference id",
             "ref no",
+            "imps",
+            "neft",
+            "rtgs",
+            "bank transfer",
         )
 
         private val TRANSACTION_CUES = listOf(
