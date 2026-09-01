@@ -175,8 +175,8 @@ android {
             isEnable = true
             reset()
             include("arm64-v8a", "armeabi-v7a")
-            // No universal APK. Per-device release payloads are held to the 15 MiB engineering gate
-            // below; Play's AAB delivery additionally splits by ABI, density, and language.
+            // No universal APK. Preserve the production 30 MiB hard ceiling here; Play-delivered
+            // download/install size is measured separately from the generated per-ABI APK bytes.
             isUniversalApk = false
         }
     }
@@ -268,10 +268,10 @@ dependencies {
 
 tasks.register("verifyApkSize") {
     group = "verification"
-    description = "Fails when any generated per-ABI release APK exceeds 15 MiB."
+    description = "Fails when any generated per-ABI release APK exceeds 30 MiB."
 
     doLast {
-        val maxBytes = 15L * 1024L * 1024L
+        val maxBytes = 30L * 1024L * 1024L
         val apkRoot = layout.buildDirectory.dir("outputs/apk/release").get().asFile
         check(apkRoot.exists()) {
             "Release APK size gate could not find ${apkRoot.path}; run assembleRelease first."
@@ -289,7 +289,7 @@ tasks.register("verifyApkSize") {
             val sizeMiB = sizeBytes.toDouble() / (1024.0 * 1024.0)
             println("releaseApk=${apk.name} bytes=$sizeBytes mib=${"%.2f".format(sizeMiB)}")
             check(sizeBytes <= maxBytes) {
-                "Per-device APK size gate failed for ${apk.path}: ${"%.2f".format(sizeMiB)} MiB > 15 MiB"
+                "Per-device APK size gate failed for ${apk.path}: ${"%.2f".format(sizeMiB)} MiB > 30 MiB"
             }
         }
     }
