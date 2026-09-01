@@ -14,7 +14,11 @@ import androidx.exifinterface.media.ExifInterface
 import com.photobook.app.ml.BundledOnDeviceIntelligence
 import com.photobook.app.ml.LocalOcrEngine
 import com.photobook.app.util.LocalDiagnostics
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -23,7 +27,11 @@ class OnDevicePhotoTextExtractor @Inject constructor(
     @ApplicationContext private val context: Context,
     private val formatter: PhotoTextFormatter = PhotoTextFormatter(),
     private val onDeviceIntelligence: BundledOnDeviceIntelligence,
-    private val localOcrEngine: LocalOcrEngine = LocalOcrEngine(),
+    // PhotoViewerScreen is still manually composed. Resolve that legacy default through Hilt so
+    // Copy Text and background indexing share the application-scoped OCR client instead of
+    // constructing a second ML Kit TextRecognizer. Hilt-injected callers pass this dependency
+    // directly and never execute the default expression.
+    private val localOcrEngine: LocalOcrEngine = sharedLocalOcrEngine(context),
 ) : PhotoTextExtractor {
 
     override suspend fun extract(photoUri: String): ExtractedTextResult {
@@ -298,4 +306,17 @@ class OnDevicePhotoTextExtractor @Inject constructor(
         private const val MAX_TEXT_BITMAP_DIMENSION_PX = 3600
         private const val MAX_REGION_BITMAP_DIMENSION_PX = 3200
     }
+}
+
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+internal interface CopyTextOcrEntryPoint {
+    fun localOcrEngine(): LocalOcrEngine
+}
+
+private fun sharedLocalOcrEngine(context: Context): LocalOcrEngine {
+    return EntryPointAccessors.fromApplication(
+        context.applicationContext,
+        CopyTextOcrEntryPoint::class.java,
+    ).localOcrEngine()
 }
