@@ -1,0 +1,116 @@
+name: OCR Device Proof (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-ocr-device-proof
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ocr-device-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ocr-device-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout exact experiment head
+        uses: actions/checkout@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Install emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+
+      - name: Provision API 35 emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n 1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager 2>/dev/null | sort | tail -n 1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          IMAGE="system-images;android-35;google_apis;x86_64"
+          AVD="photobook-ocr-api35"
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 emulator "$IMAGE"
+          echo no | "$AVDMANAGER" create avd --force --name "$AVD" --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/$AVD.avd"
+          test -e /dev/kvm || { echo 'KVM unavailable'; exit 1; }
+          sudo chmod 666 /dev/kvm
+          "$EMULATOR" -accel-check
+          nohup "$EMULATOR" -avd "$AVD" -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 2048 -cores 2 > "$RUNNER_TEMP/ocr-emulator.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 120); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/ocr-emulator.log"; exit 1; }
+            sleep 2
+          done
+          "$ADB" wait-for-device
+          for _ in $(seq 1 120); do
+            [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break
+            sleep 2
+          done
+          [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
+          echo "sdk=$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r') abi=$("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r')"
+
+      - name: Verify app manifest has no INTERNET permission
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:processDebugMainManifest
+          manifest=app/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml
+          test -f "$manifest"
+          if grep -q 'android.permission.INTERNET' "$manifest"; then
+            echo 'INTERNET permission unexpectedly present'
+            exit 1
+          fi
+
+      - name: Run real bundled OCR instrumentation only
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew :app:connectedDebugAndroidTest \
+            -Pandroid.testInstrumentationRunnerArguments.class=com.photobook.app.ml.LocalOcrEngineInstrumentedTest \
+            --stacktrace
+
+      - name: Capture evidence
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          mkdir -p build/reports/ocr-device-proof
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          "$ADB" logcat -d > build/reports/ocr-device-proof/logcat.txt 2>/dev/null
+          cp "$RUNNER_TEMP/ocr-emulator.log" build/reports/ocr-device-proof/emulator.log 2>/dev/null
+          printf 'head=%s\n' "$(git rev-parse HEAD)" > build/reports/ocr-device-proof/source.txt
+
+      - name: Upload OCR device evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ocr-device-proof-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+            build/reports/ocr-device-proof/
