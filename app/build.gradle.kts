@@ -237,7 +237,11 @@ dependencies {
     kapt("androidx.hilt:hilt-compiler:1.2.0")
 
     // Bundled Latin OCR: app-local, case-agnostic search indexing with no model download.
-    implementation("com.google.mlkit:text-recognition:16.0.1")
+    // The CCT backend is only the SDK's network transport path; PhotoBook forbids app-level
+    // networking, so prove bundled OCR remains functional without packaging that backend.
+    implementation("com.google.mlkit:text-recognition:16.0.1") {
+        exclude(group = "com.google.android.datatransport", module = "transport-backend-cct")
+    }
 
     // Keep the model app-local and use the standalone on-device LiteRT runtime;
     // no cloud inference or deferred model delivery is allowed.
