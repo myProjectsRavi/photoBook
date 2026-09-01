@@ -1,0 +1,311 @@
+name: No-CCT OCR Privacy and Size Proof (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-no-cct-backend
+
+permissions:
+  contents: read
+
+concurrency:
+  group: no-cct-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  privacy-offline-ocr:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact experiment head
+        uses: actions/checkout@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Install emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+
+      - name: Provision API 35 emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n 1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager 2>/dev/null | sort | tail -n 1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          IMAGE="system-images;android-35;google_apis;x86_64"
+          AVD="photobook-no-cct-api35"
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 emulator "$IMAGE"
+          echo no | "$AVDMANAGER" create avd --force --name "$AVD" --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/$AVD.avd"
+          test -e /dev/kvm || { echo 'KVM unavailable'; exit 1; }
+          sudo chmod 666 /dev/kvm
+          "$EMULATOR" -accel-check
+          nohup "$EMULATOR" -avd "$AVD" -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 2048 -cores 2 > "$RUNNER_TEMP/no-cct-emulator.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 120); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/no-cct-emulator.log"; exit 1; }
+            sleep 2
+          done
+          "$ADB" wait-for-device
+          for _ in $(seq 1 120); do
+            [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break
+            sleep 2
+          done
+          [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
+          echo "sdk=$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r') abi=$("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r') abilist=$("$ADB" shell getprop ro.product.cpu.abilist | tr -d '\r')"
+
+      - name: Build exact source and prove release has no CCT or INTERNET
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          mkdir -p build/reports/no-cct-proof
+
+          ./gradlew \
+            :app:processReleaseMainManifest \
+            :app:assembleRelease \
+            :app:assembleDebug \
+            :app:assembleDebugAndroidTest
+          ./gradlew :app:dependencies --configuration releaseRuntimeClasspath \
+            > build/reports/no-cct-proof/release-runtime-dependencies.txt
+
+          if grep -q 'transport-backend-cct' build/reports/no-cct-proof/release-runtime-dependencies.txt; then
+            echo 'CCT backend still present in release runtime graph'
+            exit 1
+          fi
+          echo 'release_runtime_cct=ABSENT'
+
+          release_manifest="$(find app/build/intermediates/merged_manifest/release -type f -name AndroidManifest.xml | head -n 1)"
+          test -n "$release_manifest" && test -f "$release_manifest"
+          cp "$release_manifest" build/reports/no-cct-proof/release-merged-manifest.xml
+          if grep -q 'android.permission.INTERNET' "$release_manifest"; then
+            echo 'INTERNET still present in release merged manifest'
+            grep -n -B 4 -A 4 'android.permission.INTERNET' "$release_manifest" || true
+            exit 1
+          fi
+          echo 'release_merged_manifest_internet=ABSENT'
+
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt 2>/dev/null | sort | tail -n 1)"
+          test -x "$AAPT"
+          found_release=false
+          while IFS= read -r apk; do
+            found_release=true
+            echo "--- release_apk=$apk"
+            "$AAPT" dump permissions "$apk" | tee -a build/reports/no-cct-proof/release-apk-permissions.txt
+            if "$AAPT" dump permissions "$apk" | grep -q 'android.permission.INTERNET'; then
+              echo "INTERNET present in packaged release APK: $apk"
+              exit 1
+            fi
+          done < <(find app/build/outputs/apk/release -type f -name '*.apk' | sort)
+          [[ "$found_release" == true ]]
+          echo 'packaged_release_apk_internet=ABSENT'
+
+      - name: Run real bundled OCR after cutting all usable network
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          uid="$(id -u)"
+
+          "$ADB" shell cmd connectivity airplane-mode enable || true
+          "$ADB" shell svc wifi disable || true
+          "$ADB" shell svc data disable || true
+          sudo iptables -I OUTPUT 1 -o lo -j ACCEPT
+          sudo iptables -I OUTPUT 2 -m owner --uid-owner "$uid" -j REJECT
+          cleanup() {
+            sudo iptables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null || true
+            sudo iptables -D OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          airplane="$("$ADB" shell settings get global airplane_mode_on 2>/dev/null | tr -d '\r')"
+          echo "airplane_mode=$airplane"
+          [[ "$airplane" == 1 ]]
+          if curl -fsS --connect-timeout 2 --max-time 3 https://www.google.com >/dev/null 2>&1; then
+            echo 'Host outbound network unexpectedly reachable'
+            exit 1
+          fi
+          if "$ADB" shell 'command -v ping >/dev/null 2>&1'; then
+            if "$ADB" shell ping -c 1 -W 1 8.8.8.8 >/dev/null 2>&1; then
+              echo 'Emulator outbound network unexpectedly reachable'
+              exit 1
+            fi
+          fi
+          echo 'offline_network_gate=PASS'
+
+          app_installed=false
+          while IFS= read -r apk; do
+            echo "Trying offline install: $apk"
+            if "$ADB" install -r "$apk"; then
+              app_installed=true
+              echo "installed_app_apk=$apk"
+              break
+            fi
+          done < <(find app/build/outputs/apk/debug -type f -name '*.apk' | sort -r)
+          [[ "$app_installed" == true ]]
+
+          test_apk="$(find app/build/outputs/apk/androidTest/debug -type f -name '*.apk' | head -n 1)"
+          test -n "$test_apk" && test -f "$test_apk"
+          "$ADB" install -r "$test_apk"
+
+          instrumentation="$("$ADB" shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n 1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
+          test -n "$instrumentation"
+          echo "instrumentation=$instrumentation"
+
+          set +e
+          "$ADB" shell am instrument -w -r \
+            -e class com.photobook.app.ml.LocalOcrEngineInstrumentedTest \
+            "$instrumentation" | tee build/reports/no-cct-proof/offline-ocr-instrumentation.txt
+          rc=${PIPESTATUS[0]}
+          set -e
+          [[ $rc -eq 0 ]]
+          grep -Eq 'OK \(1 test\)|OK \(1 test[s]?\)' build/reports/no-cct-proof/offline-ocr-instrumentation.txt
+          if grep -Eq 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' build/reports/no-cct-proof/offline-ocr-instrumentation.txt; then
+            echo 'OCR instrumentation reported failure'
+            exit 1
+          fi
+          echo 'offline_bundled_ocr=PASS'
+
+      - name: Capture privacy/device evidence
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          mkdir -p build/reports/no-cct-proof
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          "$ADB" logcat -d > build/reports/no-cct-proof/logcat.txt 2>/dev/null
+          "$ADB" shell dumpsys package com.photobook.app > build/reports/no-cct-proof/package.txt 2>/dev/null
+          cp "$RUNNER_TEMP/no-cct-emulator.log" build/reports/no-cct-proof/emulator.log 2>/dev/null
+          printf 'head=%s\n' "$(git rev-parse HEAD)" > build/reports/no-cct-proof/source.txt
+
+      - name: Upload privacy/device evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: no-cct-privacy-ocr-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: build/reports/no-cct-proof/
+
+  size-measurement:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout exact experiment head
+        uses: actions/checkout@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Inject prior best-known ARM-only packaging and ProGuard measurement
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          build = Path('app/build.gradle.kts')
+          s = build.read_text()
+          old_ndk = '            ndk {\n                debugSymbolLevel = "SYMBOL_TABLE"\n            }\n'
+          new_ndk = '            ndk {\n                debugSymbolLevel = "SYMBOL_TABLE"\n                abiFilters += listOf("arm64-v8a", "armeabi-v7a")\n            }\n'
+          if s.count(old_ndk) != 1:
+              raise SystemExit(f'release ndk block mismatch: {s.count(old_ndk)}')
+          s = s.replace(old_ndk, new_ndk, 1)
+          old_split = '        abi {\n            isEnable = true\n            reset()\n            include("arm64-v8a", "armeabi-v7a")'
+          new_split = '        abi {\n            isEnable = false\n            reset()\n            include("arm64-v8a", "armeabi-v7a")'
+          if s.count(old_split) != 1:
+              raise SystemExit(f'ABI split block mismatch: {s.count(old_split)}')
+          build.write_text(s.replace(old_split, new_split, 1))
+
+          rules = Path('app/proguard-rules.pro')
+          r = rules.read_text()
+          removable = [
+              '-keep class com.google.mlkit.** { *; }\n',
+              '-keep class androidx.security.crypto.** { *; }\n',
+              '-keep class com.google.crypto.tink.** { *; }\n',
+              '-keep class * extends androidx.room.RoomDatabase { *; }\n',
+              '-keep @androidx.room.Entity class * { *; }\n',
+              '-keep @androidx.room.Dao interface * { *; }\n',
+              '-keep class * extends androidx.work.Worker { *; }\n',
+              '-keep class * extends androidx.work.CoroutineWorker { *; }\n',
+              '-keep class * extends androidx.work.ListenableWorker { *; }\n',
+              '-keep class com.google.zxing.** { *; }\n',
+          ]
+          for rule in removable:
+              if r.count(rule) != 1:
+                  raise SystemExit(f'expected exactly one broad keep rule, found {r.count(rule)}: {rule!r}')
+              r = r.replace(rule, '', 1)
+          rules.write_text(r)
+          PY
+          git diff -- app/build.gradle.kts app/proguard-rules.pro
+
+      - name: Build and measure raw AAB
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew \
+            :app:testDebugUnitTest \
+            :app:lintDebug \
+            :app:bundleRelease \
+            -x :app:verifyReleaseBundleSize
+          mkdir -p build/reports/no-cct-size
+          python3 - <<'PY' | tee build/reports/no-cct-size/result.txt
+          from pathlib import Path
+          import zipfile
+
+          aab = Path('app/build/outputs/bundle/release/app-release.aab')
+          if not aab.is_file():
+              raise SystemExit('AAB missing')
+          size = aab.stat().st_size
+          limit = 20 * 1024 * 1024
+          previous_best = 21_439_687
+          print(f'aab_bytes={size}')
+          print(f'aab_mib={size / 1024 / 1024:.3f}')
+          print(f'under_20_mib={size <= limit}')
+          print(f'bytes_vs_previous_best={size - previous_best:+d}')
+          print(f'bytes_over_gate={max(0, size - limit)}')
+          with zipfile.ZipFile(aab) as z:
+              names = z.namelist()
+              libs = [n for n in names if '/lib/' in n and n.endswith('.so')]
+              abis = sorted({n.split('/lib/',1)[1].split('/',1)[0] for n in libs})
+              print('abis=' + ','.join(abis))
+              mapping = next((z.getinfo(n) for n in names if n.endswith('/proguard.map')), None)
+              if mapping:
+                  print(f'mapping_compressed_bytes={mapping.compress_size}')
+                  print(f'mapping_uncompressed_bytes={mapping.file_size}')
+          if abis != ['arm64-v8a', 'armeabi-v7a']:
+              raise SystemExit(f'unexpected ABIs: {abis}')
+          PY
+
+      - name: Upload size evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: no-cct-size-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: build/reports/no-cct-size/
