@@ -100,7 +100,8 @@ class TokenClassifier @Inject constructor(
         if (fuzzyMatch(token, index.cityKeywords()) != null) return LocationToken(token)
         if (fuzzyMatch(token, index.mlKeywords()) != null) return MLTagToken(token)
 
-        return if (token.length >= 2) TextToken(token) else UnknownToken(token)
+        val isSingleDigit = token.length == 1 && token[0].isDigit()
+        return if (token.length >= 2 || isSingleDigit) TextToken(token) else UnknownToken(token)
     }
 
     private fun fuzzyMatch(token: String, candidates: Set<String>): String? {
