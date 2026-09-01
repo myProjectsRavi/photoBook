@@ -24,6 +24,16 @@ interface PhotoDao {
 
     @Query(
         """
+        UPDATE photos
+        SET isOcrProcessed = 0,
+            ocrStatus = 'PENDING'
+        WHERE ocrStatus = 'FAILED_PERMANENT'
+        """,
+    )
+    suspend fun reopenPermanentlyFailedOcr(): Int
+
+    @Query(
+        """
         SELECT * FROM photos
         WHERE isFavorite = 0
             AND mimeType LIKE 'image/%'
