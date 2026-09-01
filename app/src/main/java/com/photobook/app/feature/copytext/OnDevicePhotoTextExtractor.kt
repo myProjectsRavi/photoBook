@@ -23,7 +23,7 @@ class OnDevicePhotoTextExtractor @Inject constructor(
     @ApplicationContext private val context: Context,
     private val formatter: PhotoTextFormatter = PhotoTextFormatter(),
     private val onDeviceIntelligence: BundledOnDeviceIntelligence,
-    private val localOcrEngine: LocalOcrEngine,
+    private val localOcrEngine: LocalOcrEngine = LocalOcrEngine(),
 ) : PhotoTextExtractor {
 
     override suspend fun extract(photoUri: String): ExtractedTextResult {
