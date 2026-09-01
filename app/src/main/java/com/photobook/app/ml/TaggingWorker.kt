@@ -79,57 +79,83 @@ class TaggingWorker @AssistedInject constructor(
             val needsBlurScore = photo.blurScore == null
 
             if (needsMl || needsOcr || needsPerceptualHash || needsBlurScore) {
-                val bitmap = mlTagger.loadIntelligenceBitmap(photo.uriString)
-
-                val modelAvailability = if (bitmap != null && (needsMl || needsOcr)) {
+                val modelAvailability = if (needsMl || needsOcr) {
                     mlTagger.ensureModelsReady(needsMl = needsMl, needsOcr = needsOcr)
-                } else null
+                } else {
+                    null
+                }
 
-                val analyzeMl = needsMl && modelAvailability?.mlReady == true
-                val analyzeOcr = needsOcr && modelAvailability?.ocrReady == true
-                val analysis = if (bitmap != null && (analyzeMl || analyzeOcr)) {
-                    mlTagger.analyzeBitmap(
-                        bitmap = bitmap,
-                        isFrontCamera = photo.isFrontCamera,
-                        analyzeMl = analyzeMl,
-                        analyzeOcr = analyzeOcr,
-                    )
-                } else null
+                // OCR gets its own larger but bounded bitmap so small text remains searchable while
+                // semantic ML/hash/blur retain their existing lower-memory image budget.
+                val ocrResult = if (needsOcr && modelAvailability?.ocrReady == true) {
+                    mlTagger.recognizePhotoText(photo.uriString)
+                } else {
+                    null
+                }
+                val effectiveOcrText = ocrResult?.text ?: photo.ocrText
+                val shouldRecheckPackagedFood =
+                    ocrResult?.status == IntelligenceStatus.PROCESSED &&
+                        ArchiveFoodSignals.hasPackagedFoodEvidence(effectiveOcrText)
+
+                val needsAnalysisBitmap = needsMl ||
+                    needsPerceptualHash ||
+                    needsBlurScore ||
+                    shouldRecheckPackagedFood
+                val bitmap = if (needsAnalysisBitmap) {
+                    mlTagger.loadIntelligenceBitmap(photo.uriString)
+                } else {
+                    null
+                }
+
+                var analysis: MLTagger.AnalysisResult? = null
+                var perceptualHash: Long? = null
+                var blurScore: Double? = null
+                try {
+                    val analyzeMl =
+                        (needsMl && modelAvailability?.mlReady == true) || shouldRecheckPackagedFood
+                    if (bitmap != null && analyzeMl) {
+                        analysis = mlTagger.analyzeBitmap(
+                            bitmap = bitmap,
+                            isFrontCamera = photo.isFrontCamera,
+                            analyzeMl = true,
+                            analyzeOcr = false,
+                            ocrTextForArchive = effectiveOcrText,
+                        )
+                    }
+                    if (bitmap != null && needsPerceptualHash) {
+                        perceptualHash = perceptualHashComputer.computeFromBitmap(bitmap)
+                    }
+                    if (bitmap != null && needsBlurScore) {
+                        blurScore = blurScoreComputer.computeFromBitmap(bitmap)
+                    }
+                } finally {
+                    bitmap?.recycle()
+                }
 
                 val mlStatus = when {
                     !needsMl -> null
                     modelAvailability?.mlReady == false -> IntelligenceStatus.MODEL_PREPARING
                     bitmap == null -> IntelligenceStatus.FAILED_RETRYABLE
-                    analyzeMl -> analysis?.mlStatus ?: IntelligenceStatus.FAILED_RETRYABLE
-                    else -> null
+                    analysis != null -> analysis?.mlStatus ?: IntelligenceStatus.FAILED_RETRYABLE
+                    else -> IntelligenceStatus.FAILED_RETRYABLE
                 }
                 val ocrStatus = when {
                     !needsOcr -> null
                     modelAvailability?.ocrReady == false -> IntelligenceStatus.MODEL_PREPARING
-                    bitmap == null -> IntelligenceStatus.FAILED_RETRYABLE
-                    analyzeOcr -> analysis?.ocrStatus ?: IntelligenceStatus.FAILED_RETRYABLE
-                    else -> null
+                    else -> ocrResult?.status ?: IntelligenceStatus.FAILED_RETRYABLE
                 }
-                val perceptualHash = if (bitmap != null && needsPerceptualHash) {
-                    perceptualHashComputer.computeFromBitmap(bitmap)
-                } else {
-                    null
-                }
-                val blurScore = if (bitmap != null && needsBlurScore) {
-                    blurScoreComputer.computeFromBitmap(bitmap)
-                } else {
-                    null
-                }
-
-                bitmap?.recycle()
 
                 pendingIndexUpdates += PhotoIndex.PhotoIntelligenceUpdate(
                     id = photo.id,
                     tags = if (needsMl) analysis?.tags else null,
-                    archiveFoodCandidate = if (needsMl) analysis?.archiveFoodCandidate else null,
+                    archiveFoodCandidate = if (needsMl || shouldRecheckPackagedFood) {
+                        analysis?.archiveFoodCandidate
+                    } else {
+                        null
+                    },
                     isMlProcessed = mlStatus?.let { it == IntelligenceStatus.PROCESSED },
                     mlStatus = mlStatus,
-                    ocrText = if (needsOcr) analysis?.ocrText else null,
+                    ocrText = if (ocrStatus == IntelligenceStatus.PROCESSED) ocrResult?.text else null,
                     isOcrProcessed = ocrStatus?.let { it == IntelligenceStatus.PROCESSED },
                     ocrStatus = ocrStatus,
                     perceptualHash = perceptualHash,
