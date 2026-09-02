@@ -1,0 +1,222 @@
+name: Copy Text 2400px Proof (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-copytext-2400-proof
+
+permissions:
+  contents: read
+
+concurrency:
+  group: copytext-2400-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Apply disposable 2400px caps
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('app/src/main/java/com/photobook/app/feature/copytext/OnDevicePhotoTextExtractor.kt')
+          text = path.read_text()
+          replacements = {
+              'private const val MAX_TEXT_BITMAP_DIMENSION_PX = 3600': 'private const val MAX_TEXT_BITMAP_DIMENSION_PX = 2400',
+              'private const val MAX_REGION_BITMAP_DIMENSION_PX = 3200': 'private const val MAX_REGION_BITMAP_DIMENSION_PX = 2400',
+          }
+          for old, new in replacements.items():
+              if text.count(old) != 1:
+                  raise SystemExit(f'cap marker mismatch: {old} count={text.count(old)}')
+              text = text.replace(old, new, 1)
+          path.write_text(text)
+          PY
+          git diff -- app/src/main/java/com/photobook/app/feature/copytext/OnDevicePhotoTextExtractor.kt
+
+      - name: Install emulator and fixture tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0 imagemagick fonts-dejavu-core
+
+      - name: Provision constrained API 35 emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n 1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager 2>/dev/null | sort | tail -n 1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          IMAGE="system-images;android-35;google_apis;x86_64"
+          AVD="photobook-copytext-2400-api35"
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 emulator "$IMAGE"
+          echo no | "$AVDMANAGER" create avd --force --name "$AVD" --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/$AVD.avd"
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+          nohup "$EMULATOR" -avd "$AVD" -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 2048 -cores 2 > "$RUNNER_TEMP/copytext-2400-emulator.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 120); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/copytext-2400-emulator.log"; exit 1; }
+            sleep 2
+          done
+          "$ADB" wait-for-device
+          for _ in $(seq 1 120); do
+            [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break
+            sleep 2
+          done
+          [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
+
+      - name: Build app and instrumentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+
+      - name: Seed external fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixtures="$RUNNER_TEMP/copytext-2400-fixtures"
+          mkdir -p "$fixtures"
+          convert -size 512x512 xc:white "$fixtures/copytext-control-512.png"
+          convert -size 3600x3600 xc:white "$fixtures/copytext-full-3600.png"
+          convert -size 3200x3200 xc:white "$fixtures/copytext-region-3200.png"
+          convert -size 3600x1800 xc:white -font DejaVu-Sans -pointsize 48 -fill black \
+            -gravity NorthWest -annotate +120+500 'PhotoBook receipt local text' "$fixtures/copytext-accuracy-full.png"
+          convert -size 3200x1800 xc:white -font DejaVu-Sans -pointsize 48 -fill black \
+            -gravity NorthWest -annotate +120+500 'PhotoBook receipt local text' "$fixtures/copytext-accuracy-region.png"
+
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          app_apk="$(find app/build/outputs/apk/debug -type f -name '*arm64-v8a*.apk' | head -n 1)"
+          test_apk="$(find app/build/outputs/apk/androidTest/debug -type f -name '*.apk' | head -n 1)"
+          test -f "$app_apk" && test -f "$test_apk"
+          "$ADB" install -r "$app_apk"
+          "$ADB" install -r "$test_apk"
+          for file in "$fixtures"/*.png; do
+            name="$(basename "$file")"
+            "$ADB" push "$file" "/data/local/tmp/$name" >/dev/null
+            "$ADB" shell chmod 644 "/data/local/tmp/$name"
+            "$ADB" shell run-as com.photobook.app cp "/data/local/tmp/$name" "cache/$name"
+          done
+
+      - name: Measure memory and prove lower-cap OCR quality
+        shell: bash
+        run: |
+          set -euo pipefail
+          report=build/reports/copytext-2400-proof
+          mkdir -p "$report"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          instrumentation="$("$ADB" shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n 1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
+          test -n "$instrumentation"
+          printf 'heapgrowthlimit=%s\nheapsize=%s\n' \
+            "$("$ADB" shell getprop dalvik.vm.heapgrowthlimit | tr -d '\r')" \
+            "$("$ADB" shell getprop dalvik.vm.heapsize | tr -d '\r')" > "$report/device-heap.txt"
+
+          class=com.photobook.app.feature.copytext.OnDevicePhotoTextExtractorMemoryInstrumentedTest
+          cases=(
+            'control:smallControl_completesAt512Pixels'
+            'full3600:fullImageFallback_completesAtCurrent3600PixelBudget'
+            'region3200:nearFullRegionFallback_completesAtCurrent3200PixelBudget'
+          )
+          overall=0
+          : > "$report/memory-summary.txt"
+          for item in "${cases[@]}"; do
+            name="${item%%:*}"
+            method="${item#*:}"
+            "$ADB" shell am force-stop com.photobook.app || true
+            "$ADB" logcat -c || true
+            printf 'elapsed_ms\ttotal_pss_kb\tjava_heap_kb\tnative_heap_kb\n' > "$report/meminfo-$name.tsv"
+            start_ms=$(date +%s%3N)
+            set +e
+            "$ADB" shell am instrument -w -r -e class "$class#$method" "$instrumentation" > "$report/instrumentation-$name.txt" 2>&1 &
+            pid=$!
+            set -e
+            while kill -0 "$pid" 2>/dev/null; do
+              now_ms=$(date +%s%3N)
+              snapshot="$("$ADB" shell dumpsys meminfo com.photobook.app 2>/dev/null | tr -d '\r' || true)"
+              if [[ -n "$snapshot" && "$snapshot" != *'No process found'* ]]; then
+                pss="$(printf '%s\n' "$snapshot" | awk '/TOTAL PSS:/ {gsub(/,/,"",$3); print $3; exit} /^[[:space:]]*TOTAL[[:space:]]+[0-9]/ {gsub(/,/,"",$2); print $2; exit}')"
+                java="$(printf '%s\n' "$snapshot" | awk '/Java Heap:/ {gsub(/,/,"",$3); print $3; exit}')"
+                native="$(printf '%s\n' "$snapshot" | awk '/Native Heap:/ {gsub(/,/,"",$3); print $3; exit}')"
+                if [[ "$pss" =~ ^[0-9]+$ ]]; then
+                  printf '%s\t%s\t%s\t%s\n' "$((now_ms-start_ms))" "$pss" "${java:-}" "${native:-}" >> "$report/meminfo-$name.tsv"
+                fi
+              fi
+              sleep 0.25
+            done
+            set +e
+            wait "$pid"
+            rc=$?
+            set -e
+            "$ADB" logcat -d > "$report/logcat-$name.txt" || true
+            samples=$(( $(wc -l < "$report/meminfo-$name.tsv") - 1 ))
+            max_pss=$(tail -n +2 "$report/meminfo-$name.tsv" | awk -F '\t' 'BEGIN{m=0} $2+0>m{m=$2+0} END{print m}')
+            max_java=$(tail -n +2 "$report/meminfo-$name.tsv" | awk -F '\t' 'BEGIN{m=0} $3+0>m{m=$3+0} END{print m}')
+            max_native=$(tail -n +2 "$report/meminfo-$name.tsv" | awk -F '\t' 'BEGIN{m=0} $4+0>m{m=$4+0} END{print m}')
+            pass=1
+            grep -Eq 'OK \(1 test\)|OK \(1 tests\)' "$report/instrumentation-$name.txt" || pass=0
+            [[ $rc -eq 0 ]] || pass=0
+            printf 'case=%s rc=%s pass=%s samples=%s peak_total_pss_kb=%s peak_java_heap_kb=%s peak_native_heap_kb=%s\n' \
+              "$name" "$rc" "$pass" "$samples" "$max_pss" "$max_java" "$max_native" | tee -a "$report/memory-summary.txt"
+            [[ $pass -eq 1 ]] || overall=1
+          done
+
+          accuracy_class=com.photobook.app.feature.copytext.OnDevicePhotoTextExtractorAccuracyInstrumentedTest
+          for item in 'accuracy-full:fullImage_recognizesReadableTextAfterLowerCapSampling' 'accuracy-region:nearFullRegion_recognizesReadableTextAfterLowerCapSampling'; do
+            name="${item%%:*}"
+            method="${item#*:}"
+            "$ADB" shell am force-stop com.photobook.app || true
+            set +e
+            "$ADB" shell am instrument -w -r -e class "$accuracy_class#$method" "$instrumentation" > "$report/instrumentation-$name.txt" 2>&1
+            rc=$?
+            set -e
+            pass=1
+            grep -Eq 'OK \(1 test\)|OK \(1 tests\)' "$report/instrumentation-$name.txt" || pass=0
+            [[ $rc -eq 0 ]] || pass=0
+            printf 'case=%s rc=%s pass=%s\n' "$name" "$rc" "$pass" | tee -a "$report/accuracy-summary.txt"
+            [[ $pass -eq 1 ]] || overall=1
+          done
+          cat "$report/memory-summary.txt"
+          cat "$report/accuracy-summary.txt"
+          [[ $overall -eq 0 ]]
+
+      - name: Capture evidence
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          report=build/reports/copytext-2400-proof
+          mkdir -p "$report"
+          printf 'head=%s\n' "$(git rev-parse HEAD)" > "$report/source.txt"
+          cp "$RUNNER_TEMP/copytext-2400-emulator.log" "$report/emulator.log" 2>/dev/null
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: copytext-2400-proof-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: build/reports/copytext-2400-proof/
