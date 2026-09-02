@@ -57,34 +57,15 @@ jobs:
           if gradle.count(marker) != 1:
               raise SystemExit('android namespace marker mismatch')
           gradle = gradle.replace(marker, marker + '    testBuildType = "benchmark"\n', 1)
-          benchmark_marker = '''        create("benchmark") {
-            initWith(getByName("release"))
-            signingConfig = signingConfigs.getByName("debug")
-            matchingFallbacks += listOf("release")
-            isDebuggable = false
-        }
-'''
-          benchmark_replacement = '''        create("benchmark") {
-            initWith(getByName("release"))
-            signingConfig = signingConfigs.getByName("debug")
-            matchingFallbacks += listOf("release")
-            isDebuggable = false
-            androidTest {
-                enableMinification = false
-            }
-        }
-'''
+          benchmark_marker = '        create("benchmark") {\n            initWith(getByName("release"))\n            signingConfig = signingConfigs.getByName("debug")\n            matchingFallbacks += listOf("release")\n            isDebuggable = false\n        }\n'
+          benchmark_replacement = '        create("benchmark") {\n            initWith(getByName("release"))\n            signingConfig = signingConfigs.getByName("debug")\n            matchingFallbacks += listOf("release")\n            isDebuggable = false\n            androidTest {\n                enableMinification = false\n            }\n        }\n'
           if gradle.count(benchmark_marker) != 1:
               raise SystemExit(f'benchmark block mismatch: {gradle.count(benchmark_marker)}')
           gradle = gradle.replace(benchmark_marker, benchmark_replacement, 1)
           dep_marker = '    androidTestImplementation("androidx.room:room-testing:2.6.1")\n'
           if gradle.count(dep_marker) != 1:
               raise SystemExit('androidTest dependency marker mismatch')
-          gradle = gradle.replace(
-              dep_marker,
-              dep_marker + '    androidTestImplementation("androidx.work:work-testing:2.9.0")\n',
-              1,
-          )
+          gradle = gradle.replace(dep_marker, dep_marker + '    androidTestImplementation("androidx.work:work-testing:2.9.0")\n', 1)
           build.write_text(gradle)
           PY
           git diff -- app/proguard-rules.pro app/build.gradle.kts
@@ -170,15 +151,8 @@ jobs:
 
           instrumentation="$("$ADB" shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n 1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
           test -n "$instrumentation"
-
           class=com.photobook.app.verification.PrunedKeepsMinifiedRuntimeInstrumentedTest
-          cases=(
-            bundledOcr_survivesKeepPruning
-            roomGeneratedCode_survivesKeepPruning
-            encryptedStorageAndTink_surviveKeepPruning
-            zxingRuntime_survivesKeepPruning
-            hiltWorkManagerFactory_survivesKeepPruning
-          )
+          cases=(bundledOcr_survivesKeepPruning roomGeneratedCode_survivesKeepPruning encryptedStorageAndTink_surviveKeepPruning zxingRuntime_survivesKeepPruning hiltWorkManagerFactory_survivesKeepPruning)
           overall=0
           : > "$report/summary.txt"
 
@@ -186,39 +160,22 @@ jobs:
             echo "=== family=$method ==="
             "$ADB" shell am force-stop com.photobook.app || true
             "$ADB" logcat -c || true
-
             set +e
-            "$ADB" shell am instrument -w -r \
-              -e class "$class#$method" \
-              "$instrumentation" | tee "$report/instrumentation-$method.txt"
+            "$ADB" shell am instrument -w -r -e class "$class#$method" "$instrumentation" | tee "$report/instrumentation-$method.txt"
             instrument_rc=${PIPESTATUS[0]}
             set -e
-
             "$ADB" logcat -d > "$report/logcat-$method.txt" 2>&1 || true
             pass=1
-            if [[ "$instrument_rc" -ne 0 ]]; then
-              pass=0
-            fi
-            if ! grep -Eq 'OK \(1 test\)|OK \(1 tests\)' "$report/instrumentation-$method.txt"; then
-              pass=0
-            fi
-            if grep -Eq 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' "$report/instrumentation-$method.txt"; then
-              pass=0
-            fi
-
+            [[ "$instrument_rc" -eq 0 ]] || pass=0
+            grep -Eq 'OK \(1 test\)|OK \(1 tests\)' "$report/instrumentation-$method.txt" || pass=0
+            grep -Eq 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' "$report/instrumentation-$method.txt" && pass=0 || true
             printf 'family=%s shell_rc=%s pass=%s\n' "$method" "$instrument_rc" "$pass" | tee -a "$report/summary.txt"
             if [[ "$pass" -ne 1 ]]; then
               overall=1
-              echo "--- diagnostic logcat for $method ---"
-              grep -E 'AndroidRuntime|FATAL EXCEPTION|Process: com.photobook.app|NoClassDefFoundError|ClassNotFoundException|NoSuchMethodError|NoSuchFieldError|Exception|Error' \
-                "$report/logcat-$method.txt" | tail -n 160 || true
+              grep -E 'AndroidRuntime|FATAL EXCEPTION|Process: com.photobook.app|NoClassDefFoundError|ClassNotFoundException|NoSuchMethodError|NoSuchFieldError|Exception|Error' "$report/logcat-$method.txt" | tail -n 160 || true
             fi
           done
-
-          if [[ "$overall" -ne 0 ]]; then
-            echo 'One or more pruned keep-rule runtime families failed; see per-family evidence.'
-            exit 1
-          fi
+          [[ "$overall" -eq 0 ]]
           printf 'pruned_keeps_minified_runtime=PASS\n' | tee -a "$report/summary.txt"
 
       - name: Capture proof evidence
