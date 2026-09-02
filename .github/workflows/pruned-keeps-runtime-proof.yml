@@ -1,0 +1,181 @@
+name: Pruned Keep Rules Runtime Proof (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-pruned-keeps-runtime-proof
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pruned-keeps-runtime-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove-minified-runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Apply only the measured keep-rule pruning
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          rules = Path('app/proguard-rules.pro')
+          text = rules.read_text()
+          removable = [
+              '-keep class com.google.mlkit.** { *; }\n',
+              '-keep class androidx.security.crypto.** { *; }\n',
+              '-keep class com.google.crypto.tink.** { *; }\n',
+              '-keep class * extends androidx.room.RoomDatabase { *; }\n',
+              '-keep @androidx.room.Entity class * { *; }\n',
+              '-keep @androidx.room.Dao interface * { *; }\n',
+              '-keep class * extends androidx.work.Worker { *; }\n',
+              '-keep class * extends androidx.work.CoroutineWorker { *; }\n',
+              '-keep class * extends androidx.work.ListenableWorker { *; }\n',
+              '-keep class com.google.zxing.** { *; }\n',
+          ]
+          for rule in removable:
+              if text.count(rule) != 1:
+                  raise SystemExit(f'expected exactly one removable rule: {rule!r}; found {text.count(rule)}')
+              text = text.replace(rule, '', 1)
+          rules.write_text(text)
+
+          build = Path('app/build.gradle.kts')
+          gradle = build.read_text()
+          marker = '    namespace = "com.photobook.app"\n'
+          if gradle.count(marker) != 1:
+              raise SystemExit('android namespace marker mismatch')
+          gradle = gradle.replace(marker, marker + '    testBuildType = "benchmark"\n', 1)
+          dep_marker = '    androidTestImplementation("androidx.room:room-testing:2.6.1")\n'
+          if gradle.count(dep_marker) != 1:
+              raise SystemExit('androidTest dependency marker mismatch')
+          gradle = gradle.replace(
+              dep_marker,
+              dep_marker + '    androidTestImplementation("androidx.work:work-testing:2.9.0")\n',
+              1,
+          )
+          build.write_text(gradle)
+          PY
+          git diff -- app/proguard-rules.pro app/build.gradle.kts
+
+      - name: Build R8-minified debug-signed benchmark target and tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:assembleBenchmark :app:assembleBenchmarkAndroidTest
+          mapping=app/build/outputs/mapping/benchmark/mapping.txt
+          test -s "$mapping"
+          grep -F 'com.photobook.app.worker.TrashPurgeWorker ->' "$mapping" | tee build/pruned-keeps-worker-mapping.txt
+          grep -F 'com.photobook.app.data.db.PhotoBookDatabase ->' "$mapping" | tee build/pruned-keeps-room-mapping.txt
+
+      - name: Install emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+
+      - name: Provision API 35 emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n 1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager 2>/dev/null | sort | tail -n 1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          IMAGE="system-images;android-35;google_apis;x86_64"
+          AVD="photobook-pruned-keeps-api35"
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 emulator "$IMAGE"
+          echo no | "$AVDMANAGER" create avd --force --name "$AVD" --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/$AVD.avd"
+          test -e /dev/kvm || { echo 'KVM unavailable'; exit 1; }
+          sudo chmod 666 /dev/kvm
+          "$EMULATOR" -accel-check
+          nohup "$EMULATOR" -avd "$AVD" -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 2048 -cores 2 > "$RUNNER_TEMP/pruned-keeps-emulator.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 120); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/pruned-keeps-emulator.log"; exit 1; }
+            sleep 2
+          done
+          "$ADB" wait-for-device
+          for _ in $(seq 1 120); do
+            [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break
+            sleep 2
+          done
+          [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
+          echo "sdk=$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r') abi=$("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r') abilist=$("$ADB" shell getprop ro.product.cpu.abilist | tr -d '\r')"
+
+      - name: Prove pruned families on the minified target
+        shell: bash
+        run: |
+          set -euo pipefail
+          report=build/reports/pruned-keeps-runtime-proof
+          mkdir -p "$report"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          app_apk="$(find app/build/outputs/apk/benchmark -type f -name '*arm64-v8a*.apk' | head -n 1)"
+          test_apk="$(find app/build/outputs/apk/androidTest/benchmark -type f -name '*.apk' | head -n 1)"
+          test -n "$app_apk" && test -f "$app_apk"
+          test -n "$test_apk" && test -f "$test_apk"
+          "$ADB" install -r "$app_apk"
+          "$ADB" install -r "$test_apk"
+
+          "$ADB" logcat -c
+          "$ADB" shell am start -W -n com.photobook.app/.MainActivity | tee "$report/startup.txt"
+          sleep 2
+          "$ADB" shell pidof com.photobook.app | tee "$report/pid.txt"
+
+          instrumentation="$("$ADB" shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n 1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
+          test -n "$instrumentation"
+          "$ADB" shell am instrument -w -r \
+            -e class com.photobook.app.verification.PrunedKeepsMinifiedRuntimeInstrumentedTest \
+            "$instrumentation" | tee "$report/instrumentation.txt"
+          grep -Eq 'OK \(1 test\)|OK \(1 tests\)' "$report/instrumentation.txt"
+          if grep -Eq 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' "$report/instrumentation.txt"; then
+            echo 'Pruned keep-rule minified runtime smoke failed'
+            exit 1
+          fi
+          "$ADB" logcat -d > "$report/logcat.txt"
+          if grep -Eqi 'FATAL EXCEPTION|NoClassDefFoundError|ClassNotFoundException|NoSuchMethodError|NoSuchFieldError' "$report/logcat.txt"; then
+            echo 'Minified runtime logcat contains class-linkage failure'
+            exit 1
+          fi
+          printf 'pruned_keeps_minified_runtime=PASS\n' | tee "$report/summary.txt"
+
+      - name: Capture proof evidence
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          report=build/reports/pruned-keeps-runtime-proof
+          mkdir -p "$report"
+          printf 'head=%s\n' "$(git rev-parse HEAD)" > "$report/source.txt"
+          cp build/pruned-keeps-*-mapping.txt "$report/" 2>/dev/null
+          cp "$RUNNER_TEMP/pruned-keeps-emulator.log" "$report/emulator.log" 2>/dev/null
+
+      - name: Upload proof evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pruned-keeps-runtime-proof-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: build/reports/pruned-keeps-runtime-proof/
