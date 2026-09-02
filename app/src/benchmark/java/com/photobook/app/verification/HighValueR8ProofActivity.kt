@@ -14,7 +14,7 @@ import com.google.zxing.BarcodeFormat
 import com.google.zxing.BinaryBitmap
 import com.google.zxing.DecodeHintType
 import com.google.zxing.MultiFormatReader
-import com.google.zxing.RGBLuminanceSource
+import com.google.zxing.PlanarYUVLuminanceSource
 import com.google.zxing.common.HybridBinarizer
 import com.photobook.app.feature.qrshare.QrBitmapEncoder
 import com.photobook.app.ml.LocalOcrEngine
@@ -97,12 +97,36 @@ class HighValueR8ProofActivity : Activity() {
         try {
             val pixels = IntArray(bitmap.width * bitmap.height)
             bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-            val source = RGBLuminanceSource(bitmap.width, bitmap.height, pixels)
-            val binary = BinaryBitmap(HybridBinarizer(source))
-            val result = MultiFormatReader().decode(
-                binary,
-                mapOf(DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE)),
+            val luminance = ByteArray(pixels.size)
+            for (index in pixels.indices) {
+                val pixel = pixels[index]
+                val red = Color.red(pixel)
+                val green = Color.green(pixel)
+                val blue = Color.blue(pixel)
+                luminance[index] = ((red * 299 + green * 587 + blue * 114) / 1000).toByte()
+            }
+            val source = PlanarYUVLuminanceSource(
+                luminance,
+                bitmap.width,
+                bitmap.height,
+                0,
+                0,
+                bitmap.width,
+                bitmap.height,
+                false,
             )
+            val reader = MultiFormatReader()
+            val result = try {
+                reader.decode(
+                    BinaryBitmap(HybridBinarizer(source)),
+                    mapOf(
+                        DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE),
+                        DecodeHintType.TRY_HARDER to true,
+                    ),
+                )
+            } finally {
+                reader.reset()
+            }
             check(result.text == QR_PAYLOAD) { "QR round trip mismatch" }
         } finally {
             bitmap.recycle()
