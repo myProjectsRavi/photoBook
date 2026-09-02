@@ -100,7 +100,7 @@ jobs:
           [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
           echo "sdk=$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r') abi=$("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r') abilist=$("$ADB" shell getprop ro.product.cpu.abilist | tr -d '\r')"
 
-      - name: Prove light and dark startup plus bundled OCR
+      - name: Prove light and dark startup plus bundled OCR health
         shell: bash
         run: |
           set -euo pipefail
@@ -147,11 +147,11 @@ jobs:
           instrumentation="$(adb_retry shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n 1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
           test -n "$instrumentation"
           adb_retry shell am instrument -w -r \
-            -e class com.photobook.app.ml.LocalOcrEngineInstrumentedTest \
+            -e class com.photobook.app.ml.AppCompatRuntimeOcrInstrumentedTest \
             "$instrumentation" | tee build/reports/appcompat-runtime-proof/ocr.txt
           grep -Eq 'OK \(1 test\)|OK \(1 tests\)' build/reports/appcompat-runtime-proof/ocr.txt
           if grep -Eq 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' build/reports/appcompat-runtime-proof/ocr.txt; then
-            echo 'Bundled OCR failed under AppCompat substitution'
+            echo 'Bundled OCR health smoke failed under AppCompat substitution'
             exit 1
           fi
           echo 'appcompat_runtime_proof=PASS' | tee build/reports/appcompat-runtime-proof/summary.txt
