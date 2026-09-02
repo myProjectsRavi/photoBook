@@ -1,0 +1,166 @@
+name: Split-Preserving Size Candidate (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-split-preserving-size-candidate
+
+permissions:
+  contents: read
+
+concurrency:
+  group: split-preserving-size-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Apply measured split-preserving size configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          build = Path('app/build.gradle.kts')
+          s = build.read_text()
+          old_jni = '''        jniLibs {
+            // Ensure native libs are stored uncompressed and 16KB page-aligned
+            // Required by Google Play for devices with 16KB memory pages
+            useLegacyPackaging = false
+        }
+'''
+          new_jni = '''        jniLibs {
+            // Ensure native libs are stored uncompressed and 16KB page-aligned
+            // Required by Google Play for devices with 16KB memory pages
+            useLegacyPackaging = false
+            excludes += setOf("**/x86/**", "**/x86_64/**")
+        }
+'''
+          if s.count(old_jni) != 1:
+              raise SystemExit(f'JNI packaging block mismatch: {s.count(old_jni)}')
+          s = s.replace(old_jni, new_jni, 1)
+
+          material = '    implementation("com.google.android.material:material:1.12.0")\n'
+          appcompat = '    implementation("androidx.appcompat:appcompat:1.6.1")\n'
+          if s.count(material) != 1:
+              raise SystemExit(f'Material dependency mismatch: {s.count(material)}')
+          s = s.replace(material, appcompat, 1)
+          build.write_text(s)
+
+          theme = Path('app/src/main/res/values/themes.xml')
+          t = theme.read_text()
+          old_theme = 'parent="Theme.Material3.DayNight.NoActionBar"'
+          new_theme = 'parent="Theme.AppCompat.DayNight.NoActionBar"'
+          if t.count(old_theme) != 1:
+              raise SystemExit(f'theme parent mismatch: {t.count(old_theme)}')
+          theme.write_text(t.replace(old_theme, new_theme, 1))
+
+          rules = Path('app/proguard-rules.pro')
+          r = rules.read_text()
+          removable = [
+              '-keep class com.google.mlkit.** { *; }\n',
+              '-keep class androidx.security.crypto.** { *; }\n',
+              '-keep class com.google.crypto.tink.** { *; }\n',
+              '-keep class * extends androidx.room.RoomDatabase { *; }\n',
+              '-keep @androidx.room.Entity class * { *; }\n',
+              '-keep @androidx.room.Dao interface * { *; }\n',
+              '-keep class * extends androidx.work.Worker { *; }\n',
+              '-keep class * extends androidx.work.CoroutineWorker { *; }\n',
+              '-keep class * extends androidx.work.ListenableWorker { *; }\n',
+              '-keep class com.google.zxing.** { *; }\n',
+          ]
+          for rule in removable:
+              if r.count(rule) != 1:
+                  raise SystemExit(f'keep rule mismatch: {rule!r} count={r.count(rule)}')
+              r = r.replace(rule, '', 1)
+          rules.write_text(r)
+          PY
+          git diff -- app/build.gradle.kts app/proguard-rules.pro app/src/main/res/values/themes.xml
+
+      - name: Verify host correctness and build release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew \
+            :app:testDebugUnitTest \
+            :app:lintDebug \
+            :app:assembleRelease \
+            :app:bundleRelease \
+            -x :app:verifyReleaseBundleSize
+
+      - name: Report exact split-preserving sizes
+        shell: bash
+        run: |
+          set -euo pipefail
+          report=build/reports/split-preserving-size
+          mkdir -p "$report"
+          python3 - <<'PY' | tee "$report/result.txt"
+          from pathlib import Path
+          import zipfile
+
+          limit_aab = 20 * 1024 * 1024
+          limit_apk = 30 * 1024 * 1024
+          aab = Path('app/build/outputs/bundle/release/app-release.aab')
+          if not aab.is_file():
+              raise SystemExit('release AAB missing')
+
+          aab_bytes = aab.stat().st_size
+          print(f'source_sha={Path(".git/HEAD").read_text().strip()}')
+          print(f'aab_bytes={aab_bytes}')
+          print(f'aab_mib={aab_bytes/1024/1024:.3f}')
+          print(f'aab_under_20_mib={aab_bytes <= limit_aab}')
+          print(f'aab_margin_bytes={limit_aab - aab_bytes}')
+          with zipfile.ZipFile(aab) as z:
+              libs = [n for n in z.namelist() if '/lib/' in n and n.endswith('.so')]
+              abis = sorted({n.split('/lib/', 1)[1].split('/', 1)[0] for n in libs})
+              print('aab_abis=' + ','.join(abis))
+              mapping = next((i for i in z.infolist() if i.filename.endswith('/proguard.map')), None)
+              if mapping:
+                  print(f'mapping_compressed_bytes={mapping.compress_size}')
+          if abis != ['arm64-v8a', 'armeabi-v7a']:
+              raise SystemExit(f'Unexpected AAB ABIs: {abis}')
+
+          apks = sorted(Path('app/build/outputs/apk/release').glob('*.apk'))
+          print(f'apk_count={len(apks)}')
+          if len(apks) != 2:
+              raise SystemExit(f'Expected exactly two split release APKs, found {len(apks)}')
+          seen = set()
+          for apk in apks:
+              size = apk.stat().st_size
+              with zipfile.ZipFile(apk) as z:
+                  apk_abis = sorted({
+                      n.split('/')[1]
+                      for n in z.namelist()
+                      if n.startswith('lib/') and n.endswith('.so') and len(n.split('/')) >= 3
+                  })
+              seen.update(apk_abis)
+              print(f'apk={apk.name} bytes={size} mib={size/1024/1024:.3f} abis={",".join(apk_abis)} under_30_mib={size <= limit_apk}')
+              if size > limit_apk:
+                  raise SystemExit(f'APK exceeds 30 MiB: {apk.name} {size}')
+              if len(apk_abis) != 1:
+                  raise SystemExit(f'APK is not single-ABI: {apk.name} {apk_abis}')
+          if seen != {'arm64-v8a', 'armeabi-v7a'}:
+              raise SystemExit(f'Unexpected APK ABI coverage: {seen}')
+          if aab_bytes > limit_aab:
+              raise SystemExit(f'AAB still exceeds 20 MiB: {aab_bytes}')
+          PY
+
+      - name: Upload size evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: split-preserving-size-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: build/reports/split-preserving-size/
