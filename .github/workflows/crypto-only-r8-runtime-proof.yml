@@ -207,11 +207,13 @@ jobs:
             fi
             if [[ "$iteration" -eq 1 ]]; then
               grep -F 'previousPresent=false' "$report/logcat-crypto-$iteration.txt"
+              grep -F 'filePreviousPresent=false' "$report/logcat-crypto-$iteration.txt"
             else
               grep -F 'previousPresent=true' "$report/logcat-crypto-$iteration.txt"
+              grep -F 'filePreviousPresent=true' "$report/logcat-crypto-$iteration.txt"
             fi
           done
-          echo 'crypto_r8_fresh_process_roundtrip=PASS' | tee -a "$report/summary.txt"
+          echo 'crypto_r8_fresh_process_preferences_and_file_roundtrip=PASS' | tee -a "$report/summary.txt"
 
       - name: Capture proof evidence
         if: always()
