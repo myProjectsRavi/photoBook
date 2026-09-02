@@ -57,6 +57,26 @@ jobs:
           if gradle.count(marker) != 1:
               raise SystemExit('android namespace marker mismatch')
           gradle = gradle.replace(marker, marker + '    testBuildType = "benchmark"\n', 1)
+          benchmark_marker = '''        create("benchmark") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+            isDebuggable = false
+        }
+'''
+          benchmark_replacement = '''        create("benchmark") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+            isDebuggable = false
+            androidTest {
+                enableMinification = false
+            }
+        }
+'''
+          if gradle.count(benchmark_marker) != 1:
+              raise SystemExit(f'benchmark block mismatch: {gradle.count(benchmark_marker)}')
+          gradle = gradle.replace(benchmark_marker, benchmark_replacement, 1)
           dep_marker = '    androidTestImplementation("androidx.room:room-testing:2.6.1")\n'
           if gradle.count(dep_marker) != 1:
               raise SystemExit('androidTest dependency marker mismatch')
@@ -69,7 +89,7 @@ jobs:
           PY
           git diff -- app/proguard-rules.pro app/build.gradle.kts
 
-      - name: Build R8-minified debug-signed benchmark target and tests
+      - name: Build R8-minified app target and non-minified instrumentation
         shell: bash
         run: |
           set -euo pipefail
@@ -77,6 +97,11 @@ jobs:
           ./gradlew :app:assembleBenchmark :app:assembleBenchmarkAndroidTest
           mapping=app/build/outputs/mapping/benchmark/mapping.txt
           test -s "$mapping"
+          if find app/build/outputs/mapping -maxdepth 2 -type f -path '*benchmarkAndroidTest*' | grep -q .; then
+            echo 'androidTest unexpectedly produced R8 mapping output'
+            find app/build/outputs/mapping -maxdepth 3 -type f -print
+            exit 1
+          fi
           grep -F 'com.photobook.app.worker.TrashPurgeWorker ->' "$mapping" | tee build/pruned-keeps-worker-mapping.txt
           grep -F 'com.photobook.app.data.db.PhotoBookDatabase ->' "$mapping" | tee build/pruned-keeps-room-mapping.txt
 
@@ -123,7 +148,7 @@ jobs:
           [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
           echo "sdk=$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r') abi=$("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r') abilist=$("$ADB" shell getprop ro.product.cpu.abilist | tr -d '\r')"
 
-      - name: Prove pruned families on the minified target
+      - name: Prove pruned families on the minified app target
         shell: bash
         run: |
           set -euo pipefail
