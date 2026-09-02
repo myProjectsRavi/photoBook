@@ -1,15 +1,11 @@
 package com.photobook.app.feature.copytext
 
-import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Canvas
-import android.graphics.Color
 import android.net.Uri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.photobook.app.ml.BundledOnDeviceIntelligence
 import java.io.File
-import java.io.FileOutputStream
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -20,10 +16,11 @@ import org.junit.runner.RunWith
 /**
  * Disposable device proof for Copy Text bitmap budgets.
  *
- * Each method is executed in a fresh app process by the disposable workflow. The blank fixtures
- * force the production extractor through its enhanced-bitmap fallback. The extractor intentionally
- * uses its production default OCR dependency so the test exercises the Hilt application-scoped
- * LocalOcrEngine path rather than constructing a second recognizer just for the test.
+ * The workflow seeds blank image fixtures into the target app cache before each instrumentation
+ * process starts. This is deliberate: generating 3200/3600 px source bitmaps inside the measured
+ * app process would pollute the very memory peak this proof is trying to attribute to Copy Text.
+ * Each case therefore measures only the production extractor path, in a fresh app process, using
+ * the production default Hilt-shared OCR dependency.
  */
 @RunWith(AndroidJUnit4::class)
 class OnDevicePhotoTextExtractorMemoryInstrumentedTest {
@@ -32,55 +29,37 @@ class OnDevicePhotoTextExtractorMemoryInstrumentedTest {
 
     @Test
     fun smallControl_completesAt512Pixels() = runBlocking {
-        val fixture = createBlankJpeg("copytext-control-512.jpg", 512)
-        try {
-            assertFixtureBoundsReadable(fixture, 512)
-            releaseFixtureGenerationMemory()
-            println("COPYTEXT_MEMORY_PHASE=CONTROL_EXTRACT_START")
-            val result = realExtractor().extract(Uri.fromFile(fixture).toString())
-            println("COPYTEXT_MEMORY_PHASE=CONTROL_EXTRACT_END result=$result")
-            assertFalse("Small Copy Text control returned an error: $result", result is ExtractedTextResult.Error)
-        } finally {
-            fixture.delete()
-        }
+        val fixture = seededFixture("copytext-control-512.png", 512)
+        println("COPYTEXT_MEMORY_PHASE=CONTROL_EXTRACT_START")
+        val result = realExtractor().extract(Uri.fromFile(fixture).toString())
+        println("COPYTEXT_MEMORY_PHASE=CONTROL_EXTRACT_END result=$result")
+        assertFalse("Small Copy Text control returned an error: $result", result is ExtractedTextResult.Error)
     }
 
     @Test
     fun fullImageFallback_completesAtCurrent3600PixelBudget() = runBlocking {
-        val fixture = createBlankJpeg("copytext-full-3600.jpg", 3_600)
-        try {
-            assertFixtureBoundsReadable(fixture, 3_600)
-            releaseFixtureGenerationMemory()
-            println("COPYTEXT_MEMORY_PHASE=FULL_EXTRACT_START")
-            val result = realExtractor().extract(Uri.fromFile(fixture).toString())
-            println("COPYTEXT_MEMORY_PHASE=FULL_EXTRACT_END result=$result")
-            assertFalse("Full-image Copy Text returned an OCR error: $result", result is ExtractedTextResult.Error)
-        } finally {
-            fixture.delete()
-        }
+        val fixture = seededFixture("copytext-full-3600.png", 3_600)
+        println("COPYTEXT_MEMORY_PHASE=FULL_EXTRACT_START")
+        val result = realExtractor().extract(Uri.fromFile(fixture).toString())
+        println("COPYTEXT_MEMORY_PHASE=FULL_EXTRACT_END result=$result")
+        assertFalse("Full-image Copy Text returned an OCR error: $result", result is ExtractedTextResult.Error)
     }
 
     @Test
     fun nearFullRegionFallback_completesAtCurrent3200PixelBudget() = runBlocking {
-        val fixture = createBlankJpeg("copytext-region-3200.jpg", 3_200)
-        try {
-            assertFixtureBoundsReadable(fixture, 3_200)
-            releaseFixtureGenerationMemory()
-            println("COPYTEXT_MEMORY_PHASE=REGION_EXTRACT_START")
-            val result = realExtractor().extractRegion(
-                photoUri = Uri.fromFile(fixture).toString(),
-                region = NormalizedTextRegion(
-                    left = 0.01f,
-                    top = 0.01f,
-                    right = 0.99f,
-                    bottom = 0.99f,
-                ),
-            )
-            println("COPYTEXT_MEMORY_PHASE=REGION_EXTRACT_END result=$result")
-            assertFalse("Region Copy Text returned an OCR error: $result", result is ExtractedTextResult.Error)
-        } finally {
-            fixture.delete()
-        }
+        val fixture = seededFixture("copytext-region-3200.png", 3_200)
+        println("COPYTEXT_MEMORY_PHASE=REGION_EXTRACT_START")
+        val result = realExtractor().extractRegion(
+            photoUri = Uri.fromFile(fixture).toString(),
+            region = NormalizedTextRegion(
+                left = 0.01f,
+                top = 0.01f,
+                right = 0.99f,
+                bottom = 0.99f,
+            ),
+        )
+        println("COPYTEXT_MEMORY_PHASE=REGION_EXTRACT_END result=$result")
+        assertFalse("Region Copy Text returned an OCR error: $result", result is ExtractedTextResult.Error)
     }
 
     private fun realExtractor(): OnDevicePhotoTextExtractor {
@@ -90,19 +69,10 @@ class OnDevicePhotoTextExtractorMemoryInstrumentedTest {
         )
     }
 
-    private fun createBlankJpeg(name: String, dimension: Int): File {
+    private fun seededFixture(name: String, expectedDimension: Int): File {
         val file = File(context.cacheDir, name)
-        file.delete()
-        val bitmap = Bitmap.createBitmap(dimension, dimension, Bitmap.Config.ARGB_8888)
-        try {
-            Canvas(bitmap).drawColor(Color.WHITE)
-            FileOutputStream(file).use { output ->
-                assertTrue("Failed to encode $name", bitmap.compress(Bitmap.CompressFormat.JPEG, 92, output))
-            }
-        } finally {
-            bitmap.recycle()
-        }
-        assertTrue("Fixture was not written: ${file.absolutePath}", file.isFile && file.length() > 0L)
+        assertTrue("Workflow did not seed fixture: ${file.absolutePath}", file.isFile && file.length() > 0L)
+        assertFixtureBoundsReadable(file, expectedDimension)
         return file
     }
 
@@ -114,13 +84,5 @@ class OnDevicePhotoTextExtractorMemoryInstrumentedTest {
         stream!!.use { BitmapFactory.decodeStream(it, null, options) }
         assertEquals("Fixture width was not decodable", expectedDimension, options.outWidth)
         assertEquals("Fixture height was not decodable", expectedDimension, options.outHeight)
-    }
-
-    private fun releaseFixtureGenerationMemory() {
-        repeat(2) {
-            Runtime.getRuntime().gc()
-            System.runFinalization()
-        }
-        Thread.sleep(1_000)
     }
 }
