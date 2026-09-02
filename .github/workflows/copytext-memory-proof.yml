@@ -75,7 +75,7 @@ jobs:
           chmod +x ./gradlew
           ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
 
-      - name: Run isolated Copy Text cases while polling memory
+      - name: Diagnose 512px Copy Text control while polling memory
         shell: bash
         run: |
           set -euo pipefail
@@ -99,77 +99,64 @@ jobs:
             > "$report/device-heap.txt"
 
           class=com.photobook.app.feature.copytext.OnDevicePhotoTextExtractorMemoryInstrumentedTest
-          cases=(
-            'control:smallControl_completesAt512Pixels'
-            'full3600:fullImageFallback_completesAtCurrent3600PixelBudget'
-            'region3200:nearFullRegionFallback_completesAtCurrent3200PixelBudget'
-          )
-          overall_fail=0
-          : > "$report/summary.txt"
+          case_name=control
+          method=smallControl_completesAt512Pixels
+          "$ADB" shell am force-stop com.photobook.app || true
+          sleep 1
+          "$ADB" logcat -c
+          printf 'elapsed_ms\ttotal_pss_kb\tjava_heap_kb\tnative_heap_kb\n' > "$report/meminfo-$case_name.tsv"
 
-          for item in "${cases[@]}"; do
-            case_name="${item%%:*}"
-            method="${item#*:}"
-            echo "=== case=$case_name method=$method ==="
-            "$ADB" shell am force-stop com.photobook.app || true
-            sleep 1
-            "$ADB" logcat -c
-            printf 'elapsed_ms\ttotal_pss_kb\tjava_heap_kb\tnative_heap_kb\n' > "$report/meminfo-$case_name.tsv"
+          start_ms=$(date +%s%3N)
+          set +e
+          "$ADB" shell am instrument -w -r \
+            -e class "$class#$method" \
+            "$instrumentation" > "$report/instrumentation-$case_name.txt" 2>&1 &
+          inst_pid=$!
+          set -e
 
-            start_ms=$(date +%s%3N)
-            set +e
-            "$ADB" shell am instrument -w -r \
-              -e class "$class#$method" \
-              "$instrumentation" > "$report/instrumentation-$case_name.txt" 2>&1 &
-            inst_pid=$!
-            set -e
-
-            while kill -0 "$inst_pid" 2>/dev/null; do
-              now_ms=$(date +%s%3N)
-              snapshot="$("$ADB" shell dumpsys meminfo com.photobook.app 2>/dev/null | tr -d '\r' || true)"
-              if [[ -n "$snapshot" && "$snapshot" != *"No process found"* ]]; then
-                total_pss="$(printf '%s\n' "$snapshot" | awk '/TOTAL PSS:/ {gsub(/,/,"",$3); print $3; exit} /^[[:space:]]*TOTAL[[:space:]]+[0-9]/ {gsub(/,/,"",$2); print $2; exit}')"
-                java_heap="$(printf '%s\n' "$snapshot" | awk '/Java Heap:/ {gsub(/,/,"",$3); print $3; exit}')"
-                native_heap="$(printf '%s\n' "$snapshot" | awk '/Native Heap:/ {gsub(/,/,"",$3); print $3; exit}')"
-                if [[ "$total_pss" =~ ^[0-9]+$ ]]; then
-                  printf '%s\t%s\t%s\t%s\n' \
-                    "$((now_ms - start_ms))" "$total_pss" "${java_heap:-}" "${native_heap:-}" \
-                    >> "$report/meminfo-$case_name.tsv"
-                fi
+          while kill -0 "$inst_pid" 2>/dev/null; do
+            now_ms=$(date +%s%3N)
+            snapshot="$("$ADB" shell dumpsys meminfo com.photobook.app 2>/dev/null | tr -d '\r' || true)"
+            if [[ -n "$snapshot" && "$snapshot" != *"No process found"* ]]; then
+              total_pss="$(printf '%s\n' "$snapshot" | awk '/TOTAL PSS:/ {gsub(/,/,"",$3); print $3; exit} /^[[:space:]]*TOTAL[[:space:]]+[0-9]/ {gsub(/,/,"",$2); print $2; exit}')"
+              java_heap="$(printf '%s\n' "$snapshot" | awk '/Java Heap:/ {gsub(/,/,"",$3); print $3; exit}')"
+              native_heap="$(printf '%s\n' "$snapshot" | awk '/Native Heap:/ {gsub(/,/,"",$3); print $3; exit}')"
+              if [[ "$total_pss" =~ ^[0-9]+$ ]]; then
+                printf '%s\t%s\t%s\t%s\n' \
+                  "$((now_ms - start_ms))" "$total_pss" "${java_heap:-}" "${native_heap:-}" \
+                  >> "$report/meminfo-$case_name.tsv"
               fi
-              sleep 0.25
-            done
-
-            set +e
-            wait "$inst_pid"
-            shell_rc=$?
-            set -e
-            "$ADB" logcat -d > "$report/logcat-$case_name.txt" || true
-            cat "$report/instrumentation-$case_name.txt"
-
-            samples=$(( $(wc -l < "$report/meminfo-$case_name.tsv") - 1 ))
-            if [[ $samples -gt 0 ]]; then
-              max_pss="$(tail -n +2 "$report/meminfo-$case_name.tsv" | awk -F '\t' 'BEGIN{m=0} $2+0>m{m=$2+0} END{print m}')"
-              max_java="$(tail -n +2 "$report/meminfo-$case_name.tsv" | awk -F '\t' 'BEGIN{m=0} $3+0>m{m=$3+0} END{print m}')"
-              max_native="$(tail -n +2 "$report/meminfo-$case_name.tsv" | awk -F '\t' 'BEGIN{m=0} $4+0>m{m=$4+0} END{print m}')"
-            else
-              max_pss=0; max_java=0; max_native=0
             fi
-
-            case_ok=1
-            grep -Eq 'OK \(1 test\)|OK \(1 tests\)' "$report/instrumentation-$case_name.txt" || case_ok=0
-            if grep -Eqi 'FAILURES|INSTRUMENTATION_FAILED|Process crashed|OutOfMemoryError|OOM' "$report/instrumentation-$case_name.txt"; then case_ok=0; fi
-            if grep -Eqi 'OutOfMemoryError|FATAL EXCEPTION.*photobook|lowmemorykiller.*photobook' "$report/logcat-$case_name.txt"; then case_ok=0; fi
-            if [[ $shell_rc -ne 0 ]]; then case_ok=0; fi
-
-            printf 'case=%s shell_rc=%s pass=%s samples=%s peak_total_pss_kb=%s peak_java_heap_kb=%s peak_native_heap_kb=%s\n' \
-              "$case_name" "$shell_rc" "$case_ok" "$samples" "$max_pss" "$max_java" "$max_native" \
-              | tee -a "$report/summary.txt"
-            if [[ $case_ok -ne 1 ]]; then overall_fail=1; fi
+            sleep 0.25
           done
 
-          cat "$report/summary.txt"
-          [[ $overall_fail -eq 0 ]]
+          set +e
+          wait "$inst_pid"
+          shell_rc=$?
+          set -e
+          "$ADB" logcat -d > "$report/logcat-$case_name.txt" || true
+          grep 'CopyTextMemoryProof' "$report/logcat-$case_name.txt" | tee "$report/decode-trace.txt" || true
+          cat "$report/instrumentation-$case_name.txt"
+
+          samples=$(( $(wc -l < "$report/meminfo-$case_name.tsv") - 1 ))
+          if [[ $samples -gt 0 ]]; then
+            max_pss="$(tail -n +2 "$report/meminfo-$case_name.tsv" | awk -F '\t' 'BEGIN{m=0} $2+0>m{m=$2+0} END{print m}')"
+            max_java="$(tail -n +2 "$report/meminfo-$case_name.tsv" | awk -F '\t' 'BEGIN{m=0} $3+0>m{m=$3+0} END{print m}')"
+            max_native="$(tail -n +2 "$report/meminfo-$case_name.tsv" | awk -F '\t' 'BEGIN{m=0} $4+0>m{m=$4+0} END{print m}')"
+          else
+            max_pss=0; max_java=0; max_native=0
+          fi
+
+          case_ok=1
+          grep -Eq 'OK \(1 test\)|OK \(1 tests\)' "$report/instrumentation-$case_name.txt" || case_ok=0
+          if grep -Eqi 'FAILURES|INSTRUMENTATION_FAILED|Process crashed|OutOfMemoryError|OOM' "$report/instrumentation-$case_name.txt"; then case_ok=0; fi
+          if grep -Eqi 'OutOfMemoryError|FATAL EXCEPTION.*photobook|lowmemorykiller.*photobook' "$report/logcat-$case_name.txt"; then case_ok=0; fi
+          if [[ $shell_rc -ne 0 ]]; then case_ok=0; fi
+
+          printf 'case=%s shell_rc=%s pass=%s samples=%s peak_total_pss_kb=%s peak_java_heap_kb=%s peak_native_heap_kb=%s\n' \
+            "$case_name" "$shell_rc" "$case_ok" "$samples" "$max_pss" "$max_java" "$max_native" \
+            | tee "$report/summary.txt"
+          [[ $case_ok -eq 1 ]]
 
       - name: Capture source and emulator evidence
         if: always()
