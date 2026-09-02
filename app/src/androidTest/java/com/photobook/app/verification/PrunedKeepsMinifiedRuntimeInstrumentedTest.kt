@@ -29,10 +29,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/**
- * Disposable proof that app-owned broad keep rules are unnecessary under the real R8-minified
- * benchmark target. Each check exercises a library family whose blanket keep rule is pruned.
- */
+/** Disposable R8 proof; each pruned library family is invoked separately by the workflow. */
 @RunWith(AndroidJUnit4::class)
 class PrunedKeepsMinifiedRuntimeInstrumentedTest {
 
@@ -40,15 +37,7 @@ class PrunedKeepsMinifiedRuntimeInstrumentedTest {
         get() = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Test
-    fun prunedKeepFamiliesRemainHealthyUnderMinification() = runBlocking {
-        proveBundledOcr()
-        proveRoomGeneratedCode()
-        proveEncryptedStorageAndTink()
-        proveZxingRuntime()
-        proveHiltWorkManagerFactory()
-    }
-
-    private suspend fun proveBundledOcr() {
+    fun bundledOcr_survivesKeepPruning() = runBlocking {
         val bitmap = Bitmap.createBitmap(1_600, 520, Bitmap.Config.ARGB_8888)
         try {
             val canvas = Canvas(bitmap)
@@ -58,7 +47,6 @@ class PrunedKeepsMinifiedRuntimeInstrumentedTest {
                 textSize = 170f
             }
             canvas.drawText("PhotoBook OCR", 80f, 310f, paint)
-
             val result = LocalOcrEngine().recognize(bitmap)
             assertTrue("ML Kit OCR should complete after keep-rule pruning", result.isSuccess)
             val normalized = result.getOrThrow().lowercase().replace(Regex("\\s+"), " ").trim()
@@ -68,7 +56,8 @@ class PrunedKeepsMinifiedRuntimeInstrumentedTest {
         }
     }
 
-    private fun proveRoomGeneratedCode() {
+    @Test
+    fun roomGeneratedCode_survivesKeepPruning() {
         val db = Room.inMemoryDatabaseBuilder(context, PhotoBookDatabase::class.java)
             .allowMainThreadQueries()
             .build()
@@ -82,8 +71,9 @@ class PrunedKeepsMinifiedRuntimeInstrumentedTest {
         }
     }
 
+    @Test
     @Suppress("DEPRECATION")
-    private fun proveEncryptedStorageAndTink() {
+    fun encryptedStorageAndTink_surviveKeepPruning() {
         val prefsName = "r8_keep_smoke_${UUID.randomUUID()}"
         val key = MasterKey.Builder(context)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
@@ -104,7 +94,8 @@ class PrunedKeepsMinifiedRuntimeInstrumentedTest {
         }
     }
 
-    private fun proveZxingRuntime() {
+    @Test
+    fun zxingRuntime_survivesKeepPruning() {
         val width = 256
         val height = 256
         val expected = "photobook-r8-smoke"
@@ -120,11 +111,12 @@ class PrunedKeepsMinifiedRuntimeInstrumentedTest {
         assertEquals(expected, decoded.text)
     }
 
-    private fun proveHiltWorkManagerFactory() {
+    @Test
+    fun hiltWorkManagerFactory_survivesKeepPruning() {
         val app = context.applicationContext as PhotoBookApplication
         val worker = TestListenableWorkerBuilder<TrashPurgeWorker>(context)
             .setWorkerFactory(app.workerFactory)
             .build()
-        assertTrue("Hilt worker factory should instantiate the pruned worker class", worker is TrashPurgeWorker)
+        assertNotNull("Hilt worker factory should instantiate TrashPurgeWorker", worker)
     }
 }
