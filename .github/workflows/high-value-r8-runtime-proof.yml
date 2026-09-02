@@ -175,11 +175,25 @@ jobs:
           mkdir -p "$report"
           SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
           ADB="$SDK_ROOT/platform-tools/adb"
+
+          adb_retry() {
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if "$ADB" "$@"; then
+                return 0
+              fi
+              echo "ADB transient failure attempt=$attempt args=$*" >&2
+              "$ADB" wait-for-device >/dev/null 2>&1 || true
+              sleep 2
+            done
+            return 1
+          }
+
           benchmark_apk="$(find app/build/outputs/apk/benchmark -type f -name '*arm64-v8a*.apk' | head -n 1)"
           test -n "$benchmark_apk" && test -f "$benchmark_apk"
-          "$ADB" install -r "$benchmark_apk"
+          adb_retry install -r "$benchmark_apk"
 
-          "$ADB" shell dumpsys package com.photobook.app > "$report/package.txt"
+          adb_retry shell dumpsys package com.photobook.app > "$report/package.txt"
           if sed -n '/requested permissions:/,/install permissions:/p' "$report/package.txt" | grep -q 'android.permission.INTERNET'; then
             echo 'Installed minified app requests INTERNET'
             exit 1
@@ -187,13 +201,15 @@ jobs:
           echo 'installed_app_internet=ABSENT' | tee -a "$report/summary.txt"
 
           for mode in no yes; do
-            "$ADB" shell cmd uimode night "$mode"
-            "$ADB" shell am force-stop com.photobook.app || true
-            "$ADB" logcat -c
-            "$ADB" shell am start -W -n com.photobook.app/.MainActivity | tee "$report/start-main-$mode.txt"
+            adb_retry shell cmd uimode night "$mode"
+            adb_retry shell am force-stop com.photobook.app
+            adb_retry logcat -c
+            adb_retry shell am start -W -n com.photobook.app/.MainActivity | tee "$report/start-main-$mode.txt"
             sleep 2
-            "$ADB" shell pidof com.photobook.app | tee "$report/pid-main-$mode.txt"
-            "$ADB" logcat -d > "$report/logcat-main-$mode.txt"
+            adb_retry shell dumpsys activity activities > "$report/activity-main-$mode.txt"
+            grep -q 'com.photobook.app/.MainActivity' "$report/activity-main-$mode.txt"
+            adb_retry shell pidof com.photobook.app | tee "$report/pid-main-$mode.txt"
+            adb_retry logcat -d > "$report/logcat-main-$mode.txt"
             if grep -Eqi 'FATAL EXCEPTION|AndroidRuntime.*Process: com.photobook.app|NoClassDefFoundError|ClassNotFoundException|NoSuchMethodError|NoSuchFieldError' "$report/logcat-main-$mode.txt"; then
               echo "Minified MainActivity crash in night=$mode"
               exit 1
@@ -202,12 +218,12 @@ jobs:
           echo 'minified_main_startup_light_dark=PASS' | tee -a "$report/summary.txt"
 
           for iteration in 1 2; do
-            "$ADB" shell am force-stop com.photobook.app || true
-            "$ADB" logcat -c
-            "$ADB" shell am start -W -n com.photobook.app/.verification.HighValueR8ProofActivity | tee "$report/start-proof-$iteration.txt"
+            adb_retry shell am force-stop com.photobook.app
+            adb_retry logcat -c
+            adb_retry shell am start -W -n com.photobook.app/.verification.HighValueR8ProofActivity | tee "$report/start-proof-$iteration.txt"
             for _ in $(seq 1 30); do
               sleep 1
-              "$ADB" logcat -d > "$report/logcat-proof-$iteration.txt"
+              adb_retry logcat -d > "$report/logcat-proof-$iteration.txt"
               if grep -Fq 'PHOTOBOOK_HIGH_VALUE_R8_PROOF=PASS' "$report/logcat-proof-$iteration.txt"; then break; fi
               if grep -Fq 'PHOTOBOOK_HIGH_VALUE_R8_PROOF=FAIL' "$report/logcat-proof-$iteration.txt"; then break; fi
             done
