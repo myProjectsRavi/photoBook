@@ -1,0 +1,93 @@
+name: Safe Size Without Keep Pruning (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-safe-size-no-pruning
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Apply only proven AppCompat and split-preserving JNI exclusions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          build = Path('app/build.gradle.kts')
+          s = build.read_text()
+          old = "        jniLibs {\n            // Ensure native libs are stored uncompressed and 16KB page-aligned\n            // Required by Google Play for devices with 16KB memory pages\n            useLegacyPackaging = false\n        }\n"
+          new = "        jniLibs {\n            // Ensure native libs are stored uncompressed and 16KB page-aligned\n            // Required by Google Play for devices with 16KB memory pages\n            useLegacyPackaging = false\n            excludes += setOf(\"**/x86/**\", \"**/x86_64/**\")\n        }\n"
+          if s.count(old) != 1:
+              raise SystemExit(f'JNI block mismatch: {s.count(old)}')
+          s = s.replace(old, new, 1)
+          material = '    implementation("com.google.android.material:material:1.12.0")\n'
+          appcompat = '    implementation("androidx.appcompat:appcompat:1.6.1")\n'
+          if s.count(material) != 1:
+              raise SystemExit(f'Material dependency mismatch: {s.count(material)}')
+          build.write_text(s.replace(material, appcompat, 1))
+
+          theme = Path('app/src/main/res/values/themes.xml')
+          t = theme.read_text()
+          old_theme = 'parent="Theme.Material3.DayNight.NoActionBar"'
+          new_theme = 'parent="Theme.AppCompat.DayNight.NoActionBar"'
+          if t.count(old_theme) != 1:
+              raise SystemExit(f'theme mismatch: {t.count(old_theme)}')
+          theme.write_text(t.replace(old_theme, new_theme, 1))
+          PY
+
+      - name: Verify and build release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleRelease :app:bundleRelease -x :app:verifyReleaseBundleSize
+
+      - name: Report exact sizes
+        shell: bash
+        run: |
+          set -euo pipefail
+          report=build/reports/safe-size-no-pruning
+          mkdir -p "$report"
+          python3 - <<'PY' | tee "$report/result.txt"
+          from pathlib import Path
+          import subprocess, zipfile
+          aab = Path('app/build/outputs/bundle/release/app-release.aab')
+          limit = 20 * 1024 * 1024
+          size = aab.stat().st_size
+          print('source_sha=' + subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip())
+          print(f'aab_bytes={size}')
+          print(f'aab_mib={size/1024/1024:.3f}')
+          print(f'aab_under_20_mib={size <= limit}')
+          print(f'aab_margin_bytes={limit-size}')
+          with zipfile.ZipFile(aab) as z:
+              abis=sorted({n.split('/lib/',1)[1].split('/',1)[0] for n in z.namelist() if '/lib/' in n and n.endswith('.so')})
+          print('aab_abis=' + ','.join(abis))
+          apks=sorted(Path('app/build/outputs/apk/release').glob('*.apk'))
+          print(f'apk_count={len(apks)}')
+          for apk in apks:
+              print(f'apk={apk.name} bytes={apk.stat().st_size} mib={apk.stat().st_size/1024/1024:.3f}')
+          if abis != ['arm64-v8a','armeabi-v7a']:
+              raise SystemExit(f'unexpected ABIs: {abis}')
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: safe-size-no-pruning-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: build/reports/safe-size-no-pruning/
