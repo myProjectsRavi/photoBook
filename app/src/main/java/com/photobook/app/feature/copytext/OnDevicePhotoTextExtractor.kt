@@ -10,6 +10,7 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Rect
 import android.net.Uri
+import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import com.photobook.app.ml.BundledOnDeviceIntelligence
 import com.photobook.app.ml.LocalOcrEngine
@@ -38,20 +39,30 @@ class OnDevicePhotoTextExtractor @Inject constructor(
         return withContext(Dispatchers.IO) {
             val uri = runCatching { Uri.parse(photoUri) }.getOrNull()
                 ?: return@withContext ExtractedTextResult.Error()
+            Log.i(PROOF_TAG, "stage=extract_start uri=$uri")
 
             if (!ensureTextRecognizerReady()) {
+                Log.i(PROOF_TAG, "stage=readiness_failed")
                 return@withContext ExtractedTextResult.Error()
             }
+            Log.i(PROOF_TAG, "stage=readiness_pass")
 
             val bitmap = loadTextBitmap(uri, MAX_TEXT_BITMAP_DIMENSION_PX)
-                ?: return@withContext ExtractedTextResult.Error()
+                ?: run {
+                    Log.i(PROOF_TAG, "stage=load_bitmap_null")
+                    return@withContext ExtractedTextResult.Error()
+                }
+            Log.i(PROOF_TAG, "stage=load_bitmap_pass width=${bitmap.width} height=${bitmap.height} config=${bitmap.config}")
 
             try {
                 val rawText = runCatching {
+                    Log.i(PROOF_TAG, "stage=ocr_start")
                     recognizeBitmapWithFallback(bitmap)
                 }.getOrElse { error ->
+                    Log.e(PROOF_TAG, "stage=ocr_failure", error)
                     return@withContext ExtractedTextResult.Error(error)
                 }
+                Log.i(PROOF_TAG, "stage=ocr_end chars=${rawText.length}")
 
                 val formatted = formatter.format(rawText)
                 if (formatted.isBlank()) {
@@ -185,11 +196,14 @@ class OnDevicePhotoTextExtractor @Inject constructor(
     }
 
     private fun loadTextBitmap(uri: Uri, maxDimensionPx: Int): Bitmap? {
+        Log.i(PROOF_TAG, "stage=load_start maxDimension=$maxDimensionPx")
         val decoded = decodeSampledBitmap(uri, maxDimensionPx) ?: return null
+        Log.i(PROOF_TAG, "stage=decode_returned width=${decoded.width} height=${decoded.height}")
         val oriented = applyExifOrientation(decoded, uri)
         if (oriented !== decoded) {
             recycleSafely(decoded)
         }
+        Log.i(PROOF_TAG, "stage=orientation_done width=${oriented.width} height=${oriented.height}")
         return oriented
     }
 
@@ -197,11 +211,18 @@ class OnDevicePhotoTextExtractor @Inject constructor(
         val bounds = BitmapFactory.Options().apply {
             inJustDecodeBounds = true
         }
-        context.contentResolver.openInputStream(uri)?.use { stream ->
+        val boundsStream = context.contentResolver.openInputStream(uri)
+        if (boundsStream == null) {
+            Log.i(PROOF_TAG, "stage=bounds_stream_null uri=$uri")
+            return null
+        }
+        boundsStream.use { stream ->
             BitmapFactory.decodeStream(stream, null, bounds)
-        } ?: return null
+        }
+        Log.i(PROOF_TAG, "stage=bounds width=${bounds.outWidth} height=${bounds.outHeight} mime=${bounds.outMimeType}")
 
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            Log.i(PROOF_TAG, "stage=bounds_invalid")
             return null
         }
 
@@ -210,14 +231,26 @@ class OnDevicePhotoTextExtractor @Inject constructor(
             height = bounds.outHeight,
             maxDimensionPx = maxDimensionPx,
         )
+        Log.i(PROOF_TAG, "stage=sample size=$sampleSize")
         val decodeOptions = BitmapFactory.Options().apply {
             inSampleSize = sampleSize
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
 
-        return context.contentResolver.openInputStream(uri)?.use { stream ->
+        val pixelStream = context.contentResolver.openInputStream(uri)
+        if (pixelStream == null) {
+            Log.i(PROOF_TAG, "stage=pixel_stream_null uri=$uri")
+            return null
+        }
+        val decoded = pixelStream.use { stream ->
             BitmapFactory.decodeStream(stream, null, decodeOptions)
         }
+        if (decoded == null) {
+            Log.i(PROOF_TAG, "stage=pixel_decode_null outWidth=${decodeOptions.outWidth} outHeight=${decodeOptions.outHeight} mime=${decodeOptions.outMimeType}")
+        } else {
+            Log.i(PROOF_TAG, "stage=pixel_decode_pass width=${decoded.width} height=${decoded.height} bytes=${decoded.allocationByteCount}")
+        }
+        return decoded
     }
 
     private fun calculateInSampleSize(width: Int, height: Int, maxDimensionPx: Int): Int {
@@ -305,6 +338,7 @@ class OnDevicePhotoTextExtractor @Inject constructor(
     companion object {
         private const val MAX_TEXT_BITMAP_DIMENSION_PX = 3600
         private const val MAX_REGION_BITMAP_DIMENSION_PX = 3200
+        private const val PROOF_TAG = "CopyTextMemoryProof"
     }
 }
 
