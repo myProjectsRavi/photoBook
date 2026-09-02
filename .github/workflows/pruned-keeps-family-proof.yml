@@ -1,0 +1,181 @@
+name: Pruned Keep Families Runtime Proof (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-pruned-keeps-family-proof
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pruned-keeps-family-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Apply measured keep pruning and minified test target
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          rules = Path('app/proguard-rules.pro')
+          text = rules.read_text()
+          removable = [
+              '-keep class com.google.mlkit.** { *; }\n',
+              '-keep class androidx.security.crypto.** { *; }\n',
+              '-keep class com.google.crypto.tink.** { *; }\n',
+              '-keep class * extends androidx.room.RoomDatabase { *; }\n',
+              '-keep @androidx.room.Entity class * { *; }\n',
+              '-keep @androidx.room.Dao interface * { *; }\n',
+              '-keep class * extends androidx.work.Worker { *; }\n',
+              '-keep class * extends androidx.work.CoroutineWorker { *; }\n',
+              '-keep class * extends androidx.work.ListenableWorker { *; }\n',
+              '-keep class com.google.zxing.** { *; }\n',
+          ]
+          for rule in removable:
+              if text.count(rule) != 1:
+                  raise SystemExit(f'keep rule mismatch: {rule!r} count={text.count(rule)}')
+              text = text.replace(rule, '', 1)
+          rules.write_text(text)
+
+          build = Path('app/build.gradle.kts')
+          gradle = build.read_text()
+          marker = '    namespace = "com.photobook.app"\n'
+          if gradle.count(marker) != 1:
+              raise SystemExit('namespace marker mismatch')
+          gradle = gradle.replace(marker, marker + '    testBuildType = "benchmark"\n', 1)
+          dep = '    androidTestImplementation("androidx.room:room-testing:2.6.1")\n'
+          if gradle.count(dep) != 1:
+              raise SystemExit('androidTest dependency marker mismatch')
+          gradle = gradle.replace(dep, dep + '    androidTestImplementation("androidx.work:work-testing:2.9.0")\n', 1)
+          build.write_text(gradle)
+          PY
+
+      - name: Build minified benchmark and instrumentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:assembleBenchmark :app:assembleBenchmarkAndroidTest
+          test -s app/build/outputs/mapping/benchmark/mapping.txt
+
+      - name: Install emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+
+      - name: Provision API 35 emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n 1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager 2>/dev/null | sort | tail -n 1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          IMAGE="system-images;android-35;google_apis;x86_64"
+          AVD="photobook-pruned-family-api35"
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 emulator "$IMAGE"
+          echo no | "$AVDMANAGER" create avd --force --name "$AVD" --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/$AVD.avd"
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+          nohup "$EMULATOR" -avd "$AVD" -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 2048 -cores 2 > "$RUNNER_TEMP/pruned-family-emulator.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 120); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/pruned-family-emulator.log"; exit 1; }
+            sleep 2
+          done
+          "$ADB" wait-for-device
+          for _ in $(seq 1 120); do
+            [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break
+            sleep 2
+          done
+          [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
+
+      - name: Run each pruned family independently and retain failure evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          report=build/reports/pruned-keeps-family-proof
+          mkdir -p "$report"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          app_apk="$(find app/build/outputs/apk/benchmark -type f -name '*arm64-v8a*.apk' | head -n 1)"
+          test_apk="$(find app/build/outputs/apk/androidTest/benchmark -type f -name '*.apk' | head -n 1)"
+          test -f "$app_apk" && test -f "$test_apk"
+          "$ADB" install -r "$app_apk"
+          "$ADB" install -r "$test_apk"
+          instrumentation="$("$ADB" shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n 1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
+          test -n "$instrumentation"
+
+          class=com.photobook.app.verification.PrunedKeepsMinifiedRuntimeInstrumentedTest
+          cases=(
+            'ocr:bundledOcr_survivesKeepPruning'
+            'room:roomGeneratedCode_survivesKeepPruning'
+            'crypto:encryptedStorageAndTink_surviveKeepPruning'
+            'zxing:zxingRuntime_survivesKeepPruning'
+            'work:hiltWorkManagerFactory_survivesKeepPruning'
+          )
+          overall=0
+          : > "$report/summary.txt"
+          for item in "${cases[@]}"; do
+            name="${item%%:*}"
+            method="${item#*:}"
+            "$ADB" shell am force-stop com.photobook.app || true
+            "$ADB" logcat -c || true
+            set +e
+            "$ADB" shell am instrument -w -r -e class "$class#$method" "$instrumentation" > "$report/instrumentation-$name.txt" 2>&1
+            rc=$?
+            set -e
+            "$ADB" logcat -d > "$report/logcat-$name.txt" 2>&1 || true
+            pass=1
+            grep -Eq 'OK \(1 test\)|OK \(1 tests\)' "$report/instrumentation-$name.txt" || pass=0
+            grep -Eq 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' "$report/instrumentation-$name.txt" && pass=0 || true
+            [[ $rc -eq 0 ]] || pass=0
+            printf 'case=%s rc=%s pass=%s\n' "$name" "$rc" "$pass" | tee -a "$report/summary.txt"
+            if [[ $pass -ne 1 ]]; then
+              overall=1
+              grep -E 'FATAL EXCEPTION|AndroidRuntime|NoClassDefFoundError|ClassNotFoundException|NoSuchMethodError|NoSuchFieldError|Exception|Error' "$report/logcat-$name.txt" > "$report/failure-$name.txt" || true
+            fi
+          done
+          cat "$report/summary.txt"
+          [[ $overall -eq 0 ]]
+
+      - name: Capture evidence
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          report=build/reports/pruned-keeps-family-proof
+          mkdir -p "$report"
+          printf 'head=%s\n' "$(git rev-parse HEAD)" > "$report/source.txt"
+          cp "$RUNNER_TEMP/pruned-family-emulator.log" "$report/emulator.log" 2>/dev/null
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pruned-keeps-family-proof-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: build/reports/pruned-keeps-family-proof/
