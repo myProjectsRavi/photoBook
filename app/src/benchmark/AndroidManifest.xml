@@ -5,5 +5,9 @@
         <profileable
             android:shell="true"
             tools:targetApi="29" />
+
+        <activity
+            android:name=".verification.HighValueR8ProofActivity"
+            android:exported="true" />
     </application>
 </manifest>
