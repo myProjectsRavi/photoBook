@@ -137,9 +137,10 @@ INSTALLED_BY_SCRIPT=0
 
 cleanup() {
   status=$?
+  trap - EXIT INT TERM
   set +e
   if (( INSTALLED_BY_SCRIPT == 1 )); then
-    "${ADB[@]}" force-stop "$PACKAGE" >/dev/null 2>&1 || true
+    "${ADB[@]}" shell am force-stop "$PACKAGE" >/dev/null 2>&1 || true
     "${ADB[@]}" uninstall "$PACKAGE" > "$OUT_DIR/uninstall.txt" 2>&1 || true
   fi
   if [[ -d "$APP_WORKTREE" ]]; then
