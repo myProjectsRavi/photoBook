@@ -159,6 +159,7 @@ android {
             // Ensure native libs are stored uncompressed and 16KB page-aligned
             // Required by Google Play for devices with 16KB memory pages
             useLegacyPackaging = false
+            excludes += setOf("**/x86/**", "**/x86_64/**")
         }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -212,7 +213,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.navigation:navigation-compose:2.7.7")
-    implementation("com.google.android.material:material:1.12.0")
+    implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("androidx.camera:camera-core:1.4.0")
     implementation("androidx.camera:camera-camera2:1.4.0")
     implementation("androidx.camera:camera-lifecycle:1.4.0")
