@@ -1,0 +1,46 @@
+name: API26 ARM32 Image Probe (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-api26-arm32-image-probe
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 04909b6e485c1ede12160aeac136598bee8d303f
+          fetch-depth: 1
+      - name: Inspect stable API26 system-image catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n 1)"
+          test -x "$SDKMANAGER"
+          "$SDKMANAGER" --list --channel=0 > "$RUNNER_TEMP/sdk-list.txt"
+          echo '--- API26 system images ---'
+          grep -E 'system-images;android-26;' "$RUNNER_TEMP/sdk-list.txt" | tee "$RUNNER_TEMP/api26-images.txt" || true
+          echo '--- API26 ARM/ARM32 matches ---'
+          grep -Ei 'system-images;android-26;.*(armeabi|arm32|arm-v7|arm64)' "$RUNNER_TEMP/sdk-list.txt" | tee "$RUNNER_TEMP/api26-arm-images.txt" || true
+          if grep -Eq 'system-images;android-26;[^;]+;armeabi-v7a' "$RUNNER_TEMP/sdk-list.txt"; then
+            echo 'api26_armeabi_v7a_image=AVAILABLE'
+          else
+            echo 'api26_armeabi_v7a_image=UNAVAILABLE'
+          fi
+      - name: Upload catalog evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: api26-arm32-image-probe-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/api26-images.txt
+            ${{ runner.temp }}/api26-arm-images.txt
