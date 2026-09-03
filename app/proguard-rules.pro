@@ -12,7 +12,9 @@
     @javax.inject.* <fields>;
 }
 
-# ─── Security-crypto warnings ───
+# ─── ML Kit ───
+
+# ─── Security-crypto (EncryptedSharedPreferences, EncryptedFile) ───
 -dontwarn com.google.api.client.**
 -dontwarn org.joda.time.**
 -dontwarn com.google.crypto.tink.util.KeysDownloader
@@ -28,6 +30,8 @@
 -keep class * extends androidx.work.Worker { *; }
 -keep class * extends androidx.work.CoroutineWorker { *; }
 -keep class * extends androidx.work.ListenableWorker { *; }
+
+# ─── ZXing (QR) ───
 
 # ─── Remove verbose logging in release ───
 -assumenosideeffects class android.util.Log {
