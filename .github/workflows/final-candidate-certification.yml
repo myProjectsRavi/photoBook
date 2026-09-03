@@ -1,0 +1,449 @@
+name: Final 2.0.15 Candidate Certification (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-final-candidate-certification
+
+permissions:
+  contents: read
+
+concurrency:
+  group: final-2.0.15-candidate-certification
+  cancel-in-progress: true
+
+env:
+  CANDIDATE_SHA: 04909b6e485c1ede12160aeac136598bee8d303f
+
+jobs:
+  build-delivery:
+    name: exact-build-size-delivery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact clean candidate
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 1
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Assert exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          echo "candidate_sha=$CANDIDATE_SHA"
+      - name: Full local correctness and release builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          bash tools/benchmark/run_phase0_local.sh
+          ./gradlew \
+            :app:testDebugUnitTest \
+            :app:lintDebug \
+            :app:assembleDebug \
+            :app:assembleRelease \
+            :app:bundleRelease \
+            :app:verifyApkSize \
+            :app:verifyReleaseBundleSize
+      - name: Prove exact release sizes ABIs and privacy
+        shell: bash
+        run: |
+          set -euo pipefail
+          report=build/reports/final-candidate
+          mkdir -p "$report"
+          python3 - <<'PY' | tee "$report/release-size.txt"
+          from pathlib import Path
+          import zipfile
+
+          limit_aab = 20 * 1024 * 1024
+          limit_apk = 30 * 1024 * 1024
+          aab = Path('app/build/outputs/bundle/release/app-release.aab')
+          size = aab.stat().st_size
+          with zipfile.ZipFile(aab) as z:
+              abis = sorted({n.split('/lib/', 1)[1].split('/', 1)[0] for n in z.namelist() if '/lib/' in n and n.endswith('.so')})
+          print(f'aab_bytes={size}')
+          print(f'aab_mib={size / 1024 / 1024:.3f}')
+          print(f'aab_margin_bytes={limit_aab - size}')
+          print('aab_abis=' + ','.join(abis))
+          if size > limit_aab:
+              raise SystemExit('AAB exceeds 20 MiB')
+          if abis != ['arm64-v8a', 'armeabi-v7a']:
+              raise SystemExit(f'unexpected AAB ABIs: {abis}')
+
+          apks = sorted(Path('app/build/outputs/apk/release').rglob('*.apk'))
+          if not apks:
+              raise SystemExit('no release APKs found')
+          for apk in apks:
+              apk_size = apk.stat().st_size
+              print(f'apk_bytes={apk_size} apk_mib={apk_size/1024/1024:.3f} path={apk}')
+              if apk_size > limit_apk:
+                  raise SystemExit(f'APK exceeds 30 MiB: {apk}')
+          PY
+
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt 2>/dev/null | sort | tail -n 1)"
+          test -x "$AAPT"
+          for variant in debug release; do
+            manifest="$(find app/build/intermediates/merged_manifest/$variant -type f -name AndroidManifest.xml | head -n 1)"
+            test -n "$manifest" && test -f "$manifest"
+            if grep -q 'android.permission.INTERNET' "$manifest"; then
+              echo "INTERNET present in $variant merged manifest"
+              exit 1
+            fi
+            echo "${variant}_merged_manifest_internet=ABSENT" | tee -a "$report/privacy.txt"
+          done
+          found=false
+          while IFS= read -r apk; do
+            found=true
+            "$AAPT" dump permissions "$apk" >> "$report/release-apk-permissions.txt"
+            if "$AAPT" dump permissions "$apk" | grep -q 'android.permission.INTERNET'; then
+              echo "INTERNET present in packaged release APK: $apk"
+              exit 1
+            fi
+          done < <(find app/build/outputs/apk/release -type f -name '*.apk' | sort)
+          [[ "$found" == true ]]
+          echo 'release_packaged_apk_internet=ABSENT' | tee -a "$report/privacy.txt"
+      - name: Download and verify official bundletool
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --retry-delay 2 \
+            -o bundletool.jar \
+            https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar
+          echo 'a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29  bundletool.jar' | sha256sum -c -
+          java -jar bundletool.jar version
+      - name: Measure and gate Play-style delivery
+        shell: bash
+        run: |
+          set -euo pipefail
+          report=build/reports/final-candidate
+          mkdir -p "$report/play-delivery"
+          cat > "$report/play-delivery/arm64-api36.json" <<'JSON'
+          {"supportedAbis":["arm64-v8a"],"supportedLocales":["en"],"screenDensity":420,"sdkVersion":36}
+          JSON
+          cat > "$report/play-delivery/armeabi-api26.json" <<'JSON'
+          {"supportedAbis":["armeabi-v7a"],"supportedLocales":["en"],"screenDensity":320,"sdkVersion":26}
+          JSON
+          result="$report/play-delivery/result.txt"
+          : > "$result"
+          echo "candidate_sha=$CANDIDATE_SHA" | tee -a "$result"
+          echo "bundletool_version=$(java -jar bundletool.jar version)" | tee -a "$result"
+          echo "aab_bytes=$(stat -c %s app/build/outputs/bundle/release/app-release.aab)" | tee -a "$result"
+          for spec in arm64-api36 armeabi-api26; do
+            java -jar bundletool.jar build-apks \
+              --bundle=app/build/outputs/bundle/release/app-release.aab \
+              --output="$report/play-delivery/$spec.apks" \
+              --device-spec="$report/play-delivery/$spec.json" \
+              --overwrite
+            echo "--- device=$spec" | tee -a "$result"
+            java -jar bundletool.jar get-size total \
+              --apks="$report/play-delivery/$spec.apks" \
+              --device-spec="$report/play-delivery/$spec.json" | tee -a "$result"
+            rm -rf "$report/play-delivery/$spec-extracted"
+            mkdir -p "$report/play-delivery/$spec-extracted"
+            unzip -q "$report/play-delivery/$spec.apks" '*.apk' -d "$report/play-delivery/$spec-extracted"
+            python3 - "$spec" "$result" <<'PY'
+          import pathlib, sys
+          spec, result_path = sys.argv[1], pathlib.Path(sys.argv[2])
+          root = pathlib.Path(f'build/reports/final-candidate/play-delivery/{spec}-extracted')
+          apks = sorted(root.rglob('*.apk'))
+          total = sum(p.stat().st_size for p in apks)
+          limit = 15 * 1024 * 1024
+          with result_path.open('a') as f:
+              f.write(f'delivered_apk_count={len(apks)}\n')
+              f.write(f'delivered_apk_file_bytes_sum={total}\n')
+              f.write(f'delivered_apk_file_mib_sum={total/1024/1024:.3f}\n')
+              f.write(f'delivered_margin_to_15mib={limit-total}\n')
+              for p in apks:
+                  f.write(f'apk_bytes={p.stat().st_size} path={p.relative_to(root)}\n')
+          if total >= limit:
+              raise SystemExit(f'{spec} delivery is not under 15 MiB: {total}')
+          PY
+          done
+          cat "$result"
+      - name: Upload exact build evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: final-candidate-build-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            build/reports/final-candidate/
+            build/reports/phase0/
+            app/build/reports/tests/
+            app/build/reports/lint-results-debug.html
+
+  offline-api35:
+    name: api35-offline-instrumentation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact clean candidate
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 1
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Assert exact source and prebuild tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+          manifest="$(find app/build/intermediates/merged_manifest/debug -type f -name AndroidManifest.xml | head -n 1)"
+          test -n "$manifest" && test -f "$manifest"
+          ! grep -q 'android.permission.INTERNET' "$manifest"
+      - name: Install emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+      - name: Provision API 35 emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n 1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager 2>/dev/null | sort | tail -n 1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          IMAGE="system-images;android-35;google_apis;x86_64"
+          AVD="photobook-final-api35"
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 emulator "$IMAGE"
+          echo no | "$AVDMANAGER" create avd --force --name "$AVD" --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/$AVD.avd"
+          test -e /dev/kvm || { echo 'KVM unavailable'; exit 1; }
+          sudo chmod 666 /dev/kvm
+          "$EMULATOR" -accel-check
+          nohup "$EMULATOR" -avd "$AVD" -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 2048 -cores 2 > "$RUNNER_TEMP/final-api35-emulator.log" 2>&1 &
+          pid=$!
+          ready=false
+          for _ in $(seq 1 120); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then ready=true; break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/final-api35-emulator.log"; exit 1; }
+            sleep 2
+          done
+          [[ "$ready" == true ]]
+          "$ADB" wait-for-device
+          boot=false
+          for _ in $(seq 1 120); do
+            if [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]]; then boot=true; break; fi
+            sleep 2
+          done
+          [[ "$boot" == true ]]
+          echo "sdk=$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r') abi=$("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r') abilist=$("$ADB" shell getprop ro.product.cpu.abilist | tr -d '\r')"
+      - name: Run all instrumentation with network cut
+        shell: bash
+        run: |
+          set -euo pipefail
+          report=build/reports/final-api35
+          mkdir -p "$report"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          uid="$(id -u)"
+          "$ADB" shell cmd connectivity airplane-mode enable || true
+          "$ADB" shell svc wifi disable || true
+          "$ADB" shell svc data disable || true
+          sudo iptables -I OUTPUT 1 -o lo -j ACCEPT
+          sudo iptables -I OUTPUT 2 -m owner --uid-owner "$uid" -j REJECT
+          cleanup() {
+            sudo iptables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null || true
+            sudo iptables -D OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          airplane="$("$ADB" shell settings get global airplane_mode_on 2>/dev/null | tr -d '\r')"
+          echo "airplane_mode=$airplane" | tee "$report/network.txt"
+          [[ "$airplane" == 1 ]]
+          if curl -fsS --connect-timeout 2 --max-time 3 https://www.google.com >/dev/null 2>&1; then
+            echo 'Host outbound network unexpectedly reachable'
+            exit 1
+          fi
+          if "$ADB" shell 'command -v ping >/dev/null 2>&1'; then
+            if "$ADB" shell ping -c 1 -W 1 8.8.8.8 >/dev/null 2>&1; then
+              echo 'Emulator outbound network unexpectedly reachable'
+              exit 1
+            fi
+          fi
+          echo 'offline_network_gate=PASS' | tee -a "$report/network.txt"
+          app_apk="$(find app/build/outputs/apk/debug -type f -name '*arm64-v8a*.apk' | head -n 1)"
+          test_apk="$(find app/build/outputs/apk/androidTest/debug -type f -name '*.apk' | head -n 1)"
+          test -n "$app_apk" && test -f "$app_apk"
+          test -n "$test_apk" && test -f "$test_apk"
+          "$ADB" install -r "$app_apk"
+          "$ADB" install -r "$test_apk"
+          "$ADB" shell dumpsys package com.photobook.app > "$report/package.txt"
+          if sed -n '/requested permissions:/,/install permissions:/p' "$report/package.txt" | grep -q 'android.permission.INTERNET'; then
+            echo 'Installed app requests INTERNET'
+            exit 1
+          fi
+          instrumentation="$("$ADB" shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n 1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
+          test -n "$instrumentation"
+          "$ADB" shell am instrument -w -r "$instrumentation" | tee "$report/instrumentation.txt"
+          grep -Eq 'OK \([0-9]+ tests?\)' "$report/instrumentation.txt"
+          if grep -Eq 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' "$report/instrumentation.txt"; then
+            echo 'Instrumentation reported failure'
+            exit 1
+          fi
+          echo 'offline_all_instrumentation=PASS' | tee -a "$report/network.txt"
+      - name: Upload API35 evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: final-candidate-api35-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: build/reports/final-api35/
+
+  minified-runtime:
+    name: minified-${{ matrix.label }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: api26-arm32
+            image: 'system-images;android-26;google_apis;x86'
+            required_abi: armeabi-v7a
+            apk_glob: '*armeabi-v7a*.apk'
+            avd: photobook-final-api26
+          - label: api35-arm64
+            image: 'system-images;android-35;google_apis;x86_64'
+            required_abi: arm64-v8a
+            apk_glob: '*arm64-v8a*.apk'
+            avd: photobook-final-api35-minified
+    steps:
+      - name: Checkout exact clean candidate
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 1
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Build exact minified benchmark APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          chmod +x ./gradlew
+          ./gradlew :app:assembleBenchmark
+      - name: Install emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+      - name: Provision emulator and prove advertised target ABI
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n 1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager 2>/dev/null | sort | tail -n 1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          IMAGE="${{ matrix.image }}"
+          AVD="${{ matrix.avd }}"
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 emulator "$IMAGE"
+          echo no | "$AVDMANAGER" create avd --force --name "$AVD" --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/$AVD.avd"
+          test -e /dev/kvm || { echo 'KVM unavailable'; exit 1; }
+          sudo chmod 666 /dev/kvm
+          "$EMULATOR" -accel-check
+          nohup "$EMULATOR" -avd "$AVD" -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 2048 -cores 2 > "$RUNNER_TEMP/${{ matrix.avd }}.log" 2>&1 &
+          pid=$!
+          ready=false
+          for _ in $(seq 1 150); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then ready=true; break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/${{ matrix.avd }}.log"; exit 1; }
+            sleep 2
+          done
+          [[ "$ready" == true ]]
+          "$ADB" wait-for-device
+          boot=false
+          for _ in $(seq 1 150); do
+            if [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]]; then boot=true; break; fi
+            sleep 2
+          done
+          [[ "$boot" == true ]]
+          abilist="$("$ADB" shell getprop ro.product.cpu.abilist | tr -d '\r')"
+          echo "sdk=$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r') abi=$("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r') abilist=$abilist"
+          echo "$abilist" | tr ',' '\n' | grep -Fx '${{ matrix.required_abi }}'
+      - name: Prove minified cold start light and dark
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="build/reports/final-${{ matrix.label }}"
+          mkdir -p "$report"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt 2>/dev/null | sort | tail -n 1)"
+          adb_retry() {
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if "$ADB" "$@"; then return 0; fi
+              echo "ADB transient failure attempt=$attempt args=$*" >&2
+              "$ADB" wait-for-device >/dev/null 2>&1 || true
+              sleep 2
+            done
+            return 1
+          }
+          apk="$(find app/build/outputs/apk/benchmark -type f -name '${{ matrix.apk_glob }}' | head -n 1)"
+          test -n "$apk" && test -f "$apk"
+          "$AAPT" dump permissions "$apk" > "$report/permissions.txt"
+          ! grep -q 'android.permission.INTERNET' "$report/permissions.txt"
+          adb_retry install -r "$apk"
+          adb_retry shell dumpsys package com.photobook.app > "$report/package.txt"
+          if sed -n '/requested permissions:/,/install permissions:/p' "$report/package.txt" | grep -q 'android.permission.INTERNET'; then
+            echo 'Installed minified app requests INTERNET'
+            exit 1
+          fi
+          for mode in no yes; do
+            adb_retry shell cmd uimode night "$mode"
+            adb_retry shell am force-stop com.photobook.app
+            adb_retry logcat -c
+            adb_retry shell am start -W -n com.photobook.app/.MainActivity | tee "$report/start-$mode.txt"
+            grep -q 'Status: ok' "$report/start-$mode.txt"
+            sleep 2
+            adb_retry shell dumpsys activity activities > "$report/activity-$mode.txt"
+            grep -q 'com.photobook.app/.MainActivity' "$report/activity-$mode.txt"
+            adb_retry logcat -d > "$report/logcat-$mode.txt"
+            if grep -Eqi 'FATAL EXCEPTION|AndroidRuntime.*Process: com.photobook.app|NoClassDefFoundError|ClassNotFoundException|NoSuchMethodError|NoSuchFieldError' "$report/logcat-$mode.txt"; then
+              echo "Minified startup crash in mode=$mode"
+              exit 1
+            fi
+          done
+          echo 'minified_light_dark_startup=PASS' | tee "$report/summary.txt"
+      - name: Upload runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: final-candidate-${{ matrix.label }}-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: build/reports/final-${{ matrix.label }}/
