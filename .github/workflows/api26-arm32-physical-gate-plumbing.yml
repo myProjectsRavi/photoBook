@@ -1,0 +1,137 @@
+name: API26 ARM32 Physical Gate Plumbing Proof (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-api26-arm32-physical-gate
+
+permissions:
+  contents: read
+
+jobs:
+  plumbing-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CANDIDATE_SHA: 04909b6e485c1ede12160aeac136598bee8d303f
+    steps:
+      - name: Checkout disposable gate branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Exercise full gate plumbing with real ARM32 build and fake ADB
+        shell: bash
+        run: |
+          set -euo pipefail
+          fake="$RUNNER_TEMP/fake-bin"
+          state="$RUNNER_TEMP/fake-adb-installed"
+          mkdir -p "$fake" build/reports/api26-arm32-plumbing
+
+          cat > "$fake/adb" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          state="${FAKE_ADB_STATE:?}"
+
+          if [[ "${1:-}" == "get-state" ]]; then
+            echo device
+            exit 0
+          fi
+          if [[ "${1:-}" == "install" ]]; then
+            touch "$state"
+            echo Success
+            exit 0
+          fi
+          if [[ "${1:-}" == "uninstall" ]]; then
+            rm -f "$state"
+            echo Success
+            exit 0
+          fi
+          if [[ "${1:-}" == "logcat" ]]; then
+            exit 0
+          fi
+          if [[ "${1:-}" != "shell" ]]; then
+            echo "unexpected fake adb command: $*" >&2
+            exit 99
+          fi
+          shift
+
+          case "$*" in
+            "getprop ro.build.version.sdk") echo 26 ;;
+            "getprop ro.product.model") echo "PhotoBook Harness Device" ;;
+            "getprop ro.product.manufacturer") echo "PhotoBook" ;;
+            "getprop ro.product.cpu.abi") echo arm64-v8a ;;
+            "getprop ro.product.cpu.abilist") echo arm64-v8a,armeabi-v7a ;;
+            "getprop ro.product.cpu.abilist32") echo armeabi-v7a ;;
+            "getprop ro.kernel.qemu") echo 0 ;;
+            "getprop ro.boot.qemu") echo 0 ;;
+            "settings get global airplane_mode_on") echo 1 ;;
+            "cat /proc/meminfo") echo "MemTotal:        2048000 kB" ;;
+            "dumpsys battery") echo "  level: 80" ;;
+            "content query --uri content://media/external/images/media --projection _id") echo "No result found." ;;
+            "pm path com.photobook.app")
+              if [[ -f "$state" ]]; then
+                echo "package:/data/app/com.photobook.app/base.apk"
+              fi
+              ;;
+            "dumpsys package com.photobook.app")
+              [[ -f "$state" ]] || exit 1
+              cat <<'EOF'
+            Package [com.photobook.app]
+              primaryCpuAbi=armeabi-v7a
+              requested permissions:
+                android.permission.READ_EXTERNAL_STORAGE
+          EOF
+              ;;
+            "am start -W -n com.photobook.app/.MainActivity")
+              [[ -f "$state" ]] || exit 1
+              cat <<'EOF'
+          Status: ok
+          Activity: com.photobook.app/.MainActivity
+          TotalTime: 100
+          EOF
+              ;;
+            "dumpsys meminfo com.photobook.app") echo "TOTAL PSS: 100000" ;;
+            "dumpsys gfxinfo com.photobook.app"*) echo "Graphics info" ;;
+            *) exit 0 ;;
+          esac
+          SH
+          chmod +x "$fake/adb"
+          export PATH="$fake:$PATH"
+          export FAKE_ADB_STATE="$state"
+
+          APP_SOURCE_SHA="$CANDIDATE_SHA" \
+          ITERATIONS=50 \
+          OUT_DIR="$GITHUB_WORKSPACE/build/reports/api26-arm32-plumbing" \
+            bash tools/benchmark/run_api26_arm32_compatibility.sh
+
+          result=build/reports/api26-arm32-plumbing/result.txt
+          test -f "$result"
+          grep -Fx 'api26_arm32_physical_compatibility=PASS' "$result"
+          grep -Fx "app_source_sha=$CANDIDATE_SHA" "$result"
+          grep -Fx 'sdk=26' "$result"
+          grep -Fx 'primary_cpu_abi=armeabi-v7a' "$result"
+          grep -Fx 'iterations=50' "$result"
+          grep -Fx 'packaged_internet_permission=ABSENT' "$result"
+          grep -Fx 'installed_internet_permission=ABSENT' "$result"
+          test ! -e "$state"
+          grep -Fx 'Success' build/reports/api26-arm32-plumbing/uninstall.txt
+
+          echo 'api26_arm32_physical_gate_plumbing_proof=PASS'
+          echo 'NOTE: harness-only simulated ADB proof; this is NOT physical-device certification.'
+
+      - name: Upload harness-only evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: api26-arm32-gate-plumbing-${{ github.run_id }}
+          path: build/reports/api26-arm32-plumbing/
+          retention-days: 14
+          if-no-files-found: warn
