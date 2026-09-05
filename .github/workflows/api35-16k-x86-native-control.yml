@@ -1,0 +1,198 @@
+name: API35 16K Native x86_64 OCR Control (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-api35-16k-x86-native-control
+
+permissions:
+  contents: read
+
+jobs:
+  x86-native-control:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      CANDIDATE_SHA: 04909b6e485c1ede12160aeac136598bee8d303f
+    steps:
+      - name: Checkout disposable workflow branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Install emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+
+      - name: Create exact candidate worktree and apply diagnostic-only x86_64 packaging patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "$CANDIDATE_SHA"
+          rm -rf "$RUNNER_TEMP/candidate-x86-control"
+          git worktree add --detach "$RUNNER_TEMP/candidate-x86-control" "$CANDIDATE_SHA"
+          test "$(git -C "$RUNNER_TEMP/candidate-x86-control" rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git -C "$RUNNER_TEMP/candidate-x86-control" status --porcelain)"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("${{ runner.temp }}/candidate-x86-control/app/build.gradle.kts")
+          s = p.read_text()
+          old_excludes = 'excludes += setOf("**/x86/**", "**/x86_64/**")'
+          new_excludes = 'excludes += setOf("**/x86/**")'
+          old_abis = 'include("arm64-v8a", "armeabi-v7a")'
+          new_abis = 'include("arm64-v8a", "armeabi-v7a", "x86_64")'
+          assert s.count(old_excludes) == 1, "expected exact production x86 exclusion"
+          assert s.count(old_abis) == 1, "expected exact production ABI split declaration"
+          p.write_text(s.replace(old_excludes, new_excludes).replace(old_abis, new_abis))
+          PY
+          git -C "$RUNNER_TEMP/candidate-x86-control" diff -- app/build.gradle.kts | tee "$GITHUB_WORKSPACE/x86-control-ephemeral.patch"
+          changed="$(git -C "$RUNNER_TEMP/candidate-x86-control" diff --name-only)"
+          [[ "$changed" == 'app/build.gradle.kts' ]]
+          echo 'candidate_source_sha=04909b6e485c1ede12160aeac136598bee8d303f' > "$GITHUB_WORKSPACE/x86-native-control-report.txt"
+          echo 'production_candidate_modified=NO' | tee -a "$GITHUB_WORKSPACE/x86-native-control-report.txt"
+          echo 'ephemeral_diagnostic_change=x86_64_packaging_only' | tee -a "$GITHUB_WORKSPACE/x86-native-control-report.txt"
+
+      - name: Build diagnostic x86_64 debug split and instrumentation
+        working-directory: ${{ runner.temp }}/candidate-x86-control
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+          apk="$(find app/build/outputs/apk/debug -type f -name '*x86_64*.apk' | head -n1)"
+          test -f "$apk"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt 2>/dev/null | sort -V | tail -n1)"
+          ! "$AAPT" dump permissions "$apk" | grep -q 'android.permission.INTERNET'
+          unzip -l "$apk" | grep -F 'lib/x86_64/libmlkit_google_ocr_pipeline.so'
+          unzip -l "$apk" | grep -F 'lib/x86_64/libimage_processing_util_jni.so'
+          sha256sum "$apk" | tee -a "$GITHUB_WORKSPACE/x86-native-control-report.txt"
+          echo 'x86_64_debug_apk_internet=ABSENT' | tee -a "$GITHUB_WORKSPACE/x86-native-control-report.txt"
+
+      - name: Boot rooted API35 16K x86_64 emulator with compatibility mode off
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort | tail -n1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager | sort | tail -n1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          IMAGE="system-images;android-35;google_apis_ps16k;x86_64"
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 emulator "$IMAGE"
+          echo no | "$AVDMANAGER" create avd --force --name pb16kx86 --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/pb16kx86.avd"
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+          nohup "$EMULATOR" -avd pb16kx86 -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 2048 -cores 2 > "$RUNNER_TEMP/x86-native-control-emulator.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 150); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/x86-native-control-emulator.log"; exit 1; }
+            sleep 2
+          done
+          "$ADB" wait-for-device
+          for _ in $(seq 1 150); do
+            [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break
+            sleep 2
+          done
+          [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
+          [[ "$("$ADB" shell getconf PAGE_SIZE | tr -d '\r')" == 16384 ]]
+          [[ "$("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r')" == x86_64 ]]
+          "$ADB" root >/dev/null
+          "$ADB" wait-for-device
+          [[ "$("$ADB" shell id -u | tr -d '\r')" == 0 ]]
+          "$ADB" shell setprop bionic.linker.16kb.app_compat.enabled false
+          "$ADB" shell setprop pm.16kb.app_compat.disabled true
+          [[ "$("$ADB" shell getprop bionic.linker.16kb.app_compat.enabled | tr -d '\r')" == false ]]
+          [[ "$("$ADB" shell getprop pm.16kb.app_compat.disabled | tr -d '\r')" == true ]]
+          echo 'page_size=16384' | tee -a "$GITHUB_WORKSPACE/x86-native-control-report.txt"
+          echo 'runtime_abi=x86_64_native' | tee -a "$GITHUB_WORKSPACE/x86-native-control-report.txt"
+          echo 'compat_mode_off=VERIFIED' | tee -a "$GITHUB_WORKSPACE/x86-native-control-report.txt"
+
+      - name: Cut network and run OCR three times natively
+        working-directory: ${{ runner.temp }}/candidate-x86-control
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          uid="$(id -u)"
+          REPORT="$GITHUB_WORKSPACE/x86-native-control-report.txt"
+          "$ADB" shell cmd connectivity airplane-mode enable || true
+          "$ADB" shell svc wifi disable || true
+          "$ADB" shell svc data disable || true
+          sudo iptables -I OUTPUT 1 -o lo -j ACCEPT
+          sudo iptables -I OUTPUT 2 -m owner --uid-owner "$uid" -j REJECT
+          cleanup() {
+            sudo iptables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null || true
+            sudo iptables -D OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          [[ "$("$ADB" shell settings get global airplane_mode_on | tr -d '\r')" == 1 ]]
+          if curl -fsS --connect-timeout 2 --max-time 3 https://www.google.com >/dev/null 2>&1; then exit 1; fi
+          if "$ADB" shell 'command -v ping >/dev/null 2>&1'; then
+            ! "$ADB" shell ping -c 1 -W 1 8.8.8.8 >/dev/null 2>&1
+          fi
+          echo 'offline_network_gate=PASS' | tee -a "$REPORT"
+
+          app_apk="$(find app/build/outputs/apk/debug -type f -name '*x86_64*.apk' | head -n1)"
+          test_apk="$(find app/build/outputs/apk/androidTest/debug -type f -name '*.apk' | head -n1)"
+          "$ADB" install -r "$app_apk" | tee "$RUNNER_TEMP/install-app.txt"
+          grep -Fq Success "$RUNNER_TEMP/install-app.txt"
+          "$ADB" install -r "$test_apk" | tee "$RUNNER_TEMP/install-test.txt"
+          grep -Fq Success "$RUNNER_TEMP/install-test.txt"
+          instrumentation="$("$ADB" shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
+          test -n "$instrumentation"
+
+          "$ADB" logcat -c
+          for i in 1 2 3; do
+            out="$RUNNER_TEMP/ocr-native-x86-$i.txt"
+            set +e
+            "$ADB" shell am instrument -w -r -e class com.photobook.app.ml.LocalOcrEngineInstrumentedTest "$instrumentation" > "$out" 2>&1
+            rc=$?
+            set -e
+            cat "$out"
+            if [[ "$rc" -ne 0 ]] || ! grep -Eq 'OK \(1 tests?\)' "$out"; then
+              echo "x86_native_ocr_run_$i=FAIL" | tee -a "$REPORT"
+              "$ADB" logcat -d > "$RUNNER_TEMP/x86-native-logcat.txt" || true
+              exit 1
+            fi
+            echo "x86_native_ocr_run_$i=PASS" | tee -a "$REPORT"
+          done
+          "$ADB" logcat -d > "$RUNNER_TEMP/x86-native-logcat.txt" || true
+          if grep -Eqi 'FATAL EXCEPTION|Fatal signal|UnsatisfiedLinkError|dlopen failed|cannot locate symbol|bad ELF' "$RUNNER_TEMP/x86-native-logcat.txt"; then
+            echo 'FAIL: fatal/native marker in native x86_64 control' >&2
+            exit 1
+          fi
+          echo 'x86_native_ocr_16k_control=PASS' | tee -a "$REPORT"
+
+      - name: Upload native control evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: api35-16k-x86-native-control-${{ github.run_id }}
+          path: |
+            x86-native-control-report.txt
+            x86-control-ephemeral.patch
+            ${{ runner.temp }}/x86-native-control-emulator.log
+            ${{ runner.temp }}/x86-native-logcat.txt
+            ${{ runner.temp }}/ocr-native-x86-1.txt
+            ${{ runner.temp }}/ocr-native-x86-2.txt
+            ${{ runner.temp }}/ocr-native-x86-3.txt
+          retention-days: 14
+          if-no-files-found: warn
