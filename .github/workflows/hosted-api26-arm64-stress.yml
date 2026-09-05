@@ -1,0 +1,147 @@
+name: Hosted API26 ARM64 Stress (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-hosted-max-acceptance
+    paths:
+      - .github/workflows/hosted-api26-arm64-stress.yml
+
+permissions:
+  contents: read
+
+jobs:
+  api26-arm64-stress:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CANDIDATE_SHA: 9fd29f9987f6879f330b5b9cb4f33cde3c9b6d23
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Prove tooling-only branch and checkout exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --name-only "$CANDIDATE_SHA"...HEAD | grep -E '^app/src/main/|^app/build.gradle.kts$|^app/proguard-rules.pro$|^gradle/|^build.gradle.kts$|^settings.gradle.kts$'; then
+            echo 'Production/build source changed on hosted-proof branch' >&2
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/candidate"
+          git worktree add --detach "$RUNNER_TEMP/candidate" "$CANDIDATE_SHA"
+          test "$(git -C "$RUNNER_TEMP/candidate" rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git -C "$RUNNER_TEMP/candidate" status --porcelain)"
+      - name: Build exact minified ARM64 benchmark APK
+        working-directory: ${{ runner.temp }}/candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:assembleBenchmark
+          apk="$(find app/build/outputs/apk/benchmark -type f -name '*arm64-v8a*.apk' -print -quit)"
+          test -f "$apk"
+      - name: Install emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+      - name: Provision API26 ARM64 software emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager 2>/dev/null | sort | tail -n1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          IMAGE='system-images;android-26;google_apis;arm64-v8a'
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME" "$GITHUB_WORKSPACE/build/reports/hosted-api26"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 emulator "$IMAGE"
+          echo no | "$AVDMANAGER" create avd --force --name pb-api26-arm64 --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/pb-api26-arm64.avd"
+          nohup "$EMULATOR" -avd pb-api26-arm64 -accel off -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 2048 -cores 2 > "$RUNNER_TEMP/api26-emulator.log" 2>&1 &
+          pid=$!
+          ready=false
+          for _ in $(seq 1 450); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then ready=true; break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/api26-emulator.log"; exit 1; }
+            sleep 2
+          done
+          [[ "$ready" == true ]]
+          "$ADB" wait-for-device
+          boot=false
+          for _ in $(seq 1 450); do
+            if [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]]; then boot=true; break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/api26-emulator.log"; exit 1; }
+            sleep 2
+          done
+          [[ "$boot" == true ]]
+          sdk="$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"
+          abilist="$("$ADB" shell getprop ro.product.cpu.abilist | tr -d '\r')"
+          [[ "$sdk" == 26 ]]
+          echo "$abilist" | tr ',' '\n' | grep -Fx 'arm64-v8a'
+          printf 'candidate_sha=%s\nsdk=%s\nabilist=%s\nmode=software_emulator_correctness_only\n' "$CANDIDATE_SHA" "$sdk" "$abilist" > "$GITHUB_WORKSPACE/build/reports/hosted-api26/summary.txt"
+      - name: Run exact candidate offline with light/dark startup and 50 stress cycles
+        working-directory: ${{ runner.temp }}/candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          export PATH="$SDK_ROOT/platform-tools:$PATH"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt | sort -V | tail -n1)"
+          REPORT="$GITHUB_WORKSPACE/build/reports/hosted-api26/summary.txt"
+          apk="$(find app/build/outputs/apk/benchmark -type f -name '*arm64-v8a*.apk' -print -quit)"
+          "$ADB" shell cmd connectivity airplane-mode enable || true
+          "$ADB" shell svc wifi disable || true
+          "$ADB" shell svc data disable || true
+          [[ "$("$ADB" shell settings get global airplane_mode_on | tr -d '\r')" == 1 ]]
+          ! "$AAPT" dump permissions "$apk" | grep -q 'android.permission.INTERNET'
+          "$ADB" install -r "$apk" | tee "$RUNNER_TEMP/api26-install.txt"
+          grep -Fq Success "$RUNNER_TEMP/api26-install.txt"
+          "$ADB" shell dumpsys package com.photobook.app > "$RUNNER_TEMP/api26-package.txt"
+          ! sed -n '/requested permissions:/,/install permissions:/p' "$RUNNER_TEMP/api26-package.txt" | grep -q 'android.permission.INTERNET'
+          for mode in no yes; do
+            "$ADB" shell cmd uimode night "$mode" || true
+            "$ADB" shell am force-stop com.photobook.app || true
+            "$ADB" logcat -c
+            "$ADB" shell am start -W -n com.photobook.app/.MainActivity | tee "$RUNNER_TEMP/api26-start-$mode.txt"
+            grep -Fq 'Status: ok' "$RUNNER_TEMP/api26-start-$mode.txt"
+            sleep 2
+            "$ADB" logcat -d > "$RUNNER_TEMP/api26-logcat-$mode.txt"
+            ! grep -Eqi 'FATAL EXCEPTION|ANR in com\.photobook\.app|OutOfMemoryError|NoClassDefFoundError|ClassNotFoundException|NoSuchMethodError|NoSuchFieldError|UnsatisfiedLinkError' "$RUNNER_TEMP/api26-logcat-$mode.txt"
+          done
+          OUT_DIR="$GITHUB_WORKSPACE/build/reports/hosted-api26/stress" ITERATIONS=50 PRESERVE_LOGCAT=0 bash tools/benchmark/phase0_device_stress.sh | tee "$RUNNER_TEMP/api26-stress.txt"
+          grep -Fq 'PASS: no crash/ANR/OOM signature observed' "$RUNNER_TEMP/api26-stress.txt"
+          {
+            echo 'packaged_internet_permission=ABSENT'
+            echo 'installed_internet_permission=ABSENT'
+            echo 'light_dark_startup=PASS'
+            echo 'lifecycle_stress_iterations=50'
+            echo 'crash_anr_oom=ABSENT'
+            echo 'hosted_api26_arm64_stress=PASS'
+            echo 'NOTE=software emulator surrogate; not physical ARM32 evidence'
+          } | tee -a "$REPORT"
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hosted-api26-arm64-${{ github.run_id }}
+          path: |
+            build/reports/hosted-api26/
+            ${{ runner.temp }}/api26-emulator.log
+            ${{ runner.temp }}/api26-start-*.txt
+            ${{ runner.temp }}/api26-logcat-*.txt
+            ${{ runner.temp }}/api26-stress.txt
+          retention-days: 14
+          if-no-files-found: warn
