@@ -11,18 +11,27 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.net.Uri
 import androidx.exifinterface.media.ExifInterface
+import com.photobook.app.ml.BundledOnDeviceIntelligence
+import com.photobook.app.ml.LocalOcrEngine
 import com.photobook.app.util.LocalDiagnostics
-import com.photobook.app.ml.CompactLocalIntelligence
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
+import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import com.photobook.app.ml.BundledOnDeviceIntelligence
-import javax.inject.Inject
 
 class OnDevicePhotoTextExtractor @Inject constructor(
     @ApplicationContext private val context: Context,
     private val formatter: PhotoTextFormatter = PhotoTextFormatter(),
     private val onDeviceIntelligence: BundledOnDeviceIntelligence,
+    // PhotoViewerScreen is still manually composed. Resolve that legacy default through Hilt so
+    // Copy Text and background indexing share the application-scoped OCR client instead of
+    // constructing a second ML Kit TextRecognizer. Hilt-injected callers pass this dependency
+    // directly and never execute the default expression.
+    private val localOcrEngine: LocalOcrEngine = sharedLocalOcrEngine(context),
 ) : PhotoTextExtractor {
 
     override suspend fun extract(photoUri: String): ExtractedTextResult {
@@ -32,13 +41,6 @@ class OnDevicePhotoTextExtractor @Inject constructor(
 
             if (!ensureTextRecognizerReady()) {
                 return@withContext ExtractedTextResult.Error()
-            }
-
-            recognizeFromFile()?.let { rawText ->
-                val formatted = formatter.format(rawText)
-                if (formatted.isNotBlank()) {
-                    return@withContext ExtractedTextResult.Success(formatted)
-                }
             }
 
             val bitmap = loadTextBitmap(uri, MAX_TEXT_BITMAP_DIMENSION_PX)
@@ -118,20 +120,44 @@ class OnDevicePhotoTextExtractor @Inject constructor(
         return onDeviceIntelligence.ensureReady(needsMl = false, needsOcr = true).ocrReady
     }
 
-    private suspend fun recognizeFromFile(): String? {
-        return null
-    }
-
     private suspend fun recognizeBitmapWithFallback(bitmap: Bitmap): String {
-        return CompactLocalIntelligence.ocr(bitmap).getOrElse { error ->
+        val primary = localOcrEngine.recognize(bitmap)
+        primary.getOrNull()?.takeIf { text -> text.isNotBlank() }?.let { return it }
+
+        val enhanced = enhanceTextBitmap(bitmap)
+        if (enhanced != null) {
+            try {
+                val enhancedResult = localOcrEngine.recognize(enhanced)
+                if (enhancedResult.isSuccess) {
+                    return enhancedResult.getOrDefault("")
+                }
+                if (primary.isFailure) {
+                    val error = enhancedResult.exceptionOrNull() ?: primary.exceptionOrNull()
+                    if (error != null) {
+                        LocalDiagnostics.record(
+                            context = context,
+                            area = "copy-text",
+                            message = "Bundled local OCR failed",
+                            throwable = error,
+                        )
+                        throw error
+                    }
+                }
+            } finally {
+                recycleSafely(enhanced)
+            }
+        }
+
+        primary.exceptionOrNull()?.let { error ->
             LocalDiagnostics.record(
                 context = context,
                 area = "copy-text",
-                message = "Compact local Latin OCR is unavailable",
+                message = "Bundled local OCR failed",
                 throwable = error,
             )
             throw error
         }
+        return primary.getOrDefault("")
     }
 
     private fun enhanceTextBitmap(source: Bitmap): Bitmap? {
@@ -280,4 +306,17 @@ class OnDevicePhotoTextExtractor @Inject constructor(
         private const val MAX_TEXT_BITMAP_DIMENSION_PX = 3600
         private const val MAX_REGION_BITMAP_DIMENSION_PX = 3200
     }
+}
+
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+internal interface CopyTextOcrEntryPoint {
+    fun localOcrEngine(): LocalOcrEngine
+}
+
+private fun sharedLocalOcrEngine(context: Context): LocalOcrEngine {
+    return EntryPointAccessors.fromApplication(
+        context.applicationContext,
+        CopyTextOcrEntryPoint::class.java,
+    ).localOcrEngine()
 }

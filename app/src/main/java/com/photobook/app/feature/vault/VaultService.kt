@@ -11,18 +11,24 @@ import android.provider.MediaStore
 import androidx.security.crypto.EncryptedFile
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.photobook.app.data.db.VaultDao
+import com.photobook.app.data.db.VaultEntity
+import com.photobook.app.data.model.PhotoRecord
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
-import com.photobook.app.data.model.PhotoRecord
-import com.photobook.app.data.db.VaultDao
-import com.photobook.app.data.db.VaultEntity
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import java.io.File
+import java.io.IOException
+import java.io.InputStream
+import java.security.DigestInputStream
+import java.security.MessageDigest
 import java.util.UUID
+import javax.crypto.Cipher
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 
@@ -68,7 +74,7 @@ class VaultService @Inject constructor(
         ).vaultDao(),
     )
 
-    private val masterKey: MasterKey by lazy {
+    private val legacyMasterKey: MasterKey by lazy {
         MasterKey.Builder(context)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
@@ -78,7 +84,7 @@ class VaultService @Inject constructor(
         EncryptedSharedPreferences.create(
             context,
             PREFS_NAME,
-            masterKey,
+            legacyMasterKey,
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
         )
@@ -88,19 +94,103 @@ class VaultService @Inject constructor(
         File(context.filesDir, VAULT_DIR).apply { if (!exists()) mkdirs() }
     }
 
-    suspend fun listItems(includePreviews: Boolean = false): List<VaultItem> = withContext(Dispatchers.IO) {
-        migrateLegacyItemsIfNeeded()
-        vaultDao.getAllVaultItems().map { entity ->
-            val item = entity.toVaultItem()
-            if (includePreviews) {
-                item.copy(previewUri = createPreviewUri(entity))
-            } else {
-                item
+    private val authCrypto: VaultAuthCrypto by lazy {
+        VaultAuthCrypto(context)
+    }
+
+    private val previewCacheGeneration = java.util.concurrent.atomic.AtomicLong(0L)
+    private val previewCacheNeedsCleanup = java.util.concurrent.atomic.AtomicBoolean(true)
+    private val previewCacheMutex = Mutex()
+
+    internal fun beginPreviewLoad(): Long = previewCacheGeneration.incrementAndGet()
+
+    internal fun isPreviewLoadCurrent(generation: Long): Boolean =
+        previewCacheGeneration.get() == generation
+
+    internal fun invalidatePreviewCache(): Long {
+        val generation = previewCacheGeneration.incrementAndGet()
+        previewCacheNeedsCleanup.set(true)
+        return generation
+    }
+
+    internal fun prepareAuthentication(): VaultAuthPreparation = authCrypto.prepareAuthentication()
+
+    internal fun completeAuthentication(
+        preparation: VaultAuthPreparation,
+        authenticatedCipher: Cipher,
+    ): VaultCryptoSession = authCrypto.completeAuthentication(preparation, authenticatedCipher)
+
+    internal fun preparePreREnrollmentAfterCredential(): VaultPreRCredentialResult =
+        authCrypto.preparePreREnrollmentAfterCredential()
+
+    internal fun preparePreRRecoveryAfterCredential(): VaultPreRCredentialResult =
+        authCrypto.preparePreRRecoveryAfterCredential()
+
+    internal fun cancelAuthentication(preparation: VaultAuthPreparation) {
+        authCrypto.cancelAuthentication(preparation)
+    }
+
+    suspend fun listItems(
+        session: VaultCryptoSession,
+        includePreviews: Boolean = false,
+        previewGeneration: Long? = null,
+    ): List<VaultItem> = withContext(Dispatchers.IO) {
+        val expectedPreviewGeneration = if (includePreviews) {
+            requireNotNull(previewGeneration) { "Preview generation is required for Vault previews" }
+        } else {
+            null
+        }
+        if (expectedPreviewGeneration != null) {
+            previewCacheMutex.lock()
+        }
+        try {
+            if (expectedPreviewGeneration != null) {
+                if (previewCacheGeneration.get() != expectedPreviewGeneration) {
+                    return@withContext emptyList()
+                }
+                if (previewCacheNeedsCleanup.compareAndSet(true, false)) {
+                    if (!deletePreviewCacheFiles()) {
+                        previewCacheNeedsCleanup.set(true)
+                        throw IOException("Unable to clear stale Vault preview cache")
+                    }
+                }
+                if (previewCacheGeneration.get() != expectedPreviewGeneration) {
+                    return@withContext emptyList()
+                }
+            }
+            migrateLegacyItemsIfNeeded()
+            migrateLegacyCiphertextIfNeeded(session)
+            if (
+                expectedPreviewGeneration != null &&
+                previewCacheGeneration.get() != expectedPreviewGeneration
+            ) {
+                return@withContext emptyList()
+            }
+            vaultDao.getAllVaultItems().map { entity ->
+                val item = entity.toVaultItem()
+                if (expectedPreviewGeneration != null) {
+                    item.copy(
+                        previewUri = createPreviewUri(
+                            entity = entity,
+                            session = session,
+                            expectedPreviewGeneration = expectedPreviewGeneration,
+                        ),
+                    )
+                } else {
+                    item
+                }
+            }
+        } finally {
+            if (expectedPreviewGeneration != null) {
+                previewCacheMutex.unlock()
             }
         }
     }
 
-    suspend fun addPhotos(photos: List<PhotoRecord>): VaultSaveResult = withContext(Dispatchers.IO) {
+    suspend fun addPhotos(
+        photos: List<PhotoRecord>,
+        session: VaultCryptoSession,
+    ): VaultSaveResult = withContext(Dispatchers.IO) {
         if (photos.isEmpty()) {
             return@withContext VaultSaveResult.Success(
                 addedCount = 0,
@@ -111,6 +201,7 @@ class VaultService @Inject constructor(
         }
         runCatching {
             migrateLegacyItemsIfNeeded()
+            migrateLegacyCiphertextIfNeeded(session)
             val photoIds = photos.map { photo -> photo.id }
             val existingByPhotoId = vaultDao.getProtectedPhotoIds(photoIds).toMutableSet()
 
@@ -124,19 +215,40 @@ class VaultService @Inject constructor(
                     protectedPhotoIds += photo.id
                     return@forEach
                 }
+
                 val sourceUri = runCatching { Uri.parse(photo.uriString) }.getOrNull()
                     ?: return@forEach
-                val encryptedName = buildEncryptedFileName(photo.fileName)
+                val itemId = UUID.randomUUID().toString()
+                val encryptedName = buildV2EncryptedFileName(photo.fileName)
                 val targetFile = File(vaultDir, encryptedName)
-                val encryptedFile = buildEncryptedFile(targetFile)
-                val copied = copyIntoEncryptedFile(sourceUri, encryptedFile)
-                if (!copied) {
-                    runCatching { targetFile.delete() }
-                    return@forEach
+                val tempFile = File(vaultDir, authCrypto.temporaryV2FileName(itemId))
+                prepareFreshTemp(tempFile)
+                if (targetFile.exists()) {
+                    throw IOException("Refusing to overwrite an existing Vault v2 file")
                 }
 
+                val sourceInput = context.contentResolver.openInputStream(sourceUri)
+                    ?: return@forEach
+                val copied = runCatching {
+                    sourceInput.use { input ->
+                        authCrypto.encryptToFile(
+                            session = session,
+                            input = input,
+                            target = tempFile,
+                            associatedData = authCrypto.associatedData(itemId),
+                        )
+                    }
+                    authCrypto.renameAtomically(tempFile, targetFile)
+                    true
+                }.getOrElse {
+                    runCatching { tempFile.delete() }
+                    runCatching { targetFile.delete() }
+                    false
+                }
+                if (!copied) return@forEach
+
                 val entity = VaultEntity(
-                    id = UUID.randomUUID().toString(),
+                    id = itemId,
                     sourcePhotoId = photo.id,
                     originalFileName = photo.fileName.ifBlank { "PhotoBook_${photo.id}.jpg" },
                     mimeType = photo.mimeType.ifBlank { "image/jpeg" },
@@ -177,9 +289,13 @@ class VaultService @Inject constructor(
         }
     }
 
-    suspend fun exportToDevice(itemId: String): VaultExportResult = withContext(Dispatchers.IO) {
+    suspend fun exportToDevice(
+        itemId: String,
+        session: VaultCryptoSession,
+    ): VaultExportResult = withContext(Dispatchers.IO) {
         runCatching {
             migrateLegacyItemsIfNeeded()
+            migrateLegacyCiphertextIfNeeded(session)
             val item = vaultDao.getVaultItemById(itemId)
                 ?: return@runCatching VaultExportResult.Error()
             val encryptedFile = File(vaultDir, item.encryptedFileName)
@@ -204,7 +320,7 @@ class VaultService @Inject constructor(
             ) ?: return@runCatching VaultExportResult.Error()
 
             try {
-                val decryptedInput = buildEncryptedFile(encryptedFile).openFileInput()
+                val decryptedInput = openVaultInput(item, session)
                 val output = context.contentResolver.openOutputStream(outputUri, "w")
                     ?: return@runCatching VaultExportResult.Error()
                 decryptedInput.use { input ->
@@ -238,54 +354,73 @@ class VaultService @Inject constructor(
             val deletedRows = vaultDao.deleteVaultItemById(itemId)
             if (deletedRows <= 0) return@runCatching false
             runCatching { File(vaultDir, item.encryptedFileName).delete() }
+            authCrypto.legacyTwinNameFor(item.encryptedFileName)?.let { legacyTwin ->
+                runCatching { File(vaultDir, legacyTwin).delete() }
+            }
             deletePreviewFile(item.id)
             true
         }.getOrDefault(false)
     }
 
-    fun clearPreviewCache() {
-        runCatching {
-            File(context.cacheDir, VAULT_PREVIEW_DIR).deleteRecursively()
+    suspend fun clearPreviewCache(expectedGeneration: Long): Boolean = withContext(Dispatchers.IO) {
+        previewCacheMutex.lock()
+        try {
+            if (previewCacheGeneration.get() != expectedGeneration) {
+                return@withContext false
+            }
+            val cleared = deletePreviewCacheFiles()
+            previewCacheNeedsCleanup.set(!cleared)
+            cleared
+        } finally {
+            previewCacheMutex.unlock()
         }
     }
 
-    private fun buildEncryptedFile(file: File): EncryptedFile {
+    private fun deletePreviewCacheFiles(): Boolean {
+        val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)
+        return try {
+            !previewRoot.exists() || previewRoot.deleteRecursively()
+        } catch (_: SecurityException) {
+            false
+        }
+    }
+
+    private fun buildLegacyEncryptedFile(file: File): EncryptedFile {
         return EncryptedFile.Builder(
             context,
             file,
-            masterKey,
+            legacyMasterKey,
             EncryptedFile.FileEncryptionScheme.AES256_GCM_HKDF_4KB,
         ).build()
     }
 
-    private fun copyIntoEncryptedFile(sourceUri: Uri, target: EncryptedFile): Boolean {
-        val input = context.contentResolver.openInputStream(sourceUri) ?: return false
-        return runCatching {
-            input.use { stream ->
-                target.openFileOutput().use { output ->
-                    stream.copyTo(output)
-                }
-            }
-            true
-        }.getOrDefault(false)
-    }
-
-    private fun createPreviewUri(entity: VaultEntity): Uri? {
+    private fun createPreviewUri(
+        entity: VaultEntity,
+        session: VaultCryptoSession,
+        expectedPreviewGeneration: Long,
+    ): Uri? {
+        if (previewCacheGeneration.get() != expectedPreviewGeneration) return null
         val encryptedSource = File(vaultDir, entity.encryptedFileName)
         if (!encryptedSource.exists()) return null
 
         val previewFile = previewFile(entity.id)
         if (previewFile.exists() && previewFile.length() > 0L) {
-            return Uri.fromFile(previewFile)
+            return if (previewCacheGeneration.get() == expectedPreviewGeneration) {
+                Uri.fromFile(previewFile)
+            } else {
+                null
+            }
         }
 
         return runCatching {
-            val encryptedFile = buildEncryptedFile(encryptedSource)
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            encryptedFile.openFileInput().use { input ->
+            openVaultInput(entity, session).use { input ->
                 BitmapFactory.decodeStream(input, null, bounds)
             }
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+                return@runCatching null
+            }
+            if (previewCacheGeneration.get() != expectedPreviewGeneration) {
                 return@runCatching null
             }
 
@@ -293,17 +428,176 @@ class VaultService @Inject constructor(
                 inPreferredConfig = Bitmap.Config.RGB_565
                 inSampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, PREVIEW_MAX_EDGE_PX)
             }
-            val bitmap = encryptedFile.openFileInput().use { input ->
+            val bitmap = openVaultInput(entity, session).use { input ->
                 BitmapFactory.decodeStream(input, null, options)
             } ?: return@runCatching null
+            if (previewCacheGeneration.get() != expectedPreviewGeneration) {
+                bitmap.recycle()
+                return@runCatching null
+            }
 
             previewFile.parentFile?.mkdirs()
-            previewFile.outputStream().use { output ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, PREVIEW_JPEG_QUALITY, output)
+            val tempPreview = File(
+                previewFile.parentFile,
+                ".${previewFile.name}.${UUID.randomUUID().toString().take(8)}.tmp",
+            )
+            try {
+                tempPreview.outputStream().use { output ->
+                    if (!bitmap.compress(Bitmap.CompressFormat.JPEG, PREVIEW_JPEG_QUALITY, output)) {
+                        throw IOException("Unable to encode Vault preview")
+                    }
+                }
+                if (previewCacheGeneration.get() != expectedPreviewGeneration) {
+                    return@runCatching null
+                }
+                authCrypto.renameAtomically(tempPreview, previewFile)
+                if (previewCacheGeneration.get() != expectedPreviewGeneration) {
+                    runCatching { previewFile.delete() }
+                    return@runCatching null
+                }
+                Uri.fromFile(previewFile)
+            } finally {
+                bitmap.recycle()
+                runCatching { tempPreview.delete() }
             }
-            bitmap.recycle()
-            Uri.fromFile(previewFile)
         }.getOrNull()
+    }
+
+    private fun openVaultInput(
+        entity: VaultEntity,
+        session: VaultCryptoSession,
+    ): InputStream {
+        val source = File(vaultDir, entity.encryptedFileName)
+        if (!source.exists()) throw IOException("Vault ciphertext is missing")
+        return if (authCrypto.isV2FileName(entity.encryptedFileName)) {
+            authCrypto.openDecryptedInput(
+                session = session,
+                encryptedFile = source,
+                associatedData = authCrypto.associatedData(entity.id),
+            )
+        } else {
+            buildLegacyEncryptedFile(source).openFileInput()
+        }
+    }
+
+    private suspend fun migrateLegacyCiphertextIfNeeded(session: VaultCryptoSession) {
+        vaultDao.getAllVaultItems().forEach { entity ->
+            if (authCrypto.isV2FileName(entity.encryptedFileName)) {
+                cleanupInterruptedLegacyTwin(entity)
+            } else {
+                migrateLegacyCiphertext(entity, session)
+            }
+        }
+    }
+
+    private suspend fun migrateLegacyCiphertext(
+        entity: VaultEntity,
+        session: VaultCryptoSession,
+    ) {
+        if (!entity.encryptedFileName.endsWith(VaultAuthCrypto.LEGACY_FILE_SUFFIX)) {
+            throw IOException("Unknown Vault ciphertext format")
+        }
+
+        val legacyFile = File(vaultDir, entity.encryptedFileName)
+        if (!legacyFile.exists()) throw IOException("Legacy Vault ciphertext is missing")
+
+        val finalName = authCrypto.v2FileNameFor(entity.encryptedFileName)
+        val finalFile = File(vaultDir, finalName)
+        val tempFile = File(vaultDir, authCrypto.temporaryV2FileName(entity.id))
+        val associatedData = authCrypto.associatedData(entity.id)
+
+        // Recovery point: a previous run may have completed and renamed a verified v2 file but
+        // crashed before Room switched filenames. Verify it against the still-authoritative
+        // legacy plaintext before reusing it.
+        if (finalFile.exists()) {
+            val legacyDigest = sha256(buildLegacyEncryptedFile(legacyFile).openFileInput())
+            val v2Digest = runCatching {
+                sha256(authCrypto.openDecryptedInput(session, finalFile, associatedData))
+            }.getOrNull()
+            if (v2Digest != null && legacyDigest.contentEquals(v2Digest)) {
+                commitMigratedCiphertext(entity, finalName, legacyFile, tempFile)
+                return
+            }
+            if (!finalFile.delete()) {
+                throw IOException("Unable to remove an invalid interrupted Vault v2 file")
+            }
+        }
+
+        prepareFreshTemp(tempFile)
+        val legacyDigest = MessageDigest.getInstance("SHA-256")
+        buildLegacyEncryptedFile(legacyFile).openFileInput().use { legacyInput ->
+            DigestInputStream(legacyInput, legacyDigest).use { digestingInput ->
+                authCrypto.encryptToFile(
+                    session = session,
+                    input = digestingInput,
+                    target = tempFile,
+                    associatedData = associatedData,
+                )
+            }
+        }
+        val expectedDigest = legacyDigest.digest()
+        val actualDigest = runCatching {
+            sha256(authCrypto.openDecryptedInput(session, tempFile, associatedData))
+        }.getOrElse { error ->
+            runCatching { tempFile.delete() }
+            throw error
+        }
+        if (!expectedDigest.contentEquals(actualDigest)) {
+            runCatching { tempFile.delete() }
+            throw IOException("Vault migration verification failed")
+        }
+
+        authCrypto.renameAtomically(tempFile, finalFile)
+        commitMigratedCiphertext(entity, finalName, legacyFile, tempFile)
+    }
+
+    private suspend fun commitMigratedCiphertext(
+        entity: VaultEntity,
+        finalName: String,
+        legacyFile: File,
+        tempFile: File,
+    ) {
+        val updated = vaultDao.updateEncryptedFileName(entity.id, finalName)
+        if (updated != 1) {
+            runCatching { File(vaultDir, finalName).delete() }
+            throw IOException("Vault migration could not commit metadata")
+        }
+
+        deletePreviewFile(entity.id)
+        runCatching { tempFile.delete() }
+        if (legacyFile.exists() && !legacyFile.delete()) {
+            // Room now points at the verified v2 file. Fail closed so the user is not told the
+            // hardening completed while a legacy decryptable twin still remains on disk.
+            throw IOException("Vault migration could not remove the legacy ciphertext")
+        }
+    }
+
+    private fun cleanupInterruptedLegacyTwin(entity: VaultEntity) {
+        runCatching { File(vaultDir, authCrypto.temporaryV2FileName(entity.id)).delete() }
+        val legacyName = authCrypto.legacyTwinNameFor(entity.encryptedFileName) ?: return
+        val legacyFile = File(vaultDir, legacyName)
+        if (legacyFile.exists() && !legacyFile.delete()) {
+            throw IOException("Vault v2 is active but its legacy ciphertext twin could not be removed")
+        }
+    }
+
+    private fun prepareFreshTemp(tempFile: File) {
+        if (tempFile.exists() && !tempFile.delete()) {
+            throw IOException("Unable to clear interrupted Vault migration temp file")
+        }
+    }
+
+    private fun sha256(input: InputStream): ByteArray {
+        return input.use { stream ->
+            val digest = MessageDigest.getInstance("SHA-256")
+            val buffer = ByteArray(STREAM_BUFFER_BYTES)
+            while (true) {
+                val read = stream.read(buffer)
+                if (read < 0) break
+                if (read > 0) digest.update(buffer, 0, read)
+            }
+            digest.digest()
+        }
     }
 
     private fun previewFile(itemId: String): File {
@@ -374,12 +668,16 @@ class VaultService @Inject constructor(
         }.getOrDefault(emptyList())
     }
 
-    private fun buildEncryptedFileName(originalName: String): String {
+    private fun buildLegacyEncryptedFileName(originalName: String): String {
         val base = originalName.substringBeforeLast('.', missingDelimiterValue = originalName)
             .ifBlank { "PhotoBook" }
             .replace(Regex("[^A-Za-z0-9._-]"), "_")
             .take(44)
-        return "${base}_${UUID.randomUUID().toString().take(8)}.pbvault"
+        return "${base}_${UUID.randomUUID().toString().take(8)}${VaultAuthCrypto.LEGACY_FILE_SUFFIX}"
+    }
+
+    private fun buildV2EncryptedFileName(originalName: String): String {
+        return authCrypto.v2FileNameFor(buildLegacyEncryptedFileName(originalName))
     }
 
     private fun buildExportFileName(originalName: String): String {
@@ -401,6 +699,7 @@ class VaultService @Inject constructor(
         private const val INSERT_CONFLICT = -1L
         private const val PREVIEW_MAX_EDGE_PX = 960
         private const val PREVIEW_JPEG_QUALITY = 82
+        private const val STREAM_BUFFER_BYTES = 64 * 1024
     }
 }
 

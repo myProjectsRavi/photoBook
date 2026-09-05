@@ -27,10 +27,12 @@ class IndexPersistence @Inject constructor(
 ) {
 
     private val legacyIndexFile = File(context.filesDir, "photo_index.json")
+    private val dataRepairPreferences = context.getSharedPreferences(DATA_REPAIR_PREFS, Context.MODE_PRIVATE)
 
     suspend fun load(): List<PhotoRecord> {
         return withContext(Dispatchers.IO) {
             val loadStartMs = SystemClock.elapsedRealtime()
+            reopenLegacyOcrFailuresIfNeeded()
             val existing = photoDao.getAll().map { it.toPhotoRecord() }
             if (existing.isNotEmpty()) {
                 Log.i(
@@ -137,6 +139,21 @@ class IndexPersistence @Inject constructor(
             val byId = entities.associateBy { it.id }
             ids.mapNotNull { id -> byId[id]?.toPhotoRecord() }
         }
+    }
+
+    private suspend fun reopenLegacyOcrFailuresIfNeeded() {
+        if (dataRepairPreferences.getBoolean(KEY_OCR_ENGINE_REPAIR_COMPLETE, false)) return
+
+        val reopenedCount = photoDao.reopenPermanentlyFailedOcr()
+        val committed = dataRepairPreferences.edit()
+            .putBoolean(KEY_OCR_ENGINE_REPAIR_COMPLETE, true)
+            .commit()
+        Log.i(
+            PHASE4_TAG,
+            "stage=ocr_engine_repair reopened=$reopenedCount preferenceCommitted=$committed",
+        )
+        // If the preference commit ever fails, the SQL repair is idempotent and safely retries on
+        // the next process start. No schema migration or user database reset is required.
     }
 
     private suspend fun replaceAll(records: List<PhotoRecord>) {
@@ -287,5 +304,7 @@ class IndexPersistence @Inject constructor(
     companion object {
         private const val DB_BATCH_SIZE = 200
         private const val PHASE4_TAG = "PhotoBookPhase4"
+        private const val DATA_REPAIR_PREFS = "photobook_data_repairs"
+        private const val KEY_OCR_ENGINE_REPAIR_COMPLETE = "ocr_engine_v1_repair_complete"
     }
 }

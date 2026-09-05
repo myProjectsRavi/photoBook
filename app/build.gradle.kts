@@ -159,6 +159,7 @@ android {
             // Ensure native libs are stored uncompressed and 16KB page-aligned
             // Required by Google Play for devices with 16KB memory pages
             useLegacyPackaging = false
+            excludes += setOf("**/x86/**", "**/x86_64/**")
         }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -175,8 +176,9 @@ android {
             isEnable = true
             reset()
             include("arm64-v8a", "armeabi-v7a")
-            // No universal APK — keeps per-ABI APKs under the strict 30 MB size gate.
-            // Use Play Store AAB for automatic per-device delivery.
+            // No universal APK. Preserve the production 30 MiB hard ceiling here. The user-facing
+            // Google Play delivered download/install size is a separate release metric and must be
+            // measured and minimized before this candidate can be approved.
             isUniversalApk = false
         }
     }
@@ -211,7 +213,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.navigation:navigation-compose:2.7.7")
-    implementation("com.google.android.material:material:1.12.0")
+    implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("androidx.camera:camera-core:1.4.0")
     implementation("androidx.camera:camera-camera2:1.4.0")
     implementation("androidx.camera:camera-lifecycle:1.4.0")
@@ -225,6 +227,7 @@ dependencies {
     implementation("androidx.exifinterface:exifinterface:1.4.2")
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("com.google.crypto.tink:tink-android:1.23.0")
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     kapt("androidx.room:room-compiler:2.6.1")
@@ -234,6 +237,9 @@ dependencies {
     implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
     implementation("androidx.hilt:hilt-work:1.2.0")
     kapt("androidx.hilt:hilt-compiler:1.2.0")
+
+    // Bundled Latin OCR: app-local, case-agnostic search indexing with no model download.
+    implementation("com.google.mlkit:text-recognition:16.0.1")
 
     // Keep the model app-local and use the standalone on-device LiteRT runtime;
     // no cloud inference or deferred model delivery is allowed.
@@ -265,7 +271,7 @@ dependencies {
 
 tasks.register("verifyApkSize") {
     group = "verification"
-    description = "Fails when any generated release APK exceeds 30 MB."
+    description = "Fails when any generated per-ABI release APK exceeds 30 MiB."
 
     doLast {
         val maxBytes = 30L * 1024L * 1024L
@@ -283,8 +289,10 @@ tasks.register("verifyApkSize") {
 
         apks.forEach { apk ->
             val sizeBytes = apk.length()
+            val sizeMiB = sizeBytes.toDouble() / (1024.0 * 1024.0)
+            println("releaseApk=${apk.name} bytes=$sizeBytes mib=${"%.2f".format(sizeMiB)}")
             check(sizeBytes <= maxBytes) {
-                "APK size gate failed for ${apk.path}: ${sizeBytes / (1024 * 1024)} MB > 30 MB"
+                "Per-device APK size gate failed for ${apk.path}: ${"%.2f".format(sizeMiB)} MiB > 30 MiB"
             }
         }
     }
@@ -292,7 +300,7 @@ tasks.register("verifyApkSize") {
 
 tasks.register("verifyReleaseBundleSize") {
     group = "verification"
-    description = "Fails when any generated release AAB exceeds 20 MB."
+    description = "Fails when any generated release AAB exceeds 20 MiB."
 
     doLast {
         val maxBytes = 20L * 1024L * 1024L
@@ -310,8 +318,10 @@ tasks.register("verifyReleaseBundleSize") {
 
         bundles.forEach { bundle ->
             val sizeBytes = bundle.length()
+            val sizeMiB = sizeBytes.toDouble() / (1024.0 * 1024.0)
+            println("releaseAab=${bundle.name} bytes=$sizeBytes mib=${"%.2f".format(sizeMiB)}")
             check(sizeBytes <= maxBytes) {
-                "Release bundle size gate failed for ${bundle.path}: ${sizeBytes / (1024 * 1024)} MB > 20 MB"
+                "Release bundle size gate failed for ${bundle.path}: ${"%.2f".format(sizeMiB)} MiB > 20 MiB"
             }
         }
     }

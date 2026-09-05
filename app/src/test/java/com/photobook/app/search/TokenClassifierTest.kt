@@ -27,4 +27,12 @@ class TokenClassifierTest {
         assertThat(classifier.classify("downloads"))
             .isEqualTo(SourceToken(PhotoSource.Downloads))
     }
+
+    @Test
+    fun classify_keepsSingleDigitAsTextButRejectsSingleLetterNoise() = runTest {
+        val classifier = TokenClassifier(PhotoIndex())
+
+        assertThat(classifier.classify("7")).isEqualTo(TextToken("7"))
+        assertThat(classifier.classify("a")).isEqualTo(UnknownToken("a"))
+    }
 }

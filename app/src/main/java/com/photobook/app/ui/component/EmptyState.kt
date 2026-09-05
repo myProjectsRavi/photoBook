@@ -14,11 +14,15 @@ import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -26,10 +30,44 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.photobook.app.R
+import com.photobook.app.data.index.PhotoIndex
 import com.photobook.app.feature.memories.MemoryStory
+import com.photobook.app.search.OcrIndexReadiness
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.withContext
 
 @Composable
 fun EmptyState(modifier: Modifier = Modifier) {
+    val applicationContext = LocalContext.current.applicationContext
+    val photoIndex = remember(applicationContext) {
+        EntryPointAccessors.fromApplication(
+            applicationContext,
+            EmptyStatePhotoIndexEntryPoint::class.java,
+        ).photoIndex()
+    }
+    // EmptyState exists only for a zero-result query. Be conservative on first composition so the
+    // UI can never flash a definitive "no results" message before OCR readiness is checked.
+    val hasProcessableOcrWork by produceState(initialValue = true, photoIndex) {
+        suspend fun refresh() {
+            value = withContext(Dispatchers.Default) {
+                OcrIndexReadiness.hasProcessableWork(photoIndex.snapshot())
+            }
+        }
+        refresh()
+        photoIndex.changes().collectLatest {
+            // OCR publishes in batches. Coalesce rapid updates so a 100k-photo library is not
+            // rescanned for readiness after every batch while the user is on a zero-result screen.
+            delay(TEXT_INDEX_READINESS_DEBOUNCE_MS)
+            refresh()
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -44,13 +82,21 @@ fun EmptyState(modifier: Modifier = Modifier) {
             modifier = Modifier.size(64.dp)
         )
         Text(
-            text = "No memories found",
+            text = if (hasProcessableOcrWork) {
+                "Text indexing is still finishing"
+            } else {
+                "No memories found"
+            },
             style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Black),
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 16.dp),
         )
         Text(
-            text = "Try searching for a word, place, date,\nor a moment you remember.",
+            text = if (hasProcessableOcrWork) {
+                "PhotoBook is processing text on-device.\nText-based matches may appear as indexing completes."
+            } else {
+                "Try searching for a word, place, date,\nor a moment you remember."
+            },
             style = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFF6B7280)),
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 8.dp),
@@ -212,3 +258,11 @@ private fun MemoryStoryCard(
         }
     }
 }
+
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+internal interface EmptyStatePhotoIndexEntryPoint {
+    fun photoIndex(): PhotoIndex
+}
+
+private const val TEXT_INDEX_READINESS_DEBOUNCE_MS = 750L

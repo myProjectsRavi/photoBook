@@ -28,6 +28,23 @@ class ArchiveFoodSignalsTest {
     }
 
     @Test
+    fun packagedFood_withSemanticFoodAndUppercaseOcr_isEligible() {
+        val tags = listOf(MLTag("food", 0.90f))
+        val ocr = "NUTRITION FACTS INGREDIENTS OATS SUGAR NET WT 200 G"
+
+        assertThat(ArchiveFoodSignals.isEligible(tags, ocr)).isTrue()
+        assertThat(ArchiveFoodSignals.hasPackagedFoodEvidence(ocr)).isTrue()
+    }
+
+    @Test
+    fun packagingText_withoutSemanticFood_isRejected() {
+        val tags = listOf(MLTag("document", 0.95f))
+        val ocr = "Nutrition facts ingredients net weight 200 g"
+
+        assertThat(ArchiveFoodSignals.isEligible(tags, ocr)).isFalse()
+    }
+
+    @Test
     fun foodWithBird_isRejected() {
         assertThat(
             ArchiveFoodSignals.isEligible(
@@ -49,6 +66,19 @@ class ArchiveFoodSignalsTest {
                     MLTag("prepared_food", 0.91f),
                     MLTag("animal", 0.88f),
                 ),
+            ),
+        ).isFalse()
+    }
+
+    @Test
+    fun packagedFoodWithAnimal_isRejected() {
+        assertThat(
+            ArchiveFoodSignals.isEligible(
+                tags = listOf(
+                    MLTag("food", 0.95f),
+                    MLTag("animal", 0.88f),
+                ),
+                ocrText = "Nutrition information ingredients protein 8 g sodium 120 mg",
             ),
         ).isFalse()
     }
@@ -106,6 +136,18 @@ class ArchiveFoodSignalsTest {
                 ),
             ),
         ).isFalse()
+    }
+
+    @Test
+    fun oneWeakNutritionWord_isNotEnoughForPackaging() {
+        assertThat(ArchiveFoodSignals.hasPackagedFoodEvidence("Protein shake photo")).isFalse()
+    }
+
+    @Test
+    fun twoSupportingNutritionCues_areEnoughForPackagingContext() {
+        assertThat(
+            ArchiveFoodSignals.hasPackagedFoodEvidence("Protein 8 g calories 120 per serving"),
+        ).isTrue()
     }
 
     @Test

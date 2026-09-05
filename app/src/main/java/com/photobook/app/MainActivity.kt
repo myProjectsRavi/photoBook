@@ -45,10 +45,12 @@ import com.photobook.app.feature.pdf.PdfExportResult
 import com.photobook.app.feature.pdf.PdfExportService
 import com.photobook.app.feature.trash.TrashRequestResult
 import com.photobook.app.feature.trash.TrashService
+import com.photobook.app.feature.vault.VaultCryptoSession
 import com.photobook.app.feature.vault.VaultExportResult
 import com.photobook.app.feature.vault.VaultItem
 import com.photobook.app.feature.vault.VaultSaveResult
 import com.photobook.app.feature.vault.VaultService
+import com.photobook.app.feature.vault.rememberVaultAuthenticator
 import com.photobook.app.ui.screen.ArchivesScreen
 import com.photobook.app.ui.screen.MainScreen
 import com.photobook.app.ui.screen.OnboardingScreen
@@ -212,68 +214,52 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     }
 
     fun closeVault() {
-        vaultService.clearPreviewCache()
         showVault = false
+        val previewCleanupGeneration = vaultService.invalidatePreviewCache()
         vaultItems = emptyList()
         isVaultLoading = false
         isVaultBusy = false
+        coroutineScope.launch {
+            vaultService.clearPreviewCache(previewCleanupGeneration)
+        }
     }
 
-    fun refreshVault() {
+    suspend fun loadVisibleVaultItems(session: VaultCryptoSession): List<VaultItem> {
+        if (!showVault) return emptyList()
+        val previewGeneration = vaultService.beginPreviewLoad()
+        val items = vaultService.listItems(
+            session = session,
+            includePreviews = true,
+            previewGeneration = previewGeneration,
+        )
+        return when {
+            !showVault -> emptyList()
+            vaultService.isPreviewLoadCurrent(previewGeneration) -> items
+            else -> vaultItems
+        }
+    }
+
+    fun refreshVault(session: VaultCryptoSession) {
         showVault = true
         coroutineScope.launch {
             isVaultLoading = true
-            vaultItems = vaultService.listItems(includePreviews = true)
+            runCatching {
+                loadVisibleVaultItems(session)
+            }.onSuccess { items ->
+                vaultItems = items
+            }.onFailure {
+                closeVault()
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.vault_biometric_failed),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
             isVaultLoading = false
         }
     }
 
-    fun authenticateVault(onAuthenticated: () -> Unit) {
-        val activity = context as? FragmentActivity
-        if (activity == null) {
-            Toast.makeText(
-                context,
-                context.getString(R.string.vault_biometric_failed),
-                Toast.LENGTH_SHORT,
-            ).show()
-            return
-        }
-        val authenticators = vaultAuthenticators()
-        val canAuthenticate = BiometricManager.from(context).canAuthenticate(authenticators)
-        if (canAuthenticate != BiometricManager.BIOMETRIC_SUCCESS) {
-            Toast.makeText(
-                context,
-                context.getString(R.string.vault_biometric_failed),
-                Toast.LENGTH_SHORT,
-            ).show()
-            return
-        }
-
-        val prompt = BiometricPrompt(
-            activity,
-            ContextCompat.getMainExecutor(context),
-            object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    onAuthenticated()
-                }
-
-                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    if (errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON &&
-                        errorCode != BiometricPrompt.ERROR_USER_CANCELED &&
-                        errorCode != BiometricPrompt.ERROR_CANCELED
-                    ) {
-                        Toast.makeText(context, errString, Toast.LENGTH_SHORT).show()
-                    }
-                }
-            },
-        )
-        val promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle(context.getString(R.string.vault_biometric_title))
-            .setSubtitle(context.getString(R.string.vault_biometric_subtitle))
-            .setAllowedAuthenticators(authenticators)
-            .build()
-        prompt.authenticate(promptInfo)
-    }
+    val authenticateVault = rememberVaultAuthenticator(vaultService)
 
     fun requestMoveToTrash(photos: List<PhotoRecord>, archiveRetentionDays: Int? = null) {
         if (photos.isEmpty()) return
@@ -304,11 +290,14 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         }
     }
 
-    fun movePhotosToVault(photos: List<PhotoRecord>) {
+    fun movePhotosToVault(
+        photos: List<PhotoRecord>,
+        session: VaultCryptoSession,
+    ) {
         if (photos.isEmpty()) return
         coroutineScope.launch {
             isVaultBusy = true
-            when (val result = vaultService.addPhotos(photos)) {
+            when (val result = vaultService.addPhotos(photos = photos, session = session)) {
                 is VaultSaveResult.Success -> {
                     val protectedPhotos = photos.filter { photo -> photo.id in result.addedPhotoIds }
                     Toast.makeText(
@@ -317,7 +306,9 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                         Toast.LENGTH_SHORT,
                     ).show()
                     viewModel.clearSelection()
-                    vaultItems = vaultService.listItems(includePreviews = true)
+                    vaultItems = runCatching {
+                        loadVisibleVaultItems(session)
+                    }.getOrDefault(emptyList())
                     if (protectedPhotos.isNotEmpty()) {
                         requestMoveToTrash(protectedPhotos)
                     }
@@ -335,21 +326,29 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         }
     }
 
-    fun addSelectedToVault(selectedIds: Set<Long>) {
+    fun addSelectedToVault(
+        selectedIds: Set<Long>,
+        session: VaultCryptoSession,
+    ) {
         if (selectedIds.isEmpty()) return
         coroutineScope.launch {
             val selectedPhotos = viewModel.resolvePhotosByIds(selectedIds)
-            movePhotosToVault(selectedPhotos)
+            movePhotosToVault(selectedPhotos, session)
         }
     }
 
-    fun moveVaultItemOut(item: VaultItem) {
+    fun moveVaultItemOut(
+        item: VaultItem,
+        session: VaultCryptoSession,
+    ) {
         coroutineScope.launch {
             isVaultBusy = true
-            when (vaultService.exportToDevice(item.id)) {
+            when (vaultService.exportToDevice(itemId = item.id, session = session)) {
                 is VaultExportResult.Success -> {
                     val removedFromVault = vaultService.deleteItem(item.id)
-                    vaultItems = vaultService.listItems(includePreviews = true)
+                    vaultItems = runCatching {
+                        loadVisibleVaultItems(session)
+                    }.getOrDefault(emptyList())
                     Toast.makeText(
                         context,
                         context.getString(
@@ -373,12 +372,17 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         }
     }
 
-    fun deleteVaultItem(item: VaultItem) {
+    fun deleteVaultItem(
+        item: VaultItem,
+        session: VaultCryptoSession,
+    ) {
         coroutineScope.launch {
             isVaultBusy = true
             val deleted = vaultService.deleteItem(item.id)
             if (deleted) {
-                vaultItems = vaultService.listItems(includePreviews = true)
+                vaultItems = runCatching {
+                    loadVisibleVaultItems(session)
+                }.getOrDefault(emptyList())
             } else {
                 Toast.makeText(
                     context,
@@ -571,8 +575,8 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             }
         },
         onAddSelectedToVault = { selectedIds ->
-            authenticateVault {
-                addSelectedToVault(selectedIds)
+            authenticateVault { session ->
+                addSelectedToVault(selectedIds, session)
             }
         },
         onCopyTextFromPhoto = { photoId ->
@@ -584,8 +588,8 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         onPhotoLongClick = viewModel::onPhotoLongPressed,
         onOpenTrash = { openTrashBin() },
         onOpenVault = {
-            authenticateVault {
-                refreshVault()
+            authenticateVault { session ->
+                refreshVault(session)
             }
         },
         onManagePhotoAccess = { permissionLauncher.launch(permissions.toTypedArray()) },
@@ -612,8 +616,8 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                 requestMoveToTrash(listOf(photo))
             },
             onMoveToVault = { photo ->
-                authenticateVault {
-                    movePhotosToVault(listOf(photo))
+                authenticateVault { session ->
+                    movePhotosToVault(listOf(photo), session)
                 }
             },
             onShareAsPdf = { photo ->
@@ -752,18 +756,18 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             isBusy = isVaultBusy,
             onDismiss = { closeVault() },
             onRefresh = {
-                authenticateVault {
-                    refreshVault()
+                authenticateVault { session ->
+                    refreshVault(session)
                 }
             },
             onMoveOut = { item ->
-                authenticateVault {
-                    moveVaultItemOut(item)
+                authenticateVault { session ->
+                    moveVaultItemOut(item, session)
                 }
             },
             onDelete = { item ->
-                authenticateVault {
-                    deleteVaultItem(item)
+                authenticateVault { session ->
+                    deleteVaultItem(item, session)
                 }
             },
         )
