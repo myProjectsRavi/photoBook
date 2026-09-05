@@ -81,7 +81,8 @@ jobs:
           sdk="$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"
           abi="$("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r')"
           abilist="$("$ADB" shell getprop ro.product.cpu.abilist | tr -d '\r')"
-          ram_kb="$("$ADB" shell awk '/MemTotal/ {print $2; exit}' /proc/meminfo | tr -d '\r')"
+          ram_kb="$("$ADB" shell cat /proc/meminfo | tr -d '\r' | awk '$1 == "MemTotal:" {print $2; exit}')"
+          test -n "$ram_kb"
           echo "candidate_sha=$CANDIDATE_SHA" | tee low-memory-report.txt
           echo "sdk=$sdk" | tee -a low-memory-report.txt
           echo "abi=$abi" | tee -a low-memory-report.txt
