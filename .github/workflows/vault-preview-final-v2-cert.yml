@@ -1,0 +1,256 @@
+name: Vault Preview Final V2 Exact-Source Certification
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-vault-preview-final-v2-cert
+    paths:
+      - .github/workflows/vault-preview-final-v2-cert.yml
+
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  CANDIDATE_SHA: 9fd29f9987f6879f330b5b9cb4f33cde3c9b6d23
+  HARNESS_PATH: .github/workflows/vault-preview-final-v2-cert.yml
+
+jobs:
+  release-delivery:
+    name: exact-release-size-privacy-play
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Prove harness-only delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "$CANDIDATE_SHA"...HEAD)"
+          printf '%s\n' "$changed"
+          test "$changed" = "$HARNESS_PATH"
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 1
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Build exact release candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          chmod +x ./gradlew
+          ./gradlew \
+            :app:testDebugUnitTest \
+            :app:lintDebug \
+            :app:assembleDebugAndroidTest \
+            :app:assembleRelease \
+            :app:bundleRelease \
+            :app:verifyApkSize \
+            :app:verifyReleaseBundleSize
+      - name: Gate size ABIs and INTERNET absence
+        shell: bash
+        run: |
+          set -euo pipefail
+          report=build/reports/vault-preview-final-v2
+          mkdir -p "$report"
+          python3 - <<'PY' | tee "$report/release-size.txt"
+          from pathlib import Path
+          import os, zipfile
+          baseline = 20441775
+          aab_limit = 20 * 1024 * 1024
+          apk_limit = 30 * 1024 * 1024
+          aab = Path('app/build/outputs/bundle/release/app-release.aab')
+          size = aab.stat().st_size
+          with zipfile.ZipFile(aab) as z:
+              abis = sorted({n.split('/lib/',1)[1].split('/',1)[0] for n in z.namelist() if '/lib/' in n and n.endswith('.so')})
+          print(f"candidate_sha={os.environ['CANDIDATE_SHA']}")
+          print(f'baseline_aab_bytes={baseline}')
+          print(f'aab_bytes={size}')
+          print(f'aab_delta_bytes={size-baseline}')
+          print(f'aab_mib={size/1024/1024:.3f}')
+          print(f'aab_margin_bytes={aab_limit-size}')
+          print('aab_abis=' + ','.join(abis))
+          if size > aab_limit:
+              raise SystemExit('AAB exceeds 20 MiB')
+          if abis != ['arm64-v8a','armeabi-v7a']:
+              raise SystemExit(f'unexpected AAB ABIs: {abis}')
+          apks = sorted(Path('app/build/outputs/apk/release').rglob('*.apk'))
+          if not apks:
+              raise SystemExit('no release APKs found')
+          for apk in apks:
+              s = apk.stat().st_size
+              print(f'apk_bytes={s} apk_mib={s/1024/1024:.3f} path={apk}')
+              if s > apk_limit:
+                  raise SystemExit(f'APK exceeds 30 MiB: {apk}')
+          PY
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt 2>/dev/null | sort | tail -n 1)"
+          test -x "$AAPT"
+          for variant in debug release; do
+            manifest="$(find app/build/intermediates/merged_manifest/$variant -type f -name AndroidManifest.xml | head -n 1)"
+            test -n "$manifest" && test -f "$manifest"
+            ! grep -q 'android.permission.INTERNET' "$manifest"
+            echo "${variant}_merged_manifest_internet=ABSENT" | tee -a "$report/privacy.txt"
+          done
+          found=false
+          while IFS= read -r apk; do
+            found=true
+            "$AAPT" dump permissions "$apk" >> "$report/release-apk-permissions.txt"
+            if "$AAPT" dump permissions "$apk" | grep -q 'android.permission.INTERNET'; then
+              echo "INTERNET present in packaged release APK: $apk"
+              exit 1
+            fi
+          done < <(find app/build/outputs/apk/release -type f -name '*.apk' | sort)
+          [[ "$found" == true ]]
+          echo 'release_packaged_apk_internet=ABSENT' | tee -a "$report/privacy.txt"
+      - name: Verify bundletool and Play delivery
+        shell: bash
+        run: |
+          set -euo pipefail
+          report=build/reports/vault-preview-final-v2/play-delivery
+          mkdir -p "$report"
+          curl -fL --retry 3 --retry-delay 2 -o bundletool.jar https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar
+          echo 'a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29  bundletool.jar' | sha256sum -c -
+          echo "bundletool_version=$(java -jar bundletool.jar version)" | tee "$report/result.txt"
+          echo "candidate_sha=$CANDIDATE_SHA" | tee -a "$report/result.txt"
+          echo "aab_bytes=$(stat -c %s app/build/outputs/bundle/release/app-release.aab)" | tee -a "$report/result.txt"
+          cat > "$report/arm64-api36.json" <<'JSON'
+          {"supportedAbis":["arm64-v8a"],"supportedLocales":["en"],"screenDensity":420,"sdkVersion":36}
+          JSON
+          cat > "$report/armeabi-api26.json" <<'JSON'
+          {"supportedAbis":["armeabi-v7a"],"supportedLocales":["en"],"screenDensity":320,"sdkVersion":26}
+          JSON
+          for spec in arm64-api36 armeabi-api26; do
+            java -jar bundletool.jar build-apks \
+              --bundle=app/build/outputs/bundle/release/app-release.aab \
+              --output="$report/$spec.apks" \
+              --device-spec="$report/$spec.json" \
+              --overwrite
+            java -jar bundletool.jar get-size total \
+              --apks="$report/$spec.apks" \
+              --device-spec="$report/$spec.json" | tee -a "$report/result.txt"
+            rm -rf "$report/$spec-extracted"
+            mkdir -p "$report/$spec-extracted"
+            unzip -q "$report/$spec.apks" '*.apk' -d "$report/$spec-extracted"
+            python3 - "$spec" "$report/result.txt" <<'PY'
+          import pathlib, sys
+          spec, result_path = sys.argv[1], pathlib.Path(sys.argv[2])
+          root = pathlib.Path(f'build/reports/vault-preview-final-v2/play-delivery/{spec}-extracted')
+          apks = sorted(root.rglob('*.apk'))
+          total = sum(p.stat().st_size for p in apks)
+          limit = 15 * 1024 * 1024
+          with result_path.open('a') as f:
+              f.write(f'device={spec}\n')
+              f.write(f'delivered_apk_file_bytes_sum={total}\n')
+              f.write(f'delivered_apk_file_mib_sum={total/1024/1024:.3f}\n')
+              f.write(f'delivered_margin_to_15mib={limit-total}\n')
+          if total >= limit:
+              raise SystemExit(f'{spec} delivery is not under 15 MiB: {total}')
+          PY
+          done
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: vault-preview-final-v2-release-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            build/reports/vault-preview-final-v2/
+            app/build/reports/tests/
+            app/build/reports/lint-results-debug.html
+
+  codeql:
+    name: exact-security-extended-codeql
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Prove harness-only delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "$CANDIDATE_SHA"...HEAD)"
+          printf '%s\n' "$changed"
+          test "$changed" = "$HARNESS_PATH"
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 1
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: java-kotlin
+          build-mode: manual
+          queries: security-extended
+      - name: Build exact candidate for extraction
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          chmod +x ./gradlew
+          ./gradlew clean :app:assembleDebug -x test
+      - name: Analyze locally
+        uses: github/codeql-action/analyze@v4
+        with:
+          upload: never
+          output: codeql-results
+          category: /language:java-kotlin/photobook-vault-preview-final-v2
+      - name: Require zero Vault and unexpected findings
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee codeql-summary.txt
+          import json
+          from pathlib import Path
+          sarifs = sorted(Path('codeql-results').rglob('*.sarif'))
+          if not sarifs:
+              raise SystemExit('FAIL: no SARIF')
+          findings=[]
+          for path in sarifs:
+              data=json.loads(path.read_text())
+              for run in data.get('runs',[]):
+                  for result in run.get('results',[]):
+                      locs=[]
+                      for loc in result.get('locations',[]):
+                          p=loc.get('physicalLocation',{})
+                          locs.append((p.get('artifactLocation',{}).get('uri',''),p.get('region',{}).get('startLine')))
+                      findings.append((result.get('ruleId','<unknown>'),locs))
+          print(f'codeql_results={len(findings)}')
+          vault=[]; unexpected=[]
+          for rule,locs in findings:
+              rendered=','.join(f'{u}:{n}' for u,n in locs)
+              print(f'rule={rule} locations={rendered}')
+              is_vault=any('/feature/vault/' in u or u.endswith('/MainActivity.kt') for u,_ in locs)
+              known_md5=rule=='java/potentially-weak-cryptographic-algorithm' and any(u.endswith('DuplicatePhotoFinder.kt') for u,_ in locs)
+              if is_vault:
+                  vault.append((rule,locs))
+              elif not known_md5:
+                  unexpected.append((rule,locs))
+          if vault:
+              raise SystemExit(f'FAIL: Vault/MainActivity findings remain: {vault}')
+          if unexpected:
+              raise SystemExit(f'FAIL: unexpected findings: {unexpected}')
+          print('vault_preview_v2_codeql=PASS_ZERO_VAULT_AND_UNEXPECTED_FINDINGS')
+          PY
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: vault-preview-final-v2-codeql-${{ github.run_id }}
+          retention-days: 14
+          path: |
+            codeql-summary.txt
+            codeql-results/
