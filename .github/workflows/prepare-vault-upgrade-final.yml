@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Pin exact final feature and correct crash parser
+      - name: Pin exact final feature and correct crash detector
         shell: bash
         run: |
           set -euo pipefail
@@ -26,42 +26,35 @@ jobs:
           mv "$old" "$new"
           python3 - <<'PY'
           from pathlib import Path
+
           p = Path('.github/workflows/vault-v1-to-v2-upgrade-final.yml')
           s = p.read_text()
-          s = s.replace('name: Vault v1 to v2 Upgrade Proof v2 (Disposable)', 'name: Vault v1 to v2 Upgrade Final (Disposable)')
-          s = s.replace('exp/2.0.15-vault-v1-to-v2-upgrade-proof-v2', 'exp/2.0.15-vault-v1-to-v2-upgrade-final')
-          s = s.replace('d2017c22241049b21fcdd99e5a2e92d8bf382d01', 'd9f6a3579d6df0f1d4d7bcd27620a6256eaf6511')
-          old = '''          "$ADB" logcat -d | grep -E 'FATAL EXCEPTION|AndroidRuntime|OutOfMemoryError|ANR in com\\.photobook\\.app' > "$RUNNER_TEMP/crash-buffer.txt" || true
+          s = s.replace(
+              'name: Vault v1 to v2 Upgrade Proof v2 (Disposable)',
+              'name: Vault v1 to v2 Upgrade Final (Disposable)',
+          )
+          s = s.replace(
+              'exp/2.0.15-vault-v1-to-v2-upgrade-proof-v2',
+              'exp/2.0.15-vault-v1-to-v2-upgrade-final',
+          )
+          s = s.replace(
+              'd2017c22241049b21fcdd99e5a2e92d8bf382d01',
+              'd9f6a3579d6df0f1d4d7bcd27620a6256eaf6511',
+          )
+          old_detector = '''          "$ADB" logcat -d | grep -E 'FATAL EXCEPTION|AndroidRuntime|OutOfMemoryError|ANR in com\\.photobook\\.app' > "$RUNNER_TEMP/crash-buffer.txt" || true
           test ! -s "$RUNNER_TEMP/crash-buffer.txt"
 '''
-          new = '''          "$ADB" logcat -d > "$RUNNER_TEMP/full-logcat.txt"
-          python3 - "$RUNNER_TEMP/full-logcat.txt" "$RUNNER_TEMP/crash-buffer.txt" <<'PYCRASH'
-          import re
-          import sys
-          from pathlib import Path
-
-          text = Path(sys.argv[1]).read_text(errors='replace')
-          bad = []
-          if re.search(r'ANR in com\\.photobook\\.app', text):
-              bad.append('ANR in com.photobook.app')
-          for match in re.finditer(r'FATAL EXCEPTION:', text):
-              window = text[match.start():match.start() + 5000]
-              if 'Process: com.photobook.app' in window:
-                  bad.append(window[:2000])
-          for line in text.splitlines():
-              if 'OutOfMemoryError' in line and ('photobook' in line.lower() or 'com.photobook.app' in text[max(0, text.find(line)-2000):text.find(line)+2000]):
-                  bad.append(line)
-          Path(sys.argv[2]).write_text('\\n---\\n'.join(bad))
-          if bad:
-              raise SystemExit('PhotoBook crash/ANR/OOM marker detected')
-          PYCRASH
+          new_detector = '''          "$ADB" logcat -b crash -d > "$RUNNER_TEMP/crash-buffer.txt" || true
+          "$ADB" shell dumpsys activity lastanr | grep -F 'com.photobook.app' >> "$RUNNER_TEMP/crash-buffer.txt" || true
+          if grep -Fq 'com.photobook.app' "$RUNNER_TEMP/crash-buffer.txt"; then
+            cat "$RUNNER_TEMP/crash-buffer.txt"
+            exit 1
+          fi
+          : > "$RUNNER_TEMP/crash-buffer.txt"
 '''
-          if old not in s:
+          if old_detector not in s:
               raise SystemExit('old crash detector anchor missing')
-          s = s.replace(old, new, 1)
-          s = s.replace('name: vault-v1-v2-upgrade-v2-${{ github.run_id }}', 'name: vault-v1-v2-upgrade-final-${{ github.run_id }}')
-          s = s.replace('${{ runner.temp }}/crash-buffer.txt', '${{ runner.temp }}/crash-buffer.txt\n            ${{ runner.temp }}/full-logcat.txt')
-          p.write_text(s)
+          p.write_text(s.replace(old_detector, new_detector, 1))
           PY
           rm .github/workflows/prepare-vault-upgrade-final.yml
           git diff --check
