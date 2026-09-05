@@ -17,10 +17,13 @@ jobs:
       CANDIDATE_SHA: 04909b6e485c1ede12160aeac136598bee8d303f
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Prove production tree is exact candidate
         shell: bash
         run: |
           set -euo pipefail
+          git cat-file -e "$CANDIDATE_SHA^{commit}"
           changed="$(git diff --name-only "$CANDIDATE_SHA"...HEAD)"
           printf '%s\n' "$changed" | tee codeql-changed-files.txt
           test "$(printf '%s\n' "$changed" | sed '/^$/d' | wc -l)" -eq 1
@@ -72,7 +75,7 @@ jobs:
                       rule = result.get('ruleId', '<unknown>')
                       by_rule[rule] = by_rule.get(rule, 0) + 1
 
-          print(f'candidate_sha=04909b6e485c1ede12160aeac136598bee8d303f')
+          print('candidate_sha=04909b6e485c1ede12160aeac136598bee8d303f')
           print(f'sarif_files={len(files)}')
           print(f'codeql_results={total}')
           for rule, count in sorted(by_rule.items()):
