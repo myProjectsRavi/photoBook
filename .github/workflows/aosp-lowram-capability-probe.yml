@@ -1,0 +1,58 @@
+name: AOSP Low-RAM Capability Probe (Disposable)
+
+on:
+  push:
+    branches: [exp/2.0.15-aosp-lowram-capability-probe]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install emulator host runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+      - name: Boot API35 AOSP with requested 1GB and measure actual capability
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort | tail -n1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager | sort | tail -n1)"
+          ADB="$SDK_ROOT/platform-tools/adb"; EMULATOR="$SDK_ROOT/emulator/emulator"; IMAGE='system-images;android-35;default;x86_64'
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user" ANDROID_EMULATOR_HOME="$RUNNER_TEMP/android-user" ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 emulator "$IMAGE"
+          echo no | "$AVDMANAGER" create avd --force --name pbaosp1g --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/pbaosp1g.avd"
+          sudo chmod 666 /dev/kvm
+          nohup "$EMULATOR" -avd pbaosp1g -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 1024 -cores 2 > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 120); do "$ADB" get-state 2>/dev/null | grep -q '^device$' && break; kill -0 "$pid" || { cat "$RUNNER_TEMP/emulator.log"; exit 1; }; sleep 2; done
+          "$ADB" wait-for-device
+          for _ in $(seq 1 120); do [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break; sleep 2; done
+          [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
+          sdk="$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"; abi="$("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r')"; abilist="$("$ADB" shell getprop ro.product.cpu.abilist | tr -d '\r')"
+          mem_kb="$("$ADB" shell cat /proc/meminfo | tr -d '\r' | awk '/MemTotal:/ {print $2; exit}')"
+          gms=ABSENT; if "$ADB" shell pm path com.google.android.gms 2>/dev/null | grep -q '^package:'; then gms=PRESENT; fi
+          printf 'sdk=%s\nabi=%s\nabilist=%s\nmem_total_kb=%s\ngoogle_play_services=%s\n' "$sdk" "$abi" "$abilist" "$mem_kb" "$gms" | tee capability.txt
+          [[ "$sdk" == 35 ]]
+          [[ "$mem_kb" =~ ^[0-9]+$ ]]
+          [[ "$gms" == ABSENT ]]
+          if (( mem_kb <= 1200000 )); then echo 'low_ram_target=AVAILABLE' | tee -a capability.txt; else echo 'low_ram_target=UNAVAILABLE' | tee -a capability.txt; fi
+          if [[ ",$abilist," == *,arm64-v8a,* ]]; then echo 'arm64_translation=AVAILABLE' | tee -a capability.txt; else echo 'arm64_translation=UNAVAILABLE' | tee -a capability.txt; fi
+      - name: Upload probe
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: aosp-lowram-capability-${{ github.run_id }}
+          path: |
+            capability.txt
+            ${{ runner.temp }}/emulator.log
+          retention-days: 7
+          if-no-files-found: warn
