@@ -460,23 +460,23 @@ internal class VaultAuthCrypto(
             .setRandomizedEncryptionRequired(true)
             .setUserAuthenticationRequired(true)
 
-    when (policy) {
-KeyPolicy.R_PLUS_COMBINED -> {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-        configureRPlusPrimaryKey(builder)
-    } else {
-        throw IllegalStateException(
-            "Android 11+ Vault key policy requested below API 30",
-        )
-    }
-}
-KeyPolicy.PRE_R_BIOMETRIC -> {
-    check(Build.VERSION.SDK_INT < Build.VERSION_CODES.R)
-    @Suppress("DEPRECATION")
-    builder.setUserAuthenticationValidityDurationSeconds(-1)
-    builder.setInvalidatedByBiometricEnrollment(true)
-}
-}
+        when (policy) {
+            KeyPolicy.R_PLUS_COMBINED -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    configureRPlusPrimaryKey(builder)
+                } else {
+                    throw IllegalStateException(
+                        "Android 11+ Vault key policy requested below API 30",
+                    )
+                }
+            }
+            KeyPolicy.PRE_R_BIOMETRIC -> {
+                check(Build.VERSION.SDK_INT < Build.VERSION_CODES.R)
+                @Suppress("DEPRECATION")
+                builder.setUserAuthenticationValidityDurationSeconds(-1)
+                builder.setInvalidatedByBiometricEnrollment(true)
+            }
+        }
 
         return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE).run {
             init(builder.build())
@@ -484,13 +484,13 @@ KeyPolicy.PRE_R_BIOMETRIC -> {
         }
     }
 
-@androidx.annotation.RequiresApi(Build.VERSION_CODES.R)
-private fun configureRPlusPrimaryKey(builder: KeyGenParameterSpec.Builder) {
-    builder.setUserAuthenticationParameters(
-        0,
-        KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL,
-    )
-}
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.R)
+    private fun configureRPlusPrimaryKey(builder: KeyGenParameterSpec.Builder) {
+        builder.setUserAuthenticationParameters(
+            0,
+            KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL,
+        )
+    }
 
     private fun getOrCreateRecoveryKey(): SecretKey {
         getExistingKey(RECOVERY_KEY_ALIAS)?.let { return it }
