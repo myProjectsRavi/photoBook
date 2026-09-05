@@ -329,6 +329,18 @@ internal class VaultAuthCrypto(
             KeyPolicy.PRE_R_BIOMETRIC
         }
 
+        if (
+            policy == KeyPolicy.PRE_R_BIOMETRIC &&
+            BiometricManager.from(appContext).canAuthenticate(
+                BiometricManager.Authenticators.BIOMETRIC_STRONG,
+            ) != BiometricManager.BIOMETRIC_SUCCESS
+        ) {
+            val session = existingSessionHandle?.let(::sessionFrom)
+                ?: sessionFromSerialized(serialized)
+            serialized.fill(0)
+            return VaultPreRCredentialResult.CredentialOnly(session)
+        }
+
         val preparation = runCatching {
             val key = getOrCreatePrimaryKey(policy)
             val cipher = Cipher.getInstance(WRAP_TRANSFORMATION).apply {

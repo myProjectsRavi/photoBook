@@ -50,6 +50,7 @@ import com.photobook.app.feature.vault.VaultExportResult
 import com.photobook.app.feature.vault.VaultItem
 import com.photobook.app.feature.vault.VaultSaveResult
 import com.photobook.app.feature.vault.VaultService
+import com.photobook.app.feature.vault.rememberVaultAuthenticator
 import com.photobook.app.ui.screen.ArchivesScreen
 import com.photobook.app.ui.screen.MainScreen
 import com.photobook.app.ui.screen.OnboardingScreen
@@ -240,85 +241,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         }
     }
 
-    fun authenticateVault(onAuthenticated: (VaultCryptoSession) -> Unit) {
-        val activity = context as? FragmentActivity
-        if (activity == null) {
-            Toast.makeText(
-                context,
-                context.getString(R.string.vault_biometric_failed),
-                Toast.LENGTH_SHORT,
-            ).show()
-            return
-        }
-        val authenticators = vaultAuthenticators()
-        val canAuthenticate = BiometricManager.from(context).canAuthenticate(authenticators)
-        if (canAuthenticate != BiometricManager.BIOMETRIC_SUCCESS) {
-            Toast.makeText(
-                context,
-                context.getString(R.string.vault_biometric_failed),
-                Toast.LENGTH_SHORT,
-            ).show()
-            return
-        }
-
-        val preparation = runCatching {
-            vaultService.prepareAuthentication()
-        }.getOrElse {
-            Toast.makeText(
-                context,
-                context.getString(R.string.vault_biometric_failed),
-                Toast.LENGTH_SHORT,
-            ).show()
-            return
-        }
-
-        val prompt = BiometricPrompt(
-            activity,
-            ContextCompat.getMainExecutor(context),
-            object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    val authenticatedCipher = result.cryptoObject?.cipher
-                    if (authenticatedCipher == null) {
-                        Toast.makeText(
-                            context,
-                            context.getString(R.string.vault_biometric_failed),
-                            Toast.LENGTH_SHORT,
-                        ).show()
-                        return
-                    }
-                    val session = runCatching {
-                        vaultService.completeAuthentication(preparation, authenticatedCipher)
-                    }.getOrElse {
-                        Toast.makeText(
-                            context,
-                            context.getString(R.string.vault_biometric_failed),
-                            Toast.LENGTH_SHORT,
-                        ).show()
-                        return
-                    }
-                    onAuthenticated(session)
-                }
-
-                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    if (errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON &&
-                        errorCode != BiometricPrompt.ERROR_USER_CANCELED &&
-                        errorCode != BiometricPrompt.ERROR_CANCELED
-                    ) {
-                        Toast.makeText(context, errString, Toast.LENGTH_SHORT).show()
-                    }
-                }
-            },
-        )
-        val promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle(context.getString(R.string.vault_biometric_title))
-            .setSubtitle(context.getString(R.string.vault_biometric_subtitle))
-            .setAllowedAuthenticators(authenticators)
-            .build()
-        prompt.authenticate(
-            promptInfo,
-            BiometricPrompt.CryptoObject(preparation.cipher),
-        )
-    }
+    val authenticateVault = rememberVaultAuthenticator(vaultService)
 
     fun requestMoveToTrash(photos: List<PhotoRecord>, archiveRetentionDays: Int? = null) {
         if (photos.isEmpty()) return

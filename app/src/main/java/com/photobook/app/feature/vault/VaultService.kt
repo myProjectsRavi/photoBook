@@ -104,6 +104,16 @@ class VaultService @Inject constructor(
         authenticatedCipher: Cipher,
     ): VaultCryptoSession = authCrypto.completeAuthentication(preparation, authenticatedCipher)
 
+    internal fun preparePreREnrollmentAfterCredential(): VaultPreRCredentialResult =
+        authCrypto.preparePreREnrollmentAfterCredential()
+
+    internal fun preparePreRRecoveryAfterCredential(): VaultPreRCredentialResult =
+        authCrypto.preparePreRRecoveryAfterCredential()
+
+    internal fun cancelAuthentication(preparation: VaultAuthPreparation) {
+        authCrypto.cancelAuthentication(preparation)
+    }
+
     suspend fun listItems(
         session: VaultCryptoSession,
         includePreviews: Boolean = false,
