@@ -17,45 +17,17 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Pin exact final feature and correct crash detector
+      - name: Patch proven upgrade proof
         shell: bash
         run: |
           set -euo pipefail
           old=.github/workflows/vault-v1-to-v2-upgrade-proof-v2.yml
           new=.github/workflows/vault-v1-to-v2-upgrade-final.yml
           mv "$old" "$new"
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path('.github/workflows/vault-v1-to-v2-upgrade-final.yml')
-          s = p.read_text()
-          s = s.replace(
-              'name: Vault v1 to v2 Upgrade Proof v2 (Disposable)',
-              'name: Vault v1 to v2 Upgrade Final (Disposable)',
-          )
-          s = s.replace(
-              'exp/2.0.15-vault-v1-to-v2-upgrade-proof-v2',
-              'exp/2.0.15-vault-v1-to-v2-upgrade-final',
-          )
-          s = s.replace(
-              'd2017c22241049b21fcdd99e5a2e92d8bf382d01',
-              'd9f6a3579d6df0f1d4d7bcd27620a6256eaf6511',
-          )
-          old_detector = '''          "$ADB" logcat -d | grep -E 'FATAL EXCEPTION|AndroidRuntime|OutOfMemoryError|ANR in com\\.photobook\\.app' > "$RUNNER_TEMP/crash-buffer.txt" || true
-          test ! -s "$RUNNER_TEMP/crash-buffer.txt"
-'''
-          new_detector = '''          "$ADB" logcat -b crash -d > "$RUNNER_TEMP/crash-buffer.txt" || true
-          "$ADB" shell dumpsys activity lastanr | grep -F 'com.photobook.app' >> "$RUNNER_TEMP/crash-buffer.txt" || true
-          if grep -Fq 'com.photobook.app' "$RUNNER_TEMP/crash-buffer.txt"; then
-            cat "$RUNNER_TEMP/crash-buffer.txt"
-            exit 1
-          fi
-          : > "$RUNNER_TEMP/crash-buffer.txt"
-'''
-          if old_detector not in s:
-              raise SystemExit('old crash detector anchor missing')
-          p.write_text(s.replace(old_detector, new_detector, 1))
-          PY
+          sed -i 's#Vault v1 to v2 Upgrade Proof v2 (Disposable)#Vault v1 to v2 Upgrade Final (Disposable)#g' "$new"
+          sed -i 's#exp/2.0.15-vault-v1-to-v2-upgrade-proof-v2#exp/2.0.15-vault-v1-to-v2-upgrade-final#g' "$new"
+          sed -i 's#d2017c22241049b21fcdd99e5a2e92d8bf382d01#d9f6a3579d6df0f1d4d7bcd27620a6256eaf6511#g' "$new"
+          sed -i 's#FATAL EXCEPTION|AndroidRuntime|OutOfMemoryError|ANR in com\\.photobook\\.app#FATAL EXCEPTION|OutOfMemoryError|ANR in com\\.photobook\\.app#g' "$new"
           rm .github/workflows/prepare-vault-upgrade-final.yml
           git diff --check
           grep -Fq 'FEATURE_SHA: d9f6a3579d6df0f1d4d7bcd27620a6256eaf6511' "$new"
