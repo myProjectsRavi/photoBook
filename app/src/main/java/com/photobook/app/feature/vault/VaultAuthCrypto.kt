@@ -19,9 +19,9 @@ import java.io.DataOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.FilterOutputStream
 import java.io.IOException
 import java.io.InputStream
-import java.io.OutputStream
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -92,14 +92,35 @@ internal class VaultAuthCrypto(
         }
     }
 
-    fun encrypt(
+    /**
+     * Streams ciphertext into [target] and fsyncs the completed file before returning.
+     *
+     * Tink closes its destination stream when the final segment is committed. A non-closing
+     * wrapper lets us flush Tink first, then sync the underlying file descriptor, then close it.
+     */
+    fun encryptToFile(
         session: VaultCryptoSession,
         input: InputStream,
-        output: OutputStream,
+        target: File,
         associatedData: ByteArray,
     ) {
-        session.streamingAead.newEncryptingStream(output, associatedData).use { encrypted ->
-            input.copyTo(encrypted)
+        target.parentFile?.let { parent ->
+            check(parent.exists() || parent.mkdirs()) { "Unable to create Vault directory" }
+        }
+
+        val fileOutput = FileOutputStream(target)
+        try {
+            val nonClosingOutput = object : FilterOutputStream(fileOutput) {
+                override fun close() {
+                    flush()
+                }
+            }
+            session.streamingAead.newEncryptingStream(nonClosingOutput, associatedData).use { encrypted ->
+                input.copyTo(encrypted)
+            }
+            fileOutput.fd.sync()
+        } finally {
+            runCatching { fileOutput.close() }
         }
     }
 
@@ -132,10 +153,22 @@ internal class VaultAuthCrypto(
         return "$stem$V2_FILE_SUFFIX"
     }
 
+    fun legacyTwinNameFor(v2FileName: String): String? {
+        if (!isV2FileName(v2FileName)) return null
+        return v2FileName.removeSuffix(V2_FILE_SUFFIX) + LEGACY_FILE_SUFFIX
+    }
+
     fun temporaryV2FileName(itemId: String): String {
         val safeId = itemId.replace(Regex("[^A-Za-z0-9._-]"), "_").take(80)
         require(safeId.isNotBlank()) { "Vault item id cannot produce an empty temporary filename" }
         return ".$safeId$V2_FILE_SUFFIX.tmp"
+    }
+
+    fun renameAtomically(source: File, target: File) {
+        check(source.parentFile?.canonicalFile == target.parentFile?.canonicalFile) {
+            "Vault atomic rename must remain in one directory"
+        }
+        Os.rename(source.absolutePath, target.absolutePath)
     }
 
     private fun enrollNewKeyset(authenticatedCipher: Cipher): VaultCryptoSession {
@@ -149,14 +182,16 @@ internal class VaultAuthCrypto(
             InsecureSecretKeyAccess.get(),
         ).toByteArray(StandardCharsets.UTF_8)
 
-        authenticatedCipher.updateAAD(KEYSET_AAD)
-        val wrapped = authenticatedCipher.doFinal(serialized)
-        val iv = authenticatedCipher.iv
-        check(iv != null && iv.isNotEmpty()) { "Android Keystore did not provide a GCM IV" }
-        writeEnvelopeAtomically(WrappedKeysetEnvelope(iv = iv, ciphertext = wrapped))
-        serialized.fill(0)
-
-        return sessionFrom(handle)
+        return try {
+            authenticatedCipher.updateAAD(KEYSET_AAD)
+            val wrapped = authenticatedCipher.doFinal(serialized)
+            val iv = authenticatedCipher.iv
+            check(iv != null && iv.isNotEmpty()) { "Android Keystore did not provide a GCM IV" }
+            writeEnvelopeAtomically(WrappedKeysetEnvelope(iv = iv, ciphertext = wrapped))
+            sessionFrom(handle)
+        } finally {
+            serialized.fill(0)
+        }
     }
 
     private fun unlockExistingKeyset(
