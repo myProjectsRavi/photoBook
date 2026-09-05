@@ -12,7 +12,7 @@ class PermissionUtilsInstrumentedTest {
     @Test
     fun reportsExpectedPhotoAccessMode() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val expectedName = requireNotNull(instrumentation.arguments.getString("expectedMode")) {
+        val expectedName = requireNotNull(InstrumentationRegistry.getArguments().getString("expectedMode")) {
             "expectedMode instrumentation argument is required"
         }
         val expected = PermissionUtils.PhotoAccessMode.valueOf(expectedName)
