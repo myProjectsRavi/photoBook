@@ -1,0 +1,303 @@
+name: Tink 1.23 Legacy Vault Compatibility (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-tink-legacy-vault-compat
+
+permissions:
+  contents: read
+
+jobs:
+  legacy-compat:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      CANDIDATE_SHA: 04909b6e485c1ede12160aeac136598bee8d303f
+    steps:
+      - name: Checkout disposable workflow branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Install emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+
+      - name: Prepare exact candidate with compatibility-only instrumentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "$CANDIDATE_SHA"
+          rm -rf "$RUNNER_TEMP/candidate"
+          git worktree add --detach "$RUNNER_TEMP/candidate" "$CANDIDATE_SHA"
+          test "$(git -C "$RUNNER_TEMP/candidate" rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git -C "$RUNNER_TEMP/candidate" status --porcelain)"
+          cd "$RUNNER_TEMP/candidate"
+          chmod +x ./gradlew
+
+          mkdir -p app/src/androidTest/java/com/photobook/app/feature/vault
+          cat > app/src/androidTest/java/com/photobook/app/feature/vault/LegacyVaultCryptoCompatibilityInstrumentedTest.kt <<'KOTLIN'
+          package com.photobook.app.feature.vault
+
+          import android.content.Context
+          import androidx.security.crypto.EncryptedFile
+          import androidx.security.crypto.EncryptedSharedPreferences
+          import androidx.security.crypto.MasterKey
+          import androidx.test.core.app.ApplicationProvider
+          import androidx.test.ext.junit.runners.AndroidJUnit4
+          import java.io.File
+          import org.junit.Assert.assertArrayEquals
+          import org.junit.Assert.assertEquals
+          import org.junit.Assert.assertTrue
+          import org.junit.Test
+          import org.junit.runner.RunWith
+
+          @RunWith(AndroidJUnit4::class)
+          class LegacyVaultCryptoCompatibilityInstrumentedTest {
+              private val context: Context
+                  get() = ApplicationProvider.getApplicationContext()
+
+              @Test
+              fun writeLegacyTink18Fixture() {
+                  val target = fixtureFile()
+                  target.parentFile?.mkdirs()
+                  target.delete()
+                  context.deleteSharedPreferences(PREFS_NAME)
+
+                  val encryptedFile = EncryptedFile.Builder(
+                      context,
+                      target,
+                      masterKey(),
+                      EncryptedFile.FileEncryptionScheme.AES256_GCM_HKDF_4KB,
+                  ).build()
+                  encryptedFile.openFileOutput().use { output ->
+                      output.write(expectedPayload())
+                  }
+                  assertTrue("baseline encrypted file must exist", target.isFile && target.length() > 0L)
+
+                  val prefs = encryptedPrefs()
+                  assertTrue(
+                      "baseline encrypted preferences commit must succeed",
+                      prefs.edit().putString(PREF_KEY, PREF_VALUE).commit(),
+                  )
+                  assertEquals(PREF_VALUE, prefs.getString(PREF_KEY, null))
+              }
+
+              @Test
+              fun readLegacyFixtureAfterTinkUpgrade() {
+                  val target = fixtureFile()
+                  assertTrue("legacy encrypted file disappeared across app update", target.isFile)
+                  val encryptedFile = EncryptedFile.Builder(
+                      context,
+                      target,
+                      masterKey(),
+                      EncryptedFile.FileEncryptionScheme.AES256_GCM_HKDF_4KB,
+                  ).build()
+                  val plaintext = encryptedFile.openFileInput().use { it.readBytes() }
+                  assertArrayEquals(expectedPayload(), plaintext)
+                  plaintext.fill(0)
+
+                  val prefs = encryptedPrefs()
+                  assertEquals(PREF_VALUE, prefs.getString(PREF_KEY, null))
+              }
+
+              private fun masterKey(): MasterKey = MasterKey.Builder(context)
+                  .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                  .build()
+
+              private fun encryptedPrefs() = EncryptedSharedPreferences.create(
+                  context,
+                  PREFS_NAME,
+                  masterKey(),
+                  EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                  EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+              )
+
+              private fun fixtureFile(): File =
+                  File(File(context.filesDir, "vault_store"), "legacy_tink18_compat.pbvault")
+
+              private fun expectedPayload(): ByteArray = ByteArray(1024 * 1024) { index ->
+                  ((index * 31 + 17) % 251).toByte()
+              }
+
+              private companion object {
+                  const val PREFS_NAME = "legacy_vault_compat_prefs"
+                  const val PREF_KEY = "vault_items"
+                  const val PREF_VALUE = "legacy-encrypted-metadata-survives-tink-upgrade"
+              }
+          }
+          KOTLIN
+
+          changed="$( { git diff --name-only; git ls-files --others --exclude-standard; } | sort -u)"
+          expected='app/src/androidTest/java/com/photobook/app/feature/vault/LegacyVaultCryptoCompatibilityInstrumentedTest.kt'
+          [[ "$changed" == "$expected" ]]
+          printf 'candidate_sha=%s\nproduction_candidate_modified=NO\n' "$CANDIDATE_SHA" > "$GITHUB_WORKSPACE/legacy-vault-compat-report.txt"
+
+      - name: Build exact baseline using Security Crypto Tink 1.8
+        working-directory: ${{ runner.temp }}/candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew :app:dependencyInsight --dependency tink-android --configuration debugRuntimeClasspath \
+            | tee "$GITHUB_WORKSPACE/tink-baseline.txt"
+          grep -Fq 'com.google.crypto.tink:tink-android:1.8.0' "$GITHUB_WORKSPACE/tink-baseline.txt"
+          ! grep -Fq 'com.google.crypto.tink:tink-android:1.23.0' "$GITHUB_WORKSPACE/tink-baseline.txt"
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+          echo 'baseline_tink_1_8_build=PASS' | tee -a "$GITHUB_WORKSPACE/legacy-vault-compat-report.txt"
+
+      - name: Boot API35 emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort | tail -n1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager | sort | tail -n1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          IMAGE='system-images;android-35;google_apis;x86_64'
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 emulator "$IMAGE"
+          echo no | "$AVDMANAGER" create avd --force --name pb-tink-legacy-compat --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/pb-tink-legacy-compat.avd"
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+          nohup "$EMULATOR" -avd pb-tink-legacy-compat -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 4096 -cores 2 > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 150); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/emulator.log"; exit 1; }
+            sleep 2
+          done
+          "$ADB" wait-for-device
+          for _ in $(seq 1 150); do
+            [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break
+            sleep 2
+          done
+          [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
+          [[ "$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')" == 35 ]]
+
+      - name: Install baseline and persist legacy encrypted file plus metadata
+        working-directory: ${{ runner.temp }}/candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt | sort -V | tail -n1)"
+          app_apk="$(find app/build/outputs/apk/debug -type f -name '*arm64-v8a*.apk' -print -quit)"
+          test_apk="$(find app/build/outputs/apk/androidTest/debug -type f -name '*.apk' -print -quit)"
+          test -f "$app_apk" && test -f "$test_apk"
+          ! "$AAPT" dump permissions "$app_apk" | grep -q 'android.permission.INTERNET'
+          "$ADB" install "$app_apk" | tee "$RUNNER_TEMP/install-baseline-app.txt"
+          "$ADB" install "$test_apk" | tee "$RUNNER_TEMP/install-baseline-test.txt"
+          grep -Fq Success "$RUNNER_TEMP/install-baseline-app.txt"
+          grep -Fq Success "$RUNNER_TEMP/install-baseline-test.txt"
+          instrumentation="$("$ADB" shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
+          test -n "$instrumentation"
+          "$ADB" shell am instrument -w -r \
+            -e class com.photobook.app.feature.vault.LegacyVaultCryptoCompatibilityInstrumentedTest#writeLegacyTink18Fixture \
+            "$instrumentation" | tee "$RUNNER_TEMP/baseline-writer.txt"
+          grep -Eq 'OK \(1 test\)|OK \(1 tests\)' "$RUNNER_TEMP/baseline-writer.txt"
+          "$ADB" shell am force-stop com.photobook.app
+          echo 'legacy_fixture_written_under_tink_1_8=PASS' | tee -a "$GITHUB_WORKSPACE/legacy-vault-compat-report.txt"
+
+      - name: Upgrade exact candidate runtime to Tink 1.23 and rebuild
+        working-directory: ${{ runner.temp }}/candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/build.gradle.kts')
+          s = p.read_text()
+          anchor = '    implementation("androidx.security:security-crypto:1.1.0-alpha06")\n'
+          assert s.count(anchor) == 1
+          p.write_text(s.replace(anchor, anchor + '    implementation("com.google.crypto.tink:tink-android:1.23.0")\n'))
+          PY
+          changed="$( { git diff --name-only; git ls-files --others --exclude-standard; } | sort -u)"
+          expected=$'app/build.gradle.kts\napp/src/androidTest/java/com/photobook/app/feature/vault/LegacyVaultCryptoCompatibilityInstrumentedTest.kt'
+          [[ "$changed" == "$expected" ]]
+
+          ./gradlew :app:dependencyInsight --dependency tink-android --configuration debugRuntimeClasspath \
+            | tee "$GITHUB_WORKSPACE/tink-upgraded.txt"
+          grep -Fq 'com.google.crypto.tink:tink-android:1.23.0' "$GITHUB_WORKSPACE/tink-upgraded.txt"
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease :app:bundleRelease :app:verifyReleaseBundleSize
+          echo 'upgraded_tink_1_23_build=PASS' | tee -a "$GITHUB_WORKSPACE/legacy-vault-compat-report.txt"
+
+      - name: Update app in place and read Tink 1.8 ciphertext offline with Tink 1.23
+        working-directory: ${{ runner.temp }}/candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt | sort -V | tail -n1)"
+          uid="$(id -u)"
+          REPORT="$GITHUB_WORKSPACE/legacy-vault-compat-report.txt"
+          app_apk="$(find app/build/outputs/apk/debug -type f -name '*arm64-v8a*.apk' -print -quit)"
+          test_apk="$(find app/build/outputs/apk/androidTest/debug -type f -name '*.apk' -print -quit)"
+          test -f "$app_apk" && test -f "$test_apk"
+          ! "$AAPT" dump permissions "$app_apk" | grep -q 'android.permission.INTERNET'
+
+          "$ADB" install -r "$app_apk" | tee "$RUNNER_TEMP/install-upgrade-app.txt"
+          "$ADB" install -r "$test_apk" | tee "$RUNNER_TEMP/install-upgrade-test.txt"
+          grep -Fq Success "$RUNNER_TEMP/install-upgrade-app.txt"
+          grep -Fq Success "$RUNNER_TEMP/install-upgrade-test.txt"
+          installed_abi="$("$ADB" shell dumpsys package com.photobook.app | sed -n 's/.*primaryCpuAbi=//p' | head -n1 | tr -d '\r' | xargs)"
+          [[ "$installed_abi" == arm64-v8a ]]
+          ! "$ADB" shell dumpsys package com.photobook.app | grep -q 'android.permission.INTERNET'
+
+          "$ADB" shell cmd connectivity airplane-mode enable || true
+          "$ADB" shell svc wifi disable || true
+          "$ADB" shell svc data disable || true
+          sudo iptables -I OUTPUT 1 -o lo -j ACCEPT
+          sudo iptables -I OUTPUT 2 -m owner --uid-owner "$uid" -j REJECT
+          cleanup() {
+            sudo iptables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null || true
+            sudo iptables -D OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          [[ "$("$ADB" shell settings get global airplane_mode_on | tr -d '\r')" == 1 ]]
+          if curl -fsS --connect-timeout 2 --max-time 3 https://www.google.com >/dev/null 2>&1; then exit 1; fi
+          echo 'offline_network_gate=PASS' | tee -a "$REPORT"
+
+          instrumentation="$("$ADB" shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
+          test -n "$instrumentation"
+          "$ADB" logcat -c
+          "$ADB" shell am instrument -w -r \
+            -e class com.photobook.app.feature.vault.LegacyVaultCryptoCompatibilityInstrumentedTest#readLegacyFixtureAfterTinkUpgrade \
+            "$instrumentation" | tee "$RUNNER_TEMP/upgraded-reader.txt"
+          grep -Eq 'OK \(1 test\)|OK \(1 tests\)' "$RUNNER_TEMP/upgraded-reader.txt"
+          "$ADB" logcat -d -b crash > "$RUNNER_TEMP/crash-buffer.txt" || true
+          ! grep -Eqi 'FATAL EXCEPTION|Fatal signal|OutOfMemoryError|UnsatisfiedLinkError|dlopen failed|cannot locate symbol' "$RUNNER_TEMP/crash-buffer.txt"
+          echo 'tink_1_8_to_1_23_legacy_vault_read=PASS' | tee -a "$REPORT"
+
+      - name: Upload compatibility evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: tink-legacy-vault-compat-${{ github.run_id }}
+          path: |
+            legacy-vault-compat-report.txt
+            tink-baseline.txt
+            tink-upgraded.txt
+            ${{ runner.temp }}/baseline-writer.txt
+            ${{ runner.temp }}/upgraded-reader.txt
+            ${{ runner.temp }}/crash-buffer.txt
+            ${{ runner.temp }}/emulator.log
+          retention-days: 14
+          if-no-files-found: warn
