@@ -13,7 +13,7 @@ set -euo pipefail
 #   - requires at least 50 stress iterations and removes the test app on exit.
 #
 # Use only on a dedicated test device. Example for the current 2.0.15 clean candidate:
-#   APP_SOURCE_SHA=04909b6e485c1ede12160aeac136598bee8d303f \
+#   APP_SOURCE_SHA=9fd29f9987f6879f330b5b9cb4f33cde3c9b6d23 \
 #   ITERATIONS=50 \
 #   bash tools/benchmark/run_api26_arm32_compatibility.sh
 
