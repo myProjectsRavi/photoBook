@@ -245,10 +245,10 @@ internal class VaultAuthCrypto(
         } else {
             @Suppress("DEPRECATION")
             builder.setUserAuthenticationValidityDurationSeconds(-1)
-            // API 26-29 auth-per-use crypto can only be unlocked by a biometric. Keeping the
-            // wrapping key valid when the biometric set changes avoids needless Vault data loss;
-            // every use still requires a currently enrolled strong biometric.
-            builder.setInvalidatedByBiometricEnrollment(false)
+            // This is the strict primary key. Android invalidates it when biometrics change so a
+            // person who only knows the device credential cannot enroll their own biometric and
+            // inherit an already-authorized Vault key.
+            builder.setInvalidatedByBiometricEnrollment(true)
         }
 
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
