@@ -214,11 +214,14 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     }
 
     fun closeVault() {
-        vaultService.clearPreviewCache()
         showVault = false
+        vaultService.invalidatePreviewCache()
         vaultItems = emptyList()
         isVaultLoading = false
         isVaultBusy = false
+        coroutineScope.launch {
+            runCatching { vaultService.clearPreviewCache() }
+        }
     }
 
     suspend fun loadVisibleVaultItems(session: VaultCryptoSession): List<VaultItem> {
@@ -229,11 +232,10 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             includePreviews = true,
             previewGeneration = previewGeneration,
         )
-        return if (showVault) {
-            items
-        } else {
-            vaultService.clearPreviewCache()
-            emptyList()
+        return when {
+            !showVault -> emptyList()
+            vaultService.isPreviewLoadCurrent(previewGeneration) -> items
+            else -> vaultItems
         }
     }
 

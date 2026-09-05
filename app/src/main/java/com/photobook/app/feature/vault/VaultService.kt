@@ -28,6 +28,7 @@ import java.util.UUID
 import javax.crypto.Cipher
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 
@@ -99,8 +100,17 @@ class VaultService @Inject constructor(
 
     private val previewCacheGeneration = java.util.concurrent.atomic.AtomicLong(0L)
     private val previewCacheNeedsCleanup = java.util.concurrent.atomic.AtomicBoolean(true)
+    private val previewCacheMutex = Mutex()
 
     internal fun beginPreviewLoad(): Long = previewCacheGeneration.incrementAndGet()
+
+    internal fun isPreviewLoadCurrent(generation: Long): Boolean =
+        previewCacheGeneration.get() == generation
+
+    internal fun invalidatePreviewCache() {
+        previewCacheGeneration.incrementAndGet()
+        previewCacheNeedsCleanup.set(true)
+    }
 
     internal fun prepareAuthentication(): VaultAuthPreparation = authCrypto.prepareAuthentication()
 
@@ -129,30 +139,50 @@ class VaultService @Inject constructor(
         } else {
             null
         }
-        if (
-            expectedPreviewGeneration != null &&
-            previewCacheNeedsCleanup.compareAndSet(true, false)
-        ) {
-            val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)
-            if (previewRoot.exists() && !previewRoot.deleteRecursively()) {
-                previewCacheNeedsCleanup.set(true)
-                throw IOException("Unable to clear stale Vault preview cache")
-            }
+        if (expectedPreviewGeneration != null) {
+            previewCacheMutex.lock()
         }
-        migrateLegacyItemsIfNeeded()
-        migrateLegacyCiphertextIfNeeded(session)
-        vaultDao.getAllVaultItems().map { entity ->
-            val item = entity.toVaultItem()
+        try {
             if (expectedPreviewGeneration != null) {
-                item.copy(
-                    previewUri = createPreviewUri(
-                        entity = entity,
-                        session = session,
-                        expectedPreviewGeneration = expectedPreviewGeneration,
-                    ),
-                )
-            } else {
-                item
+                if (previewCacheGeneration.get() != expectedPreviewGeneration) {
+                    return@withContext emptyList()
+                }
+                if (previewCacheNeedsCleanup.compareAndSet(true, false)) {
+                    val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)
+                    if (previewRoot.exists() && !previewRoot.deleteRecursively()) {
+                        previewCacheNeedsCleanup.set(true)
+                        throw IOException("Unable to clear stale Vault preview cache")
+                    }
+                }
+                if (previewCacheGeneration.get() != expectedPreviewGeneration) {
+                    return@withContext emptyList()
+                }
+            }
+            migrateLegacyItemsIfNeeded()
+            migrateLegacyCiphertextIfNeeded(session)
+            if (
+                expectedPreviewGeneration != null &&
+                previewCacheGeneration.get() != expectedPreviewGeneration
+            ) {
+                return@withContext emptyList()
+            }
+            vaultDao.getAllVaultItems().map { entity ->
+                val item = entity.toVaultItem()
+                if (expectedPreviewGeneration != null) {
+                    item.copy(
+                        previewUri = createPreviewUri(
+                            entity = entity,
+                            session = session,
+                            expectedPreviewGeneration = expectedPreviewGeneration,
+                        ),
+                    )
+                } else {
+                    item
+                }
+            }
+        } finally {
+            if (expectedPreviewGeneration != null) {
+                previewCacheMutex.unlock()
             }
         }
     }
@@ -332,11 +362,17 @@ class VaultService @Inject constructor(
         }.getOrDefault(false)
     }
 
-    fun clearPreviewCache() {
-        previewCacheGeneration.incrementAndGet()
-        previewCacheNeedsCleanup.set(true)
-        runCatching {
-            File(context.cacheDir, VAULT_PREVIEW_DIR).deleteRecursively()
+    suspend fun clearPreviewCache() = withContext(Dispatchers.IO) {
+        previewCacheMutex.lock()
+        try {
+            val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)
+            if (previewRoot.exists() && !previewRoot.deleteRecursively()) {
+                previewCacheNeedsCleanup.set(true)
+                throw IOException("Unable to clear Vault preview cache")
+            }
+            previewCacheNeedsCleanup.set(false)
+        } finally {
+            previewCacheMutex.unlock()
         }
     }
 
@@ -375,6 +411,9 @@ class VaultService @Inject constructor(
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
                 return@runCatching null
             }
+            if (previewCacheGeneration.get() != expectedPreviewGeneration) {
+                return@runCatching null
+            }
 
             val options = BitmapFactory.Options().apply {
                 inPreferredConfig = Bitmap.Config.RGB_565
@@ -383,6 +422,10 @@ class VaultService @Inject constructor(
             val bitmap = openVaultInput(entity, session).use { input ->
                 BitmapFactory.decodeStream(input, null, options)
             } ?: return@runCatching null
+            if (previewCacheGeneration.get() != expectedPreviewGeneration) {
+                bitmap.recycle()
+                return@runCatching null
+            }
 
             previewFile.parentFile?.mkdirs()
             val tempPreview = File(
@@ -399,6 +442,10 @@ class VaultService @Inject constructor(
                     return@runCatching null
                 }
                 authCrypto.renameAtomically(tempPreview, previewFile)
+                if (previewCacheGeneration.get() != expectedPreviewGeneration) {
+                    runCatching { previewFile.delete() }
+                    return@runCatching null
+                }
                 Uri.fromFile(previewFile)
             } finally {
                 bitmap.recycle()
