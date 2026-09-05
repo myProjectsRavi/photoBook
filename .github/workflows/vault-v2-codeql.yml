@@ -1,0 +1,104 @@
+name: Vault v2 CodeQL Proof (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-vault-v2-codeql
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  codeql:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CANDIDATE_SHA: d2017c22241049b21fcdd99e5a2e92d8bf382d01
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Prove production tree is exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e "$CANDIDATE_SHA^{commit}"
+          changed="$(git diff --name-only "$CANDIDATE_SHA"...HEAD)"
+          printf '%s\n' "$changed" | tee codeql-changed-files.txt
+          test "$(printf '%s\n' "$changed" | sed '/^$/d' | wc -l)" -eq 1
+          grep -Fxq '.github/workflows/vault-v2-codeql.yml' codeql-changed-files.txt
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: java-kotlin
+          build-mode: manual
+          queries: security-extended
+
+      - name: Manual clean build for precise Kotlin and Java extraction
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew clean :app:assembleDebug -x test
+
+      - name: Analyze without publishing repository security state
+        uses: github/codeql-action/analyze@v4
+        with:
+          upload: never
+          output: ${{ github.workspace }}/codeql-results
+          category: /language:java-kotlin/photobook-vault-v2
+
+      - name: Fail closed on any CodeQL result
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee codeql-summary.txt
+          import json
+          from pathlib import Path
+
+          candidate = 'd2017c22241049b21fcdd99e5a2e92d8bf382d01'
+          root = Path('codeql-results')
+          files = sorted(root.rglob('*.sarif'))
+          if not files:
+              raise SystemExit('FAIL: no CodeQL SARIF produced')
+
+          total = 0
+          by_rule = {}
+          for path in files:
+              data = json.loads(path.read_text(encoding='utf-8'))
+              for run in data.get('runs', []):
+                  for result in run.get('results', []):
+                      total += 1
+                      rule = result.get('ruleId', '<unknown>')
+                      by_rule[rule] = by_rule.get(rule, 0) + 1
+
+          print(f'candidate_sha={candidate}')
+          print(f'sarif_files={len(files)}')
+          print(f'codeql_results={total}')
+          for rule, count in sorted(by_rule.items()):
+              print(f'rule={rule} count={count}')
+          if total:
+              raise SystemExit('FAIL: CodeQL produced one or more security results')
+          print('codeql_security_extended=PASS_ZERO_FINDINGS')
+          PY
+
+      - name: Upload CodeQL evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vault-v2-codeql-${{ github.run_id }}
+          path: |
+            codeql-summary.txt
+            codeql-changed-files.txt
+            codeql-results/
+          retention-days: 14
+          if-no-files-found: warn
