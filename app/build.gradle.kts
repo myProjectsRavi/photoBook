@@ -75,8 +75,8 @@ android {
         applicationId = "com.photobook.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 21
-        versionName = "2.0.14"
+        versionCode = 22
+        versionName = "2.0.15"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -178,121 +178,100 @@ android {
             include("arm64-v8a", "armeabi-v7a")
             // No universal APK. Preserve the production 30 MiB hard ceiling here. The user-facing
             // Google Play delivered download/install size is a separate release metric and must be
-            // measured and minimized before this candidate can be approved.
+            // measured with bundletool / Play Console against the .aab.
             isUniversalApk = false
         }
     }
 
-    bundle {
-        language { enableSplit = true }
-        density { enableSplit = true }
-        abi { enableSplit = true }
+    lint {
+        abortOnError = true
+        checkReleaseBuilds = true
+        warningsAsErrors = false
+    }
+
+    room {
+        schemaDirectory("$projectDir/schemas")
     }
 }
 
-room {
-    schemaDirectory("$projectDir/schemas")
+dependencies {
+    implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    implementation("androidx.activity:activity-compose:1.10.1")
+
+    implementation(platform("androidx.compose:compose-bom:2025.04.00"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
+    debugImplementation("androidx.compose.ui:ui-tooling")
+
+    implementation("androidx.navigation:navigation-compose:2.8.9")
+
+    implementation("com.google.dagger:hilt-android:2.55")
+    kapt("com.google.dagger:hilt-compiler:2.55")
+    implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
+    implementation("androidx.hilt:hilt-work:1.2.0")
+    kapt("androidx.hilt:hilt-compiler:1.2.0")
+
+    implementation("androidx.room:room-runtime:2.7.1")
+    implementation("androidx.room:room-ktx:2.7.1")
+    kapt("androidx.room:room-compiler:2.7.1")
+
+    implementation("androidx.paging:paging-runtime-ktx:3.3.6")
+    implementation("androidx.paging:paging-compose:3.3.6")
+
+    implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("io.coil-kt:coil-gif:2.7.0")
+
+    implementation("androidx.exifinterface:exifinterface:1.4.1")
+
+    implementation("org.tensorflow:tensorflow-lite:2.17.0")
+
+    implementation("com.google.mlkit:text-recognition:16.0.1")
+
+    implementation("androidx.work:work-runtime-ktx:2.10.1")
+
+    implementation("androidx.biometric:biometric:1.2.0-alpha05")
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("com.google.crypto.tink:tink-android:1.23.0")
+
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
+    baselineProfile(project(":baselineprofile"))
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+
+    androidTestImplementation(platform("androidx.compose:compose-bom:2025.04.00"))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
 }
 
 kapt {
     correctErrorTypes = true
 }
 
-dependencies {
-    implementation("androidx.core:core-ktx:1.12.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
-    implementation("androidx.activity:activity-compose:1.8.2")
-
-    implementation(platform("androidx.compose:compose-bom:2024.02.02"))
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.ui:ui-graphics")
-    implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.foundation:foundation")
-    implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
-    implementation("androidx.navigation:navigation-compose:2.7.7")
-    implementation("androidx.appcompat:appcompat:1.6.1")
-    implementation("androidx.camera:camera-core:1.4.0")
-    implementation("androidx.camera:camera-camera2:1.4.0")
-    implementation("androidx.camera:camera-lifecycle:1.4.0")
-    implementation("androidx.camera:camera-view:1.4.0")
-
-    implementation("io.coil-kt:coil-compose:2.6.0")
-
-    implementation("androidx.work:work-runtime-ktx:2.9.0")
-    implementation("androidx.paging:paging-runtime-ktx:3.3.2")
-    implementation("androidx.paging:paging-compose:3.3.2")
-    implementation("androidx.exifinterface:exifinterface:1.4.2")
-    implementation("androidx.biometric:biometric:1.1.0")
-    implementation("androidx.security:security-crypto:1.1.0-alpha06")
-    implementation("com.google.crypto.tink:tink-android:1.23.0")
-    implementation("androidx.room:room-runtime:2.6.1")
-    implementation("androidx.room:room-ktx:2.6.1")
-    kapt("androidx.room:room-compiler:2.6.1")
-
-    implementation("com.google.dagger:hilt-android:2.51.1")
-    kapt("com.google.dagger:hilt-compiler:2.51.1")
-    implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
-    implementation("androidx.hilt:hilt-work:1.2.0")
-    kapt("androidx.hilt:hilt-compiler:1.2.0")
-
-    // Bundled Latin OCR: app-local, case-agnostic search indexing with no model download.
-    implementation("com.google.mlkit:text-recognition:16.0.1")
-
-    // Keep the model app-local and use the standalone on-device LiteRT runtime;
-    // no cloud inference or deferred model delivery is allowed.
-    add("bundledLabelModel", bundledLabelModelDependency)
-    // LiteRT 1.4.1 keeps the InterpreterApi surface used by LocalSemanticImageLabeler
-    // and ships 16 KB ELF-aligned native libraries for Play's Android 15 requirement.
-    implementation("com.google.ai.edge.litert:litert:1.4.1")
-    implementation("org.tensorflow:tensorflow-lite-metadata:0.1.0-rc2")
-    implementation("com.google.zxing:core:3.5.3")
-
-    testImplementation("junit:junit:4.13.2")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
-    testImplementation("com.google.truth:truth:1.4.2")
-
-    androidTestImplementation("androidx.test.ext:junit:1.2.1")
-    androidTestImplementation("androidx.test:runner:1.6.2")
-    androidTestImplementation("androidx.test:rules:1.6.1")
-    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
-    androidTestImplementation("androidx.room:room-testing:2.6.1")
-
-    // Required by current Macrobenchmark tooling for profile/shader-cache control,
-    // but intentionally excluded from production release artifacts.
-    add("benchmarkImplementation", "androidx.profileinstaller:profileinstaller:1.4.1")
-
-    debugImplementation("androidx.compose.ui:ui-tooling")
-    debugImplementation("androidx.compose.ui:ui-test-manifest")
-    baselineProfile(project(":baselineprofile"))
-}
-
 tasks.register("verifyApkSize") {
     group = "verification"
-    description = "Fails when any generated per-ABI release APK exceeds 30 MiB."
-
+    description = "Verifies release ABI-specific APKs stay below the production 30 MiB ceiling."
+    dependsOn("assembleRelease")
     doLast {
         val maxBytes = 30L * 1024L * 1024L
-        val apkRoot = layout.buildDirectory.dir("outputs/apk/release").get().asFile
-        check(apkRoot.exists()) {
-            "Release APK size gate could not find ${apkRoot.path}; run assembleRelease first."
+        val apkDir = layout.buildDirectory.dir("outputs/apk/release").get().asFile
+        val apks = apkDir.walkTopDown().filter { it.isFile && it.extension == "apk" }.toList()
+        if (apks.isEmpty()) {
+            throw GradleException("No release APKs found in ${apkDir.absolutePath}")
         }
-
-        val apks = apkRoot.walkTopDown()
-            .filter { it.isFile && it.extension == "apk" }
-            .toList()
-        check(apks.isNotEmpty()) {
-            "Release APK size gate found no release APKs under ${apkRoot.path}."
-        }
-
         apks.forEach { apk ->
-            val sizeBytes = apk.length()
-            val sizeMiB = sizeBytes.toDouble() / (1024.0 * 1024.0)
-            println("releaseApk=${apk.name} bytes=$sizeBytes mib=${"%.2f".format(sizeMiB)}")
-            check(sizeBytes <= maxBytes) {
-                "Per-device APK size gate failed for ${apk.path}: ${"%.2f".format(sizeMiB)} MiB > 30 MiB"
+            val size = apk.length()
+            val mib = size.toDouble() / (1024.0 * 1024.0)
+            println("releaseApk=${apk.name} bytes=$size mib=${"%.2f".format(mib)}")
+            if (size >= maxBytes) {
+                throw GradleException("Release APK ${apk.name} is ${"%.2f".format(mib)} MiB, exceeding the 30 MiB ceiling")
             }
         }
     }
@@ -300,34 +279,28 @@ tasks.register("verifyApkSize") {
 
 tasks.register("verifyReleaseBundleSize") {
     group = "verification"
-    description = "Fails when any generated release AAB exceeds 20 MiB."
-
+    description = "Verifies release AAB stays below the production 20 MiB ceiling."
+    dependsOn("bundleRelease")
     doLast {
         val maxBytes = 20L * 1024L * 1024L
-        val bundleRoot = layout.buildDirectory.dir("outputs/bundle/release").get().asFile
-        check(bundleRoot.exists()) {
-            "Release AAB size gate could not find ${bundleRoot.path}; run bundleRelease first."
+        val bundleDir = layout.buildDirectory.dir("outputs/bundle/release").get().asFile
+        val bundles = bundleDir.walkTopDown().filter { it.isFile && it.extension == "aab" }.toList()
+        if (bundles.size != 1) {
+            throw GradleException("Expected exactly one release AAB in ${bundleDir.absolutePath}; found ${bundles.size}")
         }
-
-        val bundles = bundleRoot.walkTopDown()
-            .filter { it.isFile && it.extension == "aab" }
-            .toList()
-        check(bundles.isNotEmpty()) {
-            "Release AAB size gate found no release bundles under ${bundleRoot.path}."
-        }
-
-        bundles.forEach { bundle ->
-            val sizeBytes = bundle.length()
-            val sizeMiB = sizeBytes.toDouble() / (1024.0 * 1024.0)
-            println("releaseAab=${bundle.name} bytes=$sizeBytes mib=${"%.2f".format(sizeMiB)}")
-            check(sizeBytes <= maxBytes) {
-                "Release bundle size gate failed for ${bundle.path}: ${"%.2f".format(sizeMiB)} MiB > 20 MiB"
-            }
+        val aab = bundles.single()
+        val size = aab.length()
+        val mib = size.toDouble() / (1024.0 * 1024.0)
+        println("releaseAab=${aab.name} bytes=$size mib=${"%.2f".format(mib)}")
+        if (size >= maxBytes) {
+            throw GradleException("Release AAB is ${"%.2f".format(mib)} MiB, exceeding the 20 MiB ceiling")
         }
     }
 }
 
 tasks.register("printReleaseMetadata") {
+    group = "verification"
+    description = "Prints release metadata for CI evidence."
     doLast {
         println("versionCode=${android.defaultConfig.versionCode}")
         println("versionName=${android.defaultConfig.versionName}")
@@ -335,10 +308,6 @@ tasks.register("printReleaseMetadata") {
     }
 }
 
-tasks.matching { it.name == "assembleRelease" }.configureEach {
-    finalizedBy("verifyApkSize")
-}
-
-tasks.matching { it.name == "bundleRelease" }.configureEach {
-    finalizedBy("verifyReleaseBundleSize")
-}
+bundledLabelModel.dependencies.add(
+    dependencies.create(bundledLabelModelDependency)
+)
