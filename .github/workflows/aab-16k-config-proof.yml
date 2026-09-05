@@ -1,0 +1,71 @@
+name: AAB 16K Bundle Config Proof (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-aab-16k-config-proof
+
+permissions:
+  contents: read
+
+jobs:
+  verify-aab-config:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CANDIDATE_SHA: 04909b6e485c1ede12160aeac136598bee8d303f
+      BUNDLETOOL_VERSION: 1.18.3
+      BUNDLETOOL_SHA256: a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Checkout exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "$CANDIDATE_SHA"
+          rm -rf "$RUNNER_TEMP/candidate"
+          git worktree add --detach "$RUNNER_TEMP/candidate" "$CANDIDATE_SHA"
+          test "$(git -C "$RUNNER_TEMP/candidate" rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git -C "$RUNNER_TEMP/candidate" status --porcelain)"
+      - name: Build exact release AAB
+        working-directory: ${{ runner.temp }}/candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:bundleRelease :app:verifyReleaseBundleSize
+      - name: Verify bundletool PAGE_ALIGNMENT_16K
+        working-directory: ${{ runner.temp }}/candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          jar="$RUNNER_TEMP/bundletool-all-${BUNDLETOOL_VERSION}.jar"
+          curl -fL --retry 3 -o "$jar" "https://github.com/google/bundletool/releases/download/${BUNDLETOOL_VERSION}/bundletool-all-${BUNDLETOOL_VERSION}.jar"
+          echo "${BUNDLETOOL_SHA256}  $jar" | sha256sum -c -
+          aab="$(find app/build/outputs/bundle/release -type f -name '*.aab' -print -quit)"
+          test -f "$aab"
+          java -jar "$jar" dump config --bundle="$aab" | tee "$GITHUB_WORKSPACE/aab-16k-config.txt"
+          grep -Fq 'PAGE_ALIGNMENT_16K' "$GITHUB_WORKSPACE/aab-16k-config.txt"
+          if grep -Fq 'PAGE_ALIGNMENT_4K' "$GITHUB_WORKSPACE/aab-16k-config.txt"; then
+            echo 'FAIL: bundle explicitly requests 4K alignment' >&2
+            exit 1
+          fi
+          echo "candidate_sha=$CANDIDATE_SHA" | tee -a "$GITHUB_WORKSPACE/aab-16k-config.txt"
+          echo "aab_bytes=$(stat -c%s "$aab")" | tee -a "$GITHUB_WORKSPACE/aab-16k-config.txt"
+          echo 'aab_page_alignment=PAGE_ALIGNMENT_16K' | tee -a "$GITHUB_WORKSPACE/aab-16k-config.txt"
+          echo 'aab_16k_bundle_config_proof=PASS' | tee -a "$GITHUB_WORKSPACE/aab-16k-config.txt"
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: aab-16k-config-${{ github.run_id }}
+          path: aab-16k-config.txt
+          retention-days: 14
+          if-no-files-found: error
