@@ -1,0 +1,66 @@
+name: Final API26 ARM32 Physical Gate Static Proof (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-api26-arm32-physical-gate-final
+    paths:
+      - .github/workflows/api26-arm32-final-static.yml
+
+permissions:
+  contents: read
+
+jobs:
+  static-proof:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Bash syntax check
+        run: bash -n tools/benchmark/run_api26_arm32_compatibility.sh
+      - name: Prove fail-closed physical preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          fake="$RUNNER_TEMP/fake-bin"
+          mkdir -p "$fake"
+          cat > "$fake/adb" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          scenario="${SCENARIO:-valid}"
+          if [[ "${1:-}" == "get-state" ]]; then echo device; exit 0; fi
+          if [[ "${1:-}" != "shell" ]]; then exit 0; fi
+          shift
+          case "${1:-} ${2:-} ${3:-} ${4:-}" in
+            "getprop ro.build.version.sdk  ") [[ "$scenario" == wrong_sdk ]] && echo 35 || echo 26 ;;
+            "getprop ro.product.model  ") echo "PhotoBook Test Device" ;;
+            "getprop ro.product.manufacturer  ") echo "PhotoBook" ;;
+            "getprop ro.product.cpu.abi  ") echo arm64-v8a ;;
+            "getprop ro.product.cpu.abilist  ") [[ "$scenario" == no_arm32 ]] && echo arm64-v8a || echo arm64-v8a,armeabi-v7a ;;
+            "getprop ro.product.cpu.abilist32  ") [[ "$scenario" == no_arm32 ]] && echo "" || echo armeabi-v7a ;;
+            "getprop ro.kernel.qemu  ") [[ "$scenario" == emulator ]] && echo 1 || echo 0 ;;
+            "getprop ro.boot.qemu  ") echo 0 ;;
+            "settings get global airplane_mode_on") [[ "$scenario" == airplane_off ]] && echo 0 || echo 1 ;;
+            "cat /proc/meminfo  ") echo "MemTotal:        2048000 kB" ;;
+            "dumpsys battery  ") echo "  level: 80" ;;
+            "content query --uri content://media/external/images/media") [[ "$scenario" == media_nonempty ]] && echo "Row: 0 _id=1" || echo "No result found." ;;
+            "pm path com.photobook.app  ") echo "" ;;
+            *) echo "unexpected fake adb command: $*" >&2; exit 99 ;;
+          esac
+          SH
+          chmod +x "$fake/adb"
+          export PATH="$fake:$PATH"
+          candidate=4d461f79032c5529b0ab1d28cfa1ff1de07d3180
+          script=tools/benchmark/run_api26_arm32_compatibility.sh
+          expect_exit() {
+            local expected="$1" name="$2"; shift 2
+            set +e; "$@" >"$RUNNER_TEMP/$name.out" 2>"$RUNNER_TEMP/$name.err"; rc=$?; set -e
+            [[ "$rc" == "$expected" ]] || { cat "$RUNNER_TEMP/$name.out"; cat "$RUNNER_TEMP/$name.err" >&2; exit 1; }
+          }
+          expect_exit 2 missing_sha env -u APP_SOURCE_SHA bash "$script"
+          expect_exit 2 iterations_below_50 env APP_SOURCE_SHA="$candidate" ITERATIONS=49 bash "$script"
+          expect_exit 1 emulator env SCENARIO=emulator APP_SOURCE_SHA="$candidate" ITERATIONS=50 bash "$script"
+          expect_exit 1 wrong_sdk env SCENARIO=wrong_sdk APP_SOURCE_SHA="$candidate" ITERATIONS=50 bash "$script"
+          expect_exit 1 no_arm32 env SCENARIO=no_arm32 APP_SOURCE_SHA="$candidate" ITERATIONS=50 bash "$script"
+          expect_exit 1 airplane_off env SCENARIO=airplane_off APP_SOURCE_SHA="$candidate" ITERATIONS=50 bash "$script"
+          expect_exit 1 media_nonempty env SCENARIO=media_nonempty APP_SOURCE_SHA="$candidate" ITERATIONS=50 bash "$script"
+          echo final_api26_arm32_physical_gate_static_proof=PASS
