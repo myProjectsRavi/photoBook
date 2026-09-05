@@ -1,2 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<data-extraction-rules />
+<data-extraction-rules>
+    <!-- PhotoBook is deliberately local-only. Do not transfer app-private state to a new device:
+         Vault ciphertext is bound to Android Keystore keys on the source device, so restoring the
+         database/files without those non-transferable keys can strand protected content. -->
+    <cloud-backup>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+    </device-transfer>
+</data-extraction-rules>
