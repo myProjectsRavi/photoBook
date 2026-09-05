@@ -149,8 +149,7 @@ class VaultService @Inject constructor(
                     return@withContext emptyList()
                 }
                 if (previewCacheNeedsCleanup.compareAndSet(true, false)) {
-                    val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)
-                    if (previewRoot.exists() && !previewRoot.deleteRecursively()) {
+                    if (!deletePreviewCacheFiles()) {
                         previewCacheNeedsCleanup.set(true)
                         throw IOException("Unable to clear stale Vault preview cache")
                     }
@@ -369,16 +368,20 @@ class VaultService @Inject constructor(
             if (previewCacheGeneration.get() != expectedGeneration) {
                 return@withContext false
             }
-            val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)
-            val cleared = try {
-                !previewRoot.exists() || previewRoot.deleteRecursively()
-            } catch (_: SecurityException) {
-                false
-            }
+            val cleared = deletePreviewCacheFiles()
             previewCacheNeedsCleanup.set(!cleared)
             cleared
         } finally {
             previewCacheMutex.unlock()
+        }
+    }
+
+    private fun deletePreviewCacheFiles(): Boolean {
+        val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)
+        return try {
+            !previewRoot.exists() || previewRoot.deleteRecursively()
+        } catch (_: SecurityException) {
+            false
         }
     }
 
