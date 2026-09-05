@@ -362,15 +362,17 @@ class VaultService @Inject constructor(
         }.getOrDefault(false)
     }
 
-    suspend fun clearPreviewCache() = withContext(Dispatchers.IO) {
+    suspend fun clearPreviewCache(): Boolean = withContext(Dispatchers.IO) {
         previewCacheMutex.lock()
         try {
             val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)
-            if (previewRoot.exists() && !previewRoot.deleteRecursively()) {
-                previewCacheNeedsCleanup.set(true)
-                throw IOException("Unable to clear Vault preview cache")
+            val cleared = try {
+                !previewRoot.exists() || previewRoot.deleteRecursively()
+            } catch (_: SecurityException) {
+                false
             }
-            previewCacheNeedsCleanup.set(false)
+            previewCacheNeedsCleanup.set(!cleared)
+            cleared
         } finally {
             previewCacheMutex.unlock()
         }

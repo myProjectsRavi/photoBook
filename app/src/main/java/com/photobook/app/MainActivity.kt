@@ -220,7 +220,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         isVaultLoading = false
         isVaultBusy = false
         coroutineScope.launch {
-            runCatching { vaultService.clearPreviewCache() }
+            vaultService.clearPreviewCache()
         }
     }
 
