@@ -97,6 +97,11 @@ class VaultService @Inject constructor(
         VaultAuthCrypto(context)
     }
 
+    private val previewCacheGeneration = java.util.concurrent.atomic.AtomicLong(0L)
+    private val previewCacheNeedsCleanup = java.util.concurrent.atomic.AtomicBoolean(true)
+
+    internal fun beginPreviewLoad(): Long = previewCacheGeneration.incrementAndGet()
+
     internal fun prepareAuthentication(): VaultAuthPreparation = authCrypto.prepareAuthentication()
 
     internal fun completeAuthentication(
@@ -117,13 +122,35 @@ class VaultService @Inject constructor(
     suspend fun listItems(
         session: VaultCryptoSession,
         includePreviews: Boolean = false,
+        previewGeneration: Long? = null,
     ): List<VaultItem> = withContext(Dispatchers.IO) {
+        val expectedPreviewGeneration = if (includePreviews) {
+            requireNotNull(previewGeneration) { "Preview generation is required for Vault previews" }
+        } else {
+            null
+        }
+        if (
+            expectedPreviewGeneration != null &&
+            previewCacheNeedsCleanup.compareAndSet(true, false)
+        ) {
+            val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)
+            if (previewRoot.exists() && !previewRoot.deleteRecursively()) {
+                previewCacheNeedsCleanup.set(true)
+                throw IOException("Unable to clear stale Vault preview cache")
+            }
+        }
         migrateLegacyItemsIfNeeded()
         migrateLegacyCiphertextIfNeeded(session)
         vaultDao.getAllVaultItems().map { entity ->
             val item = entity.toVaultItem()
-            if (includePreviews) {
-                item.copy(previewUri = createPreviewUri(entity, session))
+            if (expectedPreviewGeneration != null) {
+                item.copy(
+                    previewUri = createPreviewUri(
+                        entity = entity,
+                        session = session,
+                        expectedPreviewGeneration = expectedPreviewGeneration,
+                    ),
+                )
             } else {
                 item
             }
@@ -306,6 +333,8 @@ class VaultService @Inject constructor(
     }
 
     fun clearPreviewCache() {
+        previewCacheGeneration.incrementAndGet()
+        previewCacheNeedsCleanup.set(true)
         runCatching {
             File(context.cacheDir, VAULT_PREVIEW_DIR).deleteRecursively()
         }
@@ -323,13 +352,19 @@ class VaultService @Inject constructor(
     private fun createPreviewUri(
         entity: VaultEntity,
         session: VaultCryptoSession,
+        expectedPreviewGeneration: Long,
     ): Uri? {
+        if (previewCacheGeneration.get() != expectedPreviewGeneration) return null
         val encryptedSource = File(vaultDir, entity.encryptedFileName)
         if (!encryptedSource.exists()) return null
 
         val previewFile = previewFile(entity.id)
         if (previewFile.exists() && previewFile.length() > 0L) {
-            return Uri.fromFile(previewFile)
+            return if (previewCacheGeneration.get() == expectedPreviewGeneration) {
+                Uri.fromFile(previewFile)
+            } else {
+                null
+            }
         }
 
         return runCatching {
@@ -350,11 +385,25 @@ class VaultService @Inject constructor(
             } ?: return@runCatching null
 
             previewFile.parentFile?.mkdirs()
-            previewFile.outputStream().use { output ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, PREVIEW_JPEG_QUALITY, output)
+            val tempPreview = File(
+                previewFile.parentFile,
+                ".${previewFile.name}.${UUID.randomUUID().toString().take(8)}.tmp",
+            )
+            try {
+                tempPreview.outputStream().use { output ->
+                    if (!bitmap.compress(Bitmap.CompressFormat.JPEG, PREVIEW_JPEG_QUALITY, output)) {
+                        throw IOException("Unable to encode Vault preview")
+                    }
+                }
+                if (previewCacheGeneration.get() != expectedPreviewGeneration) {
+                    return@runCatching null
+                }
+                authCrypto.renameAtomically(tempPreview, previewFile)
+                Uri.fromFile(previewFile)
+            } finally {
+                bitmap.recycle()
+                runCatching { tempPreview.delete() }
             }
-            bitmap.recycle()
-            Uri.fromFile(previewFile)
         }.getOrNull()
     }
 

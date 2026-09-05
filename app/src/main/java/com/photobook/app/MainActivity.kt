@@ -221,12 +221,28 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         isVaultBusy = false
     }
 
+    suspend fun loadVisibleVaultItems(session: VaultCryptoSession): List<VaultItem> {
+        if (!showVault) return emptyList()
+        val previewGeneration = vaultService.beginPreviewLoad()
+        val items = vaultService.listItems(
+            session = session,
+            includePreviews = true,
+            previewGeneration = previewGeneration,
+        )
+        return if (showVault) {
+            items
+        } else {
+            vaultService.clearPreviewCache()
+            emptyList()
+        }
+    }
+
     fun refreshVault(session: VaultCryptoSession) {
         showVault = true
         coroutineScope.launch {
             isVaultLoading = true
             runCatching {
-                vaultService.listItems(session = session, includePreviews = true)
+                loadVisibleVaultItems(session)
             }.onSuccess { items ->
                 vaultItems = items
             }.onFailure {
@@ -289,7 +305,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                     ).show()
                     viewModel.clearSelection()
                     vaultItems = runCatching {
-                        vaultService.listItems(session = session, includePreviews = true)
+                        loadVisibleVaultItems(session)
                     }.getOrDefault(emptyList())
                     if (protectedPhotos.isNotEmpty()) {
                         requestMoveToTrash(protectedPhotos)
@@ -329,7 +345,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                 is VaultExportResult.Success -> {
                     val removedFromVault = vaultService.deleteItem(item.id)
                     vaultItems = runCatching {
-                        vaultService.listItems(session = session, includePreviews = true)
+                        loadVisibleVaultItems(session)
                     }.getOrDefault(emptyList())
                     Toast.makeText(
                         context,
@@ -363,7 +379,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             val deleted = vaultService.deleteItem(item.id)
             if (deleted) {
                 vaultItems = runCatching {
-                    vaultService.listItems(session = session, includePreviews = true)
+                    loadVisibleVaultItems(session)
                 }.getOrDefault(emptyList())
             } else {
                 Toast.makeText(
