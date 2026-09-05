@@ -32,68 +32,57 @@ jobs:
               if import_anchor not in text:
                   raise SystemExit('MainActivity VaultService import anchor missing')
               text = text.replace(import_anchor, import_anchor + import_line, 1)
-
           start_marker = '    fun authenticateVault(onAuthenticated: (VaultCryptoSession) -> Unit) {\n'
           end_marker = '    fun requestMoveToTrash(photos: List<PhotoRecord>, archiveRetentionDays: Int? = null) {\n'
           start = text.find(start_marker)
           end = text.find(end_marker)
           if start < 0 or end < 0 or end <= start:
               raise SystemExit('MainActivity authenticateVault block anchors missing')
-          replacement = '    val authenticateVault = rememberVaultAuthenticator(vaultService)\n\n'
-          text = text[:start] + replacement + text[end:]
+          text = text[:start] + '    val authenticateVault = rememberVaultAuthenticator(vaultService)\n\n' + text[end:]
           main.write_text(text)
 
           service = Path('app/src/main/java/com/photobook/app/feature/vault/VaultService.kt')
           text = service.read_text()
-          anchor = '''    internal fun completeAuthentication(
-              preparation: VaultAuthPreparation,
-              authenticatedCipher: Cipher,
-          ): VaultCryptoSession = authCrypto.completeAuthentication(preparation, authenticatedCipher)
-          '''
-          insertion = '''
-
-              internal fun preparePreREnrollmentAfterCredential(): VaultPreRCredentialResult =
-                  authCrypto.preparePreREnrollmentAfterCredential()
-
-              internal fun preparePreRRecoveryAfterCredential(): VaultPreRCredentialResult =
-                  authCrypto.preparePreRRecoveryAfterCredential()
-
-              internal fun cancelAuthentication(preparation: VaultAuthPreparation) {
-                  authCrypto.cancelAuthentication(preparation)
-              }
-          '''
-          # Normalize indentation introduced by this workflow literal.
-          anchor = '\n'.join(line[4:] if line.startswith('    ') else line for line in anchor.splitlines())
-          insertion = '\n'.join(line[4:] if line.startswith('    ') else line for line in insertion.splitlines())
           if 'internal fun preparePreREnrollmentAfterCredential()' not in text:
-              if anchor not in text:
-                  raise SystemExit('VaultService authentication anchor missing')
-              text = text.replace(anchor, anchor + insertion, 1)
+              insert_at = text.find('    suspend fun listItems(\n')
+              if insert_at < 0:
+                  raise SystemExit('VaultService listItems anchor missing')
+              wrappers = (
+                  '    internal fun preparePreREnrollmentAfterCredential(): VaultPreRCredentialResult =\n'
+                  '        authCrypto.preparePreREnrollmentAfterCredential()\n\n'
+                  '    internal fun preparePreRRecoveryAfterCredential(): VaultPreRCredentialResult =\n'
+                  '        authCrypto.preparePreRRecoveryAfterCredential()\n\n'
+                  '    internal fun cancelAuthentication(preparation: VaultAuthPreparation) {\n'
+                  '        authCrypto.cancelAuthentication(preparation)\n'
+                  '    }\n\n'
+              )
+              text = text[:insert_at] + wrappers + text[insert_at:]
           service.write_text(text)
 
           crypto = Path('app/src/main/java/com/photobook/app/feature/vault/VaultAuthCrypto.kt')
           text = crypto.read_text()
-          marker = '''        val preparation = runCatching {
-              val key = getOrCreatePrimaryKey(policy)
-          '''
-          guard = '''        if (
-              policy == KeyPolicy.PRE_R_BIOMETRIC &&
-              BiometricManager.from(appContext).canAuthenticate(
-                  BiometricManager.Authenticators.BIOMETRIC_STRONG,
-              ) != BiometricManager.BIOMETRIC_SUCCESS
-          ) {
-              val session = existingSessionHandle?.let(::sessionFrom) ?: sessionFromSerialized(serialized)
-              serialized.fill(0)
-              return VaultPreRCredentialResult.CredentialOnly(session)
-          }
-
-          '''
-          marker = '\n'.join(line[4:] if line.startswith('    ') else line for line in marker.splitlines())
-          guard = '\n'.join(line[4:] if line.startswith('    ') else line for line in guard.splitlines())
           if 'policy == KeyPolicy.PRE_R_BIOMETRIC &&' not in text:
-              if marker not in text:
+              marker = (
+                  '        val preparation = runCatching {\n'
+                  '            val key = getOrCreatePrimaryKey(policy)\n'
+              )
+              pos = text.find(marker)
+              if pos < 0:
                   raise SystemExit('VaultAuthCrypto primary preparation anchor missing')
-              text = text.replace(marker, guard + marker, 1)
+              guard = (
+                  '        if (\n'
+                  '            policy == KeyPolicy.PRE_R_BIOMETRIC &&\n'
+                  '            BiometricManager.from(appContext).canAuthenticate(\n'
+                  '                BiometricManager.Authenticators.BIOMETRIC_STRONG,\n'
+                  '            ) != BiometricManager.BIOMETRIC_SUCCESS\n'
+                  '        ) {\n'
+                  '            val session = existingSessionHandle?.let(::sessionFrom)\n'
+                  '                ?: sessionFromSerialized(serialized)\n'
+                  '            serialized.fill(0)\n'
+                  '            return VaultPreRCredentialResult.CredentialOnly(session)\n'
+                  '        }\n\n'
+              )
+              text = text[:pos] + guard + text[pos:]
           crypto.write_text(text)
           PY
 
@@ -125,13 +114,9 @@ jobs:
           }
 
           /**
-           * Owns the complete Vault authentication UX while keeping the actual decrypt-capable key
-           * behind Android Keystore authentication.
-           *
-           * Android 11+ uses BiometricPrompt with a CryptoObject and strong biometric/device
-           * credential directly. Android 8-10 uses a strict biometric CryptoObject for normal
-           * unlock, plus the platform secure-lock-screen confirmation only when the dual-wrap
-           * recovery envelope must be created or recovered.
+           * Owns the complete Vault authentication UX while keeping the decrypt-capable key behind
+           * Android Keystore authentication. Android 11+ uses the CryptoObject prompt directly;
+           * Android 8-10 adds secure-lock-screen confirmation only for dual-wrap setup/recovery.
            */
           @Composable
           internal fun rememberVaultAuthenticator(
@@ -162,10 +147,10 @@ jobs:
                       showFailure()
                       return
                   }
-
-                  val canAuthenticate = BiometricManager.from(context)
-                      .canAuthenticate(preparation.promptAuthenticators)
-                  if (canAuthenticate != BiometricManager.BIOMETRIC_SUCCESS) {
+                  if (
+                      BiometricManager.from(context).canAuthenticate(preparation.promptAuthenticators) !=
+                      BiometricManager.BIOMETRIC_SUCCESS
+                  ) {
                       vaultService.cancelAuthentication(preparation)
                       showFailure()
                       return
@@ -209,7 +194,6 @@ jobs:
                           }
                       },
                   )
-
                   val builder = BiometricPrompt.PromptInfo.Builder()
                       .setTitle(context.getString(R.string.vault_biometric_title))
                       .setSubtitle(context.getString(R.string.vault_biometric_subtitle))
@@ -220,7 +204,6 @@ jobs:
                   ) {
                       builder.setNegativeButtonText(context.getString(android.R.string.cancel))
                   }
-
                   try {
                       prompt.authenticate(
                           builder.build(),
@@ -239,11 +222,9 @@ jobs:
                   val completion = pendingCompletion
                   pendingCredentialAction = null
                   pendingCompletion = null
-
                   if (result.resultCode != Activity.RESULT_OK || action == null || completion == null) {
                       return@rememberLauncherForActivityResult
                   }
-
                   val credentialResult = try {
                       when (action) {
                           VaultCredentialAction.SETUP ->
@@ -255,7 +236,6 @@ jobs:
                       showFailure()
                       return@rememberLauncherForActivityResult
                   }
-
                   when (credentialResult) {
                       is VaultPreRCredentialResult.CredentialOnly ->
                           completion(credentialResult.session)
@@ -282,12 +262,10 @@ jobs:
                   val intent = keyguard.createConfirmDeviceCredentialIntent(
                       context.getString(R.string.vault_biometric_title),
                       context.getString(R.string.vault_biometric_subtitle),
-                  )
-                  if (intent == null) {
+                  ) ?: run {
                       showFailure()
                       return
                   }
-
                   pendingCredentialAction = action
                   pendingCompletion = onAuthenticated
                   try {
@@ -318,7 +296,6 @@ jobs:
           KOTLIN
 
           rm .github/workflows/vault-prer-recovery-v3-wire.yml
-
           git diff --check
           git status --short
           git config user.name "github-actions[bot]"
