@@ -1,0 +1,376 @@
+name: CodeQL Fix Proof (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-codeql-fix-proof
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  prove:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      CANDIDATE_SHA: 04909b6e485c1ede12160aeac136598bee8d303f
+    steps:
+      - name: Checkout disposable branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Prove branch starts from exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e "$CANDIDATE_SHA^{commit}"
+          changed="$(git diff --name-only "$CANDIDATE_SHA"...HEAD)"
+          printf '%s\n' "$changed" | tee proof-branch-delta.txt
+          test "$(printf '%s\n' "$changed" | sed '/^$/d' | wc -l)" -eq 1
+          grep -Fxq '.github/workflows/codeql-fix-proof.yml' proof-branch-delta.txt
+
+      - name: Apply candidate-only security patch in workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > app/src/main/java/com/photobook/app/feature/vault/VaultAuthCrypto.kt <<'KOTLIN'
+          package com.photobook.app.feature.vault
+
+          import android.os.Build
+          import android.security.keystore.KeyGenParameterSpec
+          import android.security.keystore.KeyPermanentlyInvalidatedException
+          import android.security.keystore.KeyProperties
+          import androidx.biometric.BiometricPrompt
+          import java.security.KeyPair
+          import java.security.KeyPairGenerator
+          import java.security.KeyStore
+          import java.security.SecureRandom
+          import java.security.Signature
+          import java.security.spec.ECGenParameterSpec
+
+          internal object VaultAuthCrypto {
+              private const val KEY_ALIAS = "photobook_vault_auth_v1"
+              private const val KEYSTORE = "AndroidKeyStore"
+              private const val SIGNATURE_ALGORITHM = "SHA256withECDSA"
+              private const val CURVE = "secp256r1"
+              private const val CHALLENGE_BYTES = 32
+
+              internal data class PendingAuthentication(
+                  val cryptoObject: BiometricPrompt.CryptoObject,
+                  val challenge: ByteArray,
+              ) {
+                  fun clear() {
+                      challenge.fill(0)
+                  }
+              }
+
+              fun prepareAuthentication(): PendingAuthentication {
+                  val signature = createSigningOperationWithRecovery()
+                  val challenge = ByteArray(CHALLENGE_BYTES).also(SecureRandom()::nextBytes)
+                  return PendingAuthentication(
+                      cryptoObject = BiometricPrompt.CryptoObject(signature),
+                      challenge = challenge,
+                  )
+              }
+
+              fun verifySignedChallenge(challenge: ByteArray, signedChallenge: ByteArray): Boolean {
+                  if (challenge.size != CHALLENGE_BYTES || signedChallenge.isEmpty()) return false
+                  return runCatching {
+                      val publicKey = keyStore().getCertificate(KEY_ALIAS)?.publicKey ?: return false
+                      val verifier = Signature.getInstance(SIGNATURE_ALGORITHM)
+                      verifier.initVerify(publicKey)
+                      verifier.update(challenge)
+                      verifier.verify(signedChallenge)
+                  }.getOrDefault(false)
+              }
+
+              private fun createSigningOperationWithRecovery(): Signature {
+                  return try {
+                      createSigningOperation(ensureKeyPair())
+                  } catch (_: KeyPermanentlyInvalidatedException) {
+                      keyStore().deleteEntry(KEY_ALIAS)
+                      createSigningOperation(generateKeyPair())
+                  }
+              }
+
+              private fun createSigningOperation(keyPair: KeyPair): Signature {
+                  return Signature.getInstance(SIGNATURE_ALGORITHM).apply {
+                      initSign(keyPair.private)
+                  }
+              }
+
+              private fun ensureKeyPair(): KeyPair {
+                  val store = keyStore()
+                  val entry = store.getEntry(KEY_ALIAS, null) as? KeyStore.PrivateKeyEntry
+                  return if (entry != null) {
+                      KeyPair(entry.certificate.publicKey, entry.privateKey)
+                  } else {
+                      generateKeyPair()
+                  }
+              }
+
+              private fun generateKeyPair(): KeyPair {
+                  val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, KEYSTORE)
+                  val builder = KeyGenParameterSpec.Builder(
+                      KEY_ALIAS,
+                      KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
+                  )
+                      .setAlgorithmParameterSpec(ECGenParameterSpec(CURVE))
+                      .setDigests(KeyProperties.DIGEST_SHA256)
+                      .setUserAuthenticationRequired(true)
+
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                      builder.setUserAuthenticationParameters(
+                          0,
+                          KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL,
+                      )
+                  } else {
+                      @Suppress("DEPRECATION")
+                      builder.setUserAuthenticationValidityDurationSeconds(-1)
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                          builder.setInvalidatedByBiometricEnrollment(true)
+                      }
+                  }
+
+                  generator.initialize(builder.build())
+                  return generator.generateKeyPair()
+              }
+
+              private fun keyStore(): KeyStore {
+                  return KeyStore.getInstance(KEYSTORE).apply { load(null) }
+              }
+          }
+          KOTLIN
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          main = Path('app/src/main/java/com/photobook/app/MainActivity.kt')
+          text = main.read_text()
+          import_old = 'import com.photobook.app.feature.vault.VaultService\n'
+          import_new = import_old + 'import com.photobook.app.feature.vault.VaultAuthCrypto\n'
+          assert text.count(import_old) == 1
+          text = text.replace(import_old, import_new, 1)
+
+          old = '''    fun authenticateVault(onAuthenticated: () -> Unit) {
+              val activity = context as? FragmentActivity
+              if (activity == null) {
+                  Toast.makeText(
+                      context,
+                      context.getString(R.string.vault_biometric_failed),
+                      Toast.LENGTH_SHORT,
+                  ).show()
+                  return
+              }
+              val authenticators = vaultAuthenticators()
+              val canAuthenticate = BiometricManager.from(context).canAuthenticate(authenticators)
+              if (canAuthenticate != BiometricManager.BIOMETRIC_SUCCESS) {
+                  Toast.makeText(
+                      context,
+                      context.getString(R.string.vault_biometric_failed),
+                      Toast.LENGTH_SHORT,
+                  ).show()
+                  return
+              }
+
+              val prompt = BiometricPrompt(
+                  activity,
+                  ContextCompat.getMainExecutor(context),
+                  object : BiometricPrompt.AuthenticationCallback() {
+                      override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                          onAuthenticated()
+                      }
+
+                      override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                          if (errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON &&
+                              errorCode != BiometricPrompt.ERROR_USER_CANCELED &&
+                              errorCode != BiometricPrompt.ERROR_CANCELED
+                          ) {
+                              Toast.makeText(context, errString, Toast.LENGTH_SHORT).show()
+                          }
+                      }
+                  },
+              )
+              val promptInfo = BiometricPrompt.PromptInfo.Builder()
+                  .setTitle(context.getString(R.string.vault_biometric_title))
+                  .setSubtitle(context.getString(R.string.vault_biometric_subtitle))
+                  .setAllowedAuthenticators(authenticators)
+                  .build()
+              prompt.authenticate(promptInfo)
+          }
+          '''
+          new = '''    fun authenticateVault(onAuthenticated: () -> Unit) {
+              val activity = context as? FragmentActivity
+              if (activity == null) {
+                  Toast.makeText(
+                      context,
+                      context.getString(R.string.vault_biometric_failed),
+                      Toast.LENGTH_SHORT,
+                  ).show()
+                  return
+              }
+              val authenticators = vaultAuthenticators()
+              val canAuthenticate = BiometricManager.from(context).canAuthenticate(authenticators)
+              if (canAuthenticate != BiometricManager.BIOMETRIC_SUCCESS) {
+                  Toast.makeText(
+                      context,
+                      context.getString(R.string.vault_biometric_failed),
+                      Toast.LENGTH_SHORT,
+                  ).show()
+                  return
+              }
+
+              val pending = runCatching { VaultAuthCrypto.prepareAuthentication() }.getOrNull()
+              if (pending == null) {
+                  Toast.makeText(
+                      context,
+                      context.getString(R.string.vault_biometric_failed),
+                      Toast.LENGTH_SHORT,
+                  ).show()
+                  return
+              }
+
+              val prompt = BiometricPrompt(
+                  activity,
+                  ContextCompat.getMainExecutor(context),
+                  object : BiometricPrompt.AuthenticationCallback() {
+                      override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                          val authenticated = runCatching {
+                              val signature = requireNotNull(result.cryptoObject?.signature)
+                              signature.update(pending.challenge)
+                              val signedChallenge = signature.sign()
+                              VaultAuthCrypto.verifySignedChallenge(pending.challenge, signedChallenge)
+                          }.getOrDefault(false)
+                          pending.clear()
+                          if (authenticated) {
+                              onAuthenticated()
+                          } else {
+                              Toast.makeText(
+                                  context,
+                                  context.getString(R.string.vault_biometric_failed),
+                                  Toast.LENGTH_SHORT,
+                              ).show()
+                          }
+                      }
+
+                      override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                          pending.clear()
+                          if (errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON &&
+                              errorCode != BiometricPrompt.ERROR_USER_CANCELED &&
+                              errorCode != BiometricPrompt.ERROR_CANCELED
+                          ) {
+                              Toast.makeText(context, errString, Toast.LENGTH_SHORT).show()
+                          }
+                      }
+                  },
+              )
+              val promptInfo = BiometricPrompt.PromptInfo.Builder()
+                  .setTitle(context.getString(R.string.vault_biometric_title))
+                  .setSubtitle(context.getString(R.string.vault_biometric_subtitle))
+                  .setAllowedAuthenticators(authenticators)
+                  .build()
+              runCatching {
+                  prompt.authenticate(promptInfo, pending.cryptoObject)
+              }.onFailure {
+                  pending.clear()
+                  Toast.makeText(
+                      context,
+                      context.getString(R.string.vault_biometric_failed),
+                      Toast.LENGTH_SHORT,
+                  ).show()
+              }
+          }
+          '''
+          assert text.count(old) == 1, 'authenticateVault source drift'
+          main.write_text(text.replace(old, new, 1))
+
+          dup = Path('app/src/main/java/com/photobook/app/feature/duplicates/DuplicatePhotoFinder.kt')
+          d = dup.read_text()
+          old_digest = 'MessageDigest.getInstance("MD5")'
+          assert d.count(old_digest) == 1
+          dup.write_text(d.replace(old_digest, 'MessageDigest.getInstance("SHA-256")', 1))
+          PY
+
+          mapfile -t changed < <(git diff --name-only | sort)
+          printf '%s\n' "${changed[@]}" | tee proof-production-delta.txt
+          test "${#changed[@]}" -eq 3
+          printf '%s\n' "${changed[@]}" | grep -Fxq 'app/src/main/java/com/photobook/app/MainActivity.kt'
+          printf '%s\n' "${changed[@]}" | grep -Fxq 'app/src/main/java/com/photobook/app/feature/duplicates/DuplicatePhotoFinder.kt'
+          printf '%s\n' "${changed[@]}" | grep -Fxq 'app/src/main/java/com/photobook/app/feature/vault/VaultAuthCrypto.kt'
+          ! grep -R 'MessageDigest.getInstance("MD5")' app/src/main/java
+          grep -Fq 'result.cryptoObject?.signature' app/src/main/java/com/photobook/app/MainActivity.kt
+          grep -Fq 'prompt.authenticate(promptInfo, pending.cryptoObject)' app/src/main/java/com/photobook/app/MainActivity.kt
+          grep -Fq '.setUserAuthenticationRequired(true)' app/src/main/java/com/photobook/app/feature/vault/VaultAuthCrypto.kt
+          grep -Fq 'KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL' app/src/main/java/com/photobook/app/feature/vault/VaultAuthCrypto.kt
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: java-kotlin
+          build-mode: manual
+          queries: security-extended
+
+      - name: Compile, unit-test, lint and release-build patched candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease :app:bundleRelease
+          manifest="$(find app/build/intermediates/merged_manifest/release -type f -name AndroidManifest.xml -print -quit)"
+          test -f "$manifest"
+          ! grep -q 'android.permission.INTERNET' "$manifest"
+          echo 'patched_release_manifest_internet=ABSENT' | tee codeql-fix-summary.txt
+
+      - name: Analyze patched candidate
+        uses: github/codeql-action/analyze@v4
+        with:
+          upload: never
+          output: ${{ github.workspace }}/codeql-results
+          category: /language:java-kotlin/photobook-codeql-fix-proof
+
+      - name: Require zero CodeQL security results
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee -a codeql-fix-summary.txt
+          import json
+          from pathlib import Path
+          files = sorted(Path('codeql-results').rglob('*.sarif'))
+          if not files:
+              raise SystemExit('FAIL: no SARIF produced')
+          results = []
+          for path in files:
+              data = json.loads(path.read_text())
+              for run in data.get('runs', []):
+                  results.extend(run.get('results', []))
+          print(f'sarif_files={len(files)}')
+          print(f'codeql_results={len(results)}')
+          for result in results:
+              print('rule=' + result.get('ruleId', '<unknown>'))
+              print('message=' + result.get('message', {}).get('text', ''))
+          if results:
+              raise SystemExit('FAIL: patched candidate still has CodeQL security findings')
+          print('codeql_security_extended=PASS_ZERO_FINDINGS')
+          PY
+
+      - name: Upload proof
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: codeql-fix-proof-${{ github.run_id }}
+          path: |
+            codeql-fix-summary.txt
+            proof-branch-delta.txt
+            proof-production-delta.txt
+            codeql-results/
+          retention-days: 14
+          if-no-files-found: warn
