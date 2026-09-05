@@ -7,6 +7,7 @@ on:
     paths:
       - tools/benchmark/run_api26_arm32_compatibility.sh
       - tools/benchmark/run_phase5_release_gate.sh
+      - tools/release/verify_signed_aab.sh
       - .github/workflows/phase5-release-gate-static.yml
 
 permissions:
@@ -19,10 +20,15 @@ jobs:
     env:
       CANDIDATE_SHA: 9fd29f9987f6879f330b5b9cb4f33cde3c9b6d23
       EXPECTED_ARM32_BLOB: feaefac4e1ffce2f428b02fe74906349e4472556
+      EXPECTED_SIGNER_VERIFIER_BLOB: 0f28c06230cb494f7951373d857e72ba2b2444cc
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
 
       - name: Prove tooling-only scope
         shell: bash
@@ -34,9 +40,11 @@ jobs:
             .github/workflows/phase5-release-gate-static.yml
             tools/benchmark/run_api26_arm32_compatibility.sh
             tools/benchmark/run_phase5_release_gate.sh
+            tools/release/verify_signed_aab.sh
           )
           [[ "${changed[*]}" == "${expected[*]}" ]]
           [[ "$(git hash-object tools/benchmark/run_api26_arm32_compatibility.sh)" == "$EXPECTED_ARM32_BLOB" ]]
+          [[ "$(git hash-object tools/release/verify_signed_aab.sh)" == "$EXPECTED_SIGNER_VERIFIER_BLOB" ]]
           if git diff --name-only "$CANDIDATE_SHA"..HEAD -- app/ baselineprofile/ gradle/ build.gradle.kts settings.gradle.kts | grep -q .; then
             echo 'Production/build source changed on tooling branch' >&2
             exit 1
@@ -49,6 +57,7 @@ jobs:
           set -euo pipefail
           bash -n tools/benchmark/run_api26_arm32_compatibility.sh
           bash -n tools/benchmark/run_phase5_release_gate.sh
+          bash -n tools/release/verify_signed_aab.sh
           echo phase5_tooling_syntax=PASS
 
       - name: Prove fail-closed dispatcher validation
@@ -76,3 +85,44 @@ jobs:
           expect_exit 2 short_api29 env MODE=api29-scale LIBRARY_SIZE=10000 STRESS_ITERATIONS=11 bash "$script"
           grep -Fq "$CANDIDATE_SHA" "$script"
           echo phase5_dispatcher_fail_closed=PASS
+
+      - name: Prove final signed-AAB verifier fails closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          verifier=tools/release/verify_signed_aab.sh
+          payload="$RUNNER_TEMP/payload"
+          unsigned="$RUNNER_TEMP/unsigned.aab"
+          signed="$RUNNER_TEMP/signed.aab"
+          keystore="$RUNNER_TEMP/throwaway.jks"
+          mkdir -p "$payload"
+          echo 'PhotoBook signer verifier fixture' > "$payload/payload.txt"
+          jar --create --file "$unsigned" -C "$payload" .
+
+          expect_exit() {
+            local expected="$1" name="$2"; shift 2
+            set +e
+            "$@" >"$RUNNER_TEMP/$name.out" 2>"$RUNNER_TEMP/$name.err"
+            rc=$?
+            set -e
+            if [[ "$rc" != "$expected" ]]; then
+              cat "$RUNNER_TEMP/$name.out"
+              cat "$RUNNER_TEMP/$name.err" >&2
+              echo "$name expected rc=$expected got rc=$rc" >&2
+              exit 1
+            fi
+          }
+
+          expect_exit 2 missing_fingerprint env -u EXPECTED_UPLOAD_CERT_SHA256 bash "$verifier" "$unsigned"
+          expect_exit 1 unsigned env EXPECTED_UPLOAD_CERT_SHA256="$(printf '0%.0s' {1..64})" bash "$verifier" "$unsigned"
+
+          keytool -genkeypair -keystore "$keystore" -storepass android -keypass android -alias upload -keyalg RSA -keysize 2048 -validity 2 -dname 'CN=PhotoBook CI Throwaway,O=PhotoBook,C=US' -noprompt >/dev/null 2>&1
+          cp "$unsigned" "$signed"
+          jarsigner -keystore "$keystore" -storepass android -keypass android "$signed" upload >/dev/null
+          fingerprint="$(keytool -list -v -keystore "$keystore" -storepass android -alias upload | sed -n 's/^[[:space:]]*SHA256:[[:space:]]*//p' | head -n 1)"
+          test -n "$fingerprint"
+
+          EXPECTED_UPLOAD_CERT_SHA256="$fingerprint" REPORT_DIR="$RUNNER_TEMP/correct" bash "$verifier" "$signed"
+          grep -Fx 'signed_aab_verification=PASS' "$RUNNER_TEMP/correct/result.txt"
+          expect_exit 1 wrong_signer env EXPECTED_UPLOAD_CERT_SHA256="$(printf 'F%.0s' {1..64})" REPORT_DIR="$RUNNER_TEMP/wrong" bash "$verifier" "$signed"
+          echo final_signed_aab_verifier=PASS
