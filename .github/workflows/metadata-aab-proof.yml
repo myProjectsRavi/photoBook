@@ -1,0 +1,124 @@
+name: PhotoBook 2.0.15 Metadata AAB Proof (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-metadata-aab-proof
+    paths:
+      - .github/workflows/metadata-aab-proof.yml
+
+permissions:
+  contents: read
+
+jobs:
+  metadata-aab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      METADATA_HEAD_SHA: eed395ff7f4428b283287aba5c8709b6a84ec31a
+      HARNESS_PATH: .github/workflows/metadata-aab-proof.yml
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Prove harness-only delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "$METADATA_HEAD_SHA"...HEAD)"
+          printf '%s\n' "$changed"
+          test "$changed" = "$HARNESS_PATH"
+
+      - uses: actions/checkout@v6
+        with:
+          ref: eed395ff7f4428b283287aba5c8709b6a84ec31a
+          fetch-depth: 1
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Build exact metadata candidate AAB
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$METADATA_HEAD_SHA"
+          test -z "$(git status --porcelain)"
+          chmod +x ./gradlew
+          ./gradlew :app:bundleRelease :app:verifyReleaseBundleSize :app:printReleaseMetadata | tee "$RUNNER_TEMP/build.txt"
+          grep -Fxq 'versionCode=22' "$RUNNER_TEMP/build.txt"
+          grep -Fxq 'versionName=2.0.15' "$RUNNER_TEMP/build.txt"
+          grep -Fxq 'targetSdk=36' "$RUNNER_TEMP/build.txt"
+          test -f app/build/outputs/bundle/release/app-release.aab
+
+      - name: Verify AAB identity and unsigned state
+        shell: bash
+        run: |
+          set -euo pipefail
+          report=build/reports/metadata-aab-proof
+          mkdir -p "$report"
+          aab=app/build/outputs/bundle/release/app-release.aab
+          {
+            echo "metadata_head_sha=$METADATA_HEAD_SHA"
+            echo "aab_bytes=$(stat -c %s "$aab")"
+            echo "aab_sha256=$(sha256sum "$aab" | awk '{print $1}')"
+            echo 'versionCode=22'
+            echo 'versionName=2.0.15'
+            echo 'targetSdk=36'
+          } | tee "$report/aab-identity.txt"
+          jarsigner -verify -verbose -certs "$aab" > "$report/jarsigner.txt" 2>&1 || true
+          cat "$report/jarsigner.txt"
+          if zipinfo -1 "$aab" | grep -Eq '^META-INF/[^/]+\.(RSA|DSA|EC)$'; then
+            echo 'FAIL: dry-run candidate unexpectedly contains a JAR signature block' >&2
+            exit 1
+          fi
+          grep -qi 'jar is unsigned' "$report/jarsigner.txt"
+          echo 'aab_signing_state=UNSIGNED' | tee -a "$report/aab-identity.txt"
+
+      - name: Verify bundletool Play delivery
+        shell: bash
+        run: |
+          set -euo pipefail
+          report=build/reports/metadata-aab-proof
+          curl -fL --retry 3 --retry-delay 2 -o bundletool.jar https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar
+          echo 'a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29  bundletool.jar' | sha256sum -c -
+          echo "bundletool_version=$(java -jar bundletool.jar version)" | tee "$report/play-delivery.txt"
+          cat > "$report/arm64-api36.json" <<'JSON'
+          {"supportedAbis":["arm64-v8a"],"supportedLocales":["en"],"screenDensity":420,"sdkVersion":36}
+          JSON
+          cat > "$report/armeabi-api26.json" <<'JSON'
+          {"supportedAbis":["armeabi-v7a"],"supportedLocales":["en"],"screenDensity":320,"sdkVersion":26}
+          JSON
+          for spec in arm64-api36 armeabi-api26; do
+            java -jar bundletool.jar build-apks \
+              --bundle=app/build/outputs/bundle/release/app-release.aab \
+              --output="$report/$spec.apks" \
+              --device-spec="$report/$spec.json" \
+              --overwrite
+            csv="$report/$spec-size.csv"
+            java -jar bundletool.jar get-size total \
+              --apks="$report/$spec.apks" \
+              --device-spec="$report/$spec.json" > "$csv"
+            cat "$csv" | tee -a "$report/play-delivery.txt"
+            test "$(head -n 1 "$csv" | tr -d '\r')" = 'MIN,MAX'
+            values="$(tail -n 1 "$csv" | tr -d '\r')"
+            maximum="${values##*,}"
+            [[ "$maximum" =~ ^[0-9]+$ ]]
+            limit=$((15 * 1024 * 1024))
+            mib="$(awk -v b="$maximum" 'BEGIN { printf "%.3f", b/1024/1024 }')"
+            echo "device=$spec delivered_max_bytes=$maximum delivered_max_mib=$mib" | tee -a "$report/play-delivery.txt"
+            test "$maximum" -lt "$limit"
+          done
+
+      - name: Upload metadata-correct candidate AAB
+        uses: actions/upload-artifact@v7
+        with:
+          name: photobook-2.0.15-vc22-unsigned-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            app/build/outputs/bundle/release/app-release.aab
+            build/reports/metadata-aab-proof/
