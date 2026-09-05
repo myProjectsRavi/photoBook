@@ -1,0 +1,344 @@
+name: Vault Auth-Bound Envelope Feasibility v2 (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-vault-envelope-feasibility-v2
+
+permissions:
+  contents: read
+
+jobs:
+  feasibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      CANDIDATE_SHA: 04909b6e485c1ede12160aeac136598bee8d303f
+      BASELINE_AAB_BYTES: 20366822
+    steps:
+      - name: Checkout disposable proof branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Install emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+
+      - name: Prepare exact candidate plus ephemeral crypto proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "$CANDIDATE_SHA"
+          rm -rf "$RUNNER_TEMP/candidate"
+          git worktree add --detach "$RUNNER_TEMP/candidate" "$CANDIDATE_SHA"
+          test "$(git -C "$RUNNER_TEMP/candidate" rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git -C "$RUNNER_TEMP/candidate" status --porcelain)"
+          cd "$RUNNER_TEMP/candidate"
+          chmod +x ./gradlew
+
+          ./gradlew :app:dependencyInsight --dependency tink-android --configuration debugRuntimeClasspath \
+            > "$GITHUB_WORKSPACE/tink-before.txt" || true
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/build.gradle.kts')
+          s = p.read_text()
+          anchor = '    implementation("androidx.security:security-crypto:1.1.0-alpha06")\n'
+          assert s.count(anchor) == 1, 'expected exact security-crypto dependency anchor'
+          p.write_text(s.replace(anchor, anchor + '    implementation("com.google.crypto.tink:tink-android:1.23.0")\n'))
+          PY
+
+          mkdir -p app/src/androidTest/java/com/photobook/app/feature/vault
+          cat > app/src/androidTest/java/com/photobook/app/feature/vault/VaultEnvelopeFeasibilityInstrumentedTest.kt <<'KOTLIN'
+          package com.photobook.app.feature.vault
+
+          import android.os.Build
+          import android.security.keystore.KeyGenParameterSpec
+          import android.security.keystore.KeyInfo
+          import android.security.keystore.KeyProperties
+          import android.security.keystore.UserNotAuthenticatedException
+          import androidx.test.ext.junit.runners.AndroidJUnit4
+          import com.google.crypto.tink.InsecureSecretKeyAccess
+          import com.google.crypto.tink.KeysetHandle
+          import com.google.crypto.tink.StreamingAead
+          import com.google.crypto.tink.TinkProtoKeysetFormat
+          import com.google.crypto.tink.streamingaead.PredefinedStreamingAeadParameters
+          import com.google.crypto.tink.streamingaead.StreamingAeadConfig
+          import java.io.ByteArrayInputStream
+          import java.io.ByteArrayOutputStream
+          import java.security.KeyStore
+          import javax.crypto.Cipher
+          import javax.crypto.KeyGenerator
+          import javax.crypto.SecretKeyFactory
+          import org.junit.After
+          import org.junit.Assert.assertArrayEquals
+          import org.junit.Assert.assertEquals
+          import org.junit.Assert.assertFalse
+          import org.junit.Assert.assertTrue
+          import org.junit.Test
+          import org.junit.runner.RunWith
+
+          @RunWith(AndroidJUnit4::class)
+          class VaultEnvelopeFeasibilityInstrumentedTest {
+              private val alias = "photobook_vault_auth_feasibility_v2"
+
+              @After
+              fun cleanup() {
+                  runCatching {
+                      KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(alias)
+                  }
+              }
+
+              @Test
+              fun streamingAeadSerializedKeyset_roundTripsAndRejectsWrongAssociatedData() {
+                  StreamingAeadConfig.register()
+                  val handle = KeysetHandle.generateNew(
+                      PredefinedStreamingAeadParameters.AES256_GCM_HKDF_4KB,
+                  )
+                  val serialized = TinkProtoKeysetFormat.serializeKeyset(
+                      handle,
+                      InsecureSecretKeyAccess.get(),
+                  )
+                  assertTrue("serialized keyset must not be empty", serialized.isNotEmpty())
+
+                  val reparsed = TinkProtoKeysetFormat.parseKeyset(
+                      serialized,
+                      InsecureSecretKeyAccess.get(),
+                  )
+                  val streaming = reparsed.getPrimitive(StreamingAead::class.java)
+                  val aad = "photobook-vault:v2:item-123".encodeToByteArray()
+                  val plaintext = ByteArray(2 * 1024 * 1024) { index -> (index % 251).toByte() }
+
+                  val encryptedBytes = ByteArrayOutputStream().use { encrypted ->
+                      streaming.newEncryptingStream(encrypted, aad).use { output ->
+                          output.write(plaintext)
+                      }
+                      encrypted.toByteArray()
+                  }
+                  assertTrue("ciphertext must not be empty", encryptedBytes.isNotEmpty())
+                  assertFalse("ciphertext must differ from plaintext", encryptedBytes.contentEquals(plaintext))
+
+                  val decrypted = streaming.newDecryptingStream(
+                      ByteArrayInputStream(encryptedBytes),
+                      aad,
+                  ).use { it.readBytes() }
+                  assertArrayEquals(plaintext, decrypted)
+
+                  val wrongAad = runCatching {
+                      streaming.newDecryptingStream(
+                          ByteArrayInputStream(encryptedBytes),
+                          "photobook-vault:v2:wrong-item".encodeToByteArray(),
+                      ).use { it.readBytes() }
+                  }
+                  assertTrue("wrong associated data must be rejected", wrongAad.isFailure)
+              }
+
+              @Test
+              fun androidKeystoreAuthPerUseKey_rejectsUseBeforeAuthentication() {
+                  check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                      "Hosted proof is intentionally API30+; API26-29 remains a physical compatibility gate"
+                  }
+
+                  val keyGenerator = KeyGenerator.getInstance(
+                      KeyProperties.KEY_ALGORITHM_AES,
+                      "AndroidKeyStore",
+                  )
+                  val spec = KeyGenParameterSpec.Builder(
+                      alias,
+                      KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+                  )
+                      .setKeySize(256)
+                      .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                      .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                      .setUserAuthenticationRequired(true)
+                      .setUserAuthenticationParameters(
+                          0,
+                          KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL,
+                      )
+                      .build()
+                  keyGenerator.init(spec)
+                  val key = keyGenerator.generateKey()
+
+                  val factory = SecretKeyFactory.getInstance(key.algorithm, "AndroidKeyStore")
+                  val info = factory.getKeySpec(key, KeyInfo::class.java) as KeyInfo
+                  assertTrue("Keystore key must require user authentication", info.isUserAuthenticationRequired)
+                  assertEquals(0, info.userAuthenticationValidityDurationSeconds)
+
+                  val unauthenticatedUse = runCatching {
+                      val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                      cipher.init(Cipher.ENCRYPT_MODE, key)
+                      cipher.doFinal("must-not-encrypt-before-auth".encodeToByteArray())
+                  }
+                  assertTrue("auth-per-use operation must fail before authentication", unauthenticatedUse.isFailure)
+                  assertTrue(
+                      "failure must specifically represent missing user authentication: ${unauthenticatedUse.exceptionOrNull()}",
+                      isAuthenticationRequiredFailure(unauthenticatedUse.exceptionOrNull()),
+                  )
+              }
+
+              private fun isAuthenticationRequiredFailure(error: Throwable?): Boolean {
+                  var current = error
+                  while (current != null) {
+                      if (current is UserNotAuthenticatedException) return true
+                      val message = current.message.orEmpty()
+                      if (
+                          message.contains("Key user not authenticated", ignoreCase = true) ||
+                          message.contains("KEY_USER_NOT_AUTHENTICATED", ignoreCase = true)
+                      ) {
+                          return true
+                      }
+                      current = current.cause
+                  }
+                  return false
+              }
+          }
+          KOTLIN
+
+          changed="$( { git diff --name-only; git ls-files --others --exclude-standard; } | sort -u)"
+          expected=$'app/build.gradle.kts\napp/src/androidTest/java/com/photobook/app/feature/vault/VaultEnvelopeFeasibilityInstrumentedTest.kt'
+          [[ "$changed" == "$expected" ]]
+          git diff -- app/build.gradle.kts > "$GITHUB_WORKSPACE/ephemeral-build-patch.diff"
+          printf 'candidate_sha=%s\nproduction_candidate_modified=NO\nephemeral_files=2\n' "$CANDIDATE_SHA" > "$GITHUB_WORKSPACE/report.txt"
+
+      - name: Verify complete patched build and release-size budget
+        working-directory: ${{ runner.temp }}/candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew :app:dependencyInsight --dependency tink-android --configuration debugRuntimeClasspath \
+            | tee "$GITHUB_WORKSPACE/tink-after.txt"
+          grep -Fq 'com.google.crypto.tink:tink-android:1.23.0' "$GITHUB_WORKSPACE/tink-after.txt"
+
+          ./gradlew :app:compileDebugAndroidTestKotlin
+          ./gradlew \
+            :app:testDebugUnitTest \
+            :app:lintDebug \
+            :app:assembleDebug \
+            :app:assembleDebugAndroidTest \
+            :app:assembleRelease \
+            :app:bundleRelease \
+            :app:verifyReleaseBundleSize
+
+          aab="$(find app/build/outputs/bundle/release -type f -name '*.aab' -print -quit)"
+          test -f "$aab"
+          patched_bytes="$(stat -c '%s' "$aab")"
+          delta_bytes="$((patched_bytes - BASELINE_AAB_BYTES))"
+          printf 'patched_release_aab_bytes=%s\nbaseline_release_aab_bytes=%s\npatched_aab_delta_bytes=%s\n' \
+            "$patched_bytes" "$BASELINE_AAB_BYTES" "$delta_bytes" | tee -a "$GITHUB_WORKSPACE/report.txt"
+          (( patched_bytes <= 20 * 1024 * 1024 ))
+          echo 'patched_build_stack=PASS' | tee -a "$GITHUB_WORKSPACE/report.txt"
+
+      - name: Boot API35 emulator with secure credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort | tail -n1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager | sort | tail -n1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          IMAGE='system-images;android-35;google_apis;x86_64'
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 emulator "$IMAGE"
+          echo no | "$AVDMANAGER" create avd --force --name pb-vault-envelope-v2 --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/pb-vault-envelope-v2.avd"
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+          nohup "$EMULATOR" -avd pb-vault-envelope-v2 -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 4096 -cores 2 > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 150); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/emulator.log"; exit 1; }
+            sleep 2
+          done
+          "$ADB" wait-for-device
+          for _ in $(seq 1 150); do
+            [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break
+            sleep 2
+          done
+          [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
+          "$ADB" shell locksettings set-pin 2468
+          "$ADB" shell locksettings verify --old 2468
+          [[ "$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')" == 35 ]]
+          abilist="$("$ADB" shell getprop ro.product.cpu.abilist | tr -d '\r')"
+          [[ ",$abilist," == *,arm64-v8a,* ]]
+          echo 'secure_credential_setup=PASS' | tee -a "$GITHUB_WORKSPACE/report.txt"
+
+      - name: Run exact-source ARM64 offline runtime proof
+        working-directory: ${{ runner.temp }}/candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt | sort -V | tail -n1)"
+          uid="$(id -u)"
+          REPORT="$GITHUB_WORKSPACE/report.txt"
+
+          app_apk="$(find app/build/outputs/apk/debug -type f -name '*arm64-v8a*.apk' -print -quit)"
+          test_apk="$(find app/build/outputs/apk/androidTest/debug -type f -name '*.apk' -print -quit)"
+          test -f "$app_apk" && test -f "$test_apk"
+          ! "$AAPT" dump permissions "$app_apk" | grep -q 'android.permission.INTERNET'
+          sha256sum "$app_apk" | tee -a "$REPORT"
+          "$ADB" install -r "$app_apk" | tee "$RUNNER_TEMP/install-app.txt"
+          "$ADB" install -r "$test_apk" | tee "$RUNNER_TEMP/install-test.txt"
+          grep -Fq Success "$RUNNER_TEMP/install-app.txt"
+          grep -Fq Success "$RUNNER_TEMP/install-test.txt"
+          installed_abi="$("$ADB" shell dumpsys package com.photobook.app | sed -n 's/.*primaryCpuAbi=//p' | head -n1 | tr -d '\r' | xargs)"
+          [[ "$installed_abi" == arm64-v8a ]]
+          echo "installed_primary_cpu_abi=$installed_abi" | tee -a "$REPORT"
+
+          "$ADB" shell cmd connectivity airplane-mode enable || true
+          "$ADB" shell svc wifi disable || true
+          "$ADB" shell svc data disable || true
+          sudo iptables -I OUTPUT 1 -o lo -j ACCEPT
+          sudo iptables -I OUTPUT 2 -m owner --uid-owner "$uid" -j REJECT
+          cleanup() {
+            sudo iptables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null || true
+            sudo iptables -D OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          [[ "$("$ADB" shell settings get global airplane_mode_on | tr -d '\r')" == 1 ]]
+          if curl -fsS --connect-timeout 2 --max-time 3 https://www.google.com >/dev/null 2>&1; then exit 1; fi
+          echo 'offline_network_gate=PASS' | tee -a "$REPORT"
+
+          instrumentation="$("$ADB" shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
+          test -n "$instrumentation"
+          "$ADB" logcat -c
+          "$ADB" shell am instrument -w -r \
+            -e class com.photobook.app.feature.vault.VaultEnvelopeFeasibilityInstrumentedTest \
+            "$instrumentation" | tee "$RUNNER_TEMP/instrumentation.txt"
+          grep -Eq 'OK \(2 tests\)|OK \(2 test\)' "$RUNNER_TEMP/instrumentation.txt"
+          "$ADB" logcat -d -b crash > "$RUNNER_TEMP/crash-buffer.txt" || true
+          ! grep -Eqi 'FATAL EXCEPTION|Fatal signal|OutOfMemoryError|UnsatisfiedLinkError|dlopen failed|cannot locate symbol' "$RUNNER_TEMP/crash-buffer.txt"
+          echo 'vault_envelope_feasibility=PASS' | tee -a "$REPORT"
+
+      - name: Upload proof evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vault-envelope-feasibility-v2-${{ github.run_id }}
+          path: |
+            report.txt
+            tink-before.txt
+            tink-after.txt
+            ephemeral-build-patch.diff
+            ${{ runner.temp }}/instrumentation.txt
+            ${{ runner.temp }}/crash-buffer.txt
+            ${{ runner.temp }}/emulator.log
+          retention-days: 14
+          if-no-files-found: warn
