@@ -1,0 +1,75 @@
+name: Prepare Vault Upgrade Final
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-vault-v1-to-v2-upgrade-final
+    paths:
+      - .github/workflows/prepare-vault-upgrade-final.yml
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Pin exact final feature and correct crash parser
+        shell: bash
+        run: |
+          set -euo pipefail
+          old=.github/workflows/vault-v1-to-v2-upgrade-proof-v2.yml
+          new=.github/workflows/vault-v1-to-v2-upgrade-final.yml
+          mv "$old" "$new"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.github/workflows/vault-v1-to-v2-upgrade-final.yml')
+          s = p.read_text()
+          s = s.replace('name: Vault v1 to v2 Upgrade Proof v2 (Disposable)', 'name: Vault v1 to v2 Upgrade Final (Disposable)')
+          s = s.replace('exp/2.0.15-vault-v1-to-v2-upgrade-proof-v2', 'exp/2.0.15-vault-v1-to-v2-upgrade-final')
+          s = s.replace('d2017c22241049b21fcdd99e5a2e92d8bf382d01', 'd9f6a3579d6df0f1d4d7bcd27620a6256eaf6511')
+          old = '''          "$ADB" logcat -d | grep -E 'FATAL EXCEPTION|AndroidRuntime|OutOfMemoryError|ANR in com\\.photobook\\.app' > "$RUNNER_TEMP/crash-buffer.txt" || true
+          test ! -s "$RUNNER_TEMP/crash-buffer.txt"
+'''
+          new = '''          "$ADB" logcat -d > "$RUNNER_TEMP/full-logcat.txt"
+          python3 - "$RUNNER_TEMP/full-logcat.txt" "$RUNNER_TEMP/crash-buffer.txt" <<'PYCRASH'
+          import re
+          import sys
+          from pathlib import Path
+
+          text = Path(sys.argv[1]).read_text(errors='replace')
+          bad = []
+          if re.search(r'ANR in com\\.photobook\\.app', text):
+              bad.append('ANR in com.photobook.app')
+          for match in re.finditer(r'FATAL EXCEPTION:', text):
+              window = text[match.start():match.start() + 5000]
+              if 'Process: com.photobook.app' in window:
+                  bad.append(window[:2000])
+          for line in text.splitlines():
+              if 'OutOfMemoryError' in line and ('photobook' in line.lower() or 'com.photobook.app' in text[max(0, text.find(line)-2000):text.find(line)+2000]):
+                  bad.append(line)
+          Path(sys.argv[2]).write_text('\\n---\\n'.join(bad))
+          if bad:
+              raise SystemExit('PhotoBook crash/ANR/OOM marker detected')
+          PYCRASH
+'''
+          if old not in s:
+              raise SystemExit('old crash detector anchor missing')
+          s = s.replace(old, new, 1)
+          s = s.replace('name: vault-v1-v2-upgrade-v2-${{ github.run_id }}', 'name: vault-v1-v2-upgrade-final-${{ github.run_id }}')
+          s = s.replace('${{ runner.temp }}/crash-buffer.txt', '${{ runner.temp }}/crash-buffer.txt\n            ${{ runner.temp }}/full-logcat.txt')
+          p.write_text(s)
+          PY
+          rm .github/workflows/prepare-vault-upgrade-final.yml
+          git diff --check
+          grep -Fq 'FEATURE_SHA: d9f6a3579d6df0f1d4d7bcd27620a6256eaf6511' "$new"
+          grep -Fq 'exp/2.0.15-vault-v1-to-v2-upgrade-final' "$new"
+          ! grep -Fq 'AndroidRuntime|' "$new"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A .github/workflows
+          git commit -m "Pin final Vault upgrade proof to d9f6a357"
+          git push origin HEAD:exp/2.0.15-vault-v1-to-v2-upgrade-final
