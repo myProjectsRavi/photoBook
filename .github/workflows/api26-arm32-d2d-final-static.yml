@@ -51,7 +51,7 @@ jobs:
           SH
           chmod +x "$fake/adb"
           export PATH="$fake:$PATH"
-          candidate=52b118732adb6fd6fc62d730245472b34272e90e
+          candidate=9fd29f9987f6879f330b5b9cb4f33cde3c9b6d23
           script=tools/benchmark/run_api26_arm32_compatibility.sh
           expect_exit() {
             local expected="$1" name="$2"; shift 2
