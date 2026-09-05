@@ -1,0 +1,58 @@
+name: PhotoBook 2.0.15 Backup Policy Proof
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-backup-policy-proof
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Verify exact production source
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only 52b118732adb6fd6fc62d730245472b34272e90e...HEAD)"
+          test "$changed" = ".github/workflows/backup-policy-proof.yml"
+      - name: Prove manifest and backup policy are fail-closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          android = '{http://schemas.android.com/apk/res/android}'
+          manifest = ET.parse('app/src/main/AndroidManifest.xml').getroot()
+          app = manifest.find('application')
+          assert app is not None
+          assert app.attrib.get(android + 'allowBackup') == 'false'
+          assert app.attrib.get(android + 'dataExtractionRules') == '@xml/data_extraction_rules'
+          assert app.attrib.get(android + 'fullBackupContent') == '@xml/backup_rules'
+
+          expected = {'root', 'file', 'database', 'sharedpref', 'external'}
+
+          rules = ET.parse('app/src/main/res/xml/data_extraction_rules.xml').getroot()
+          assert rules.tag == 'data-extraction-rules'
+          for section_name in ('cloud-backup', 'device-transfer'):
+              section = rules.find(section_name)
+              assert section is not None, f'missing {section_name}'
+              excludes = {(e.attrib.get('domain'), e.attrib.get('path')) for e in section.findall('exclude')}
+              assert excludes == {(domain, '.') for domain in expected}, (section_name, excludes)
+              assert not section.findall('include'), f'{section_name} must not include app data'
+
+          legacy = ET.parse('app/src/main/res/xml/backup_rules.xml').getroot()
+          assert legacy.tag == 'full-backup-content'
+          excludes = {(e.attrib.get('domain'), e.attrib.get('path')) for e in legacy.findall('exclude')}
+          assert excludes == {(domain, '.') for domain in expected}, excludes
+          assert not legacy.findall('include'), 'legacy backup rules must not include app data'
+
+          print('backup_policy=PASS_EXCLUDE_ALL_APP_DATA')
+          PY
