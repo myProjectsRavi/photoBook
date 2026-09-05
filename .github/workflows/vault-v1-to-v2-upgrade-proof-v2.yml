@@ -1,0 +1,344 @@
+name: Vault v1 to v2 Upgrade Proof v2 (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-vault-v1-to-v2-upgrade-proof-v2
+
+permissions:
+  contents: read
+
+jobs:
+  upgrade-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      BASELINE_SHA: 04909b6e485c1ede12160aeac136598bee8d303f
+      FEATURE_SHA: d2017c22241049b21fcdd99e5a2e92d8bf382d01
+    steps:
+      - name: Checkout disposable proof branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Install emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+
+      - name: Prepare exact baseline and validated feature worktrees
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "$BASELINE_SHA" "$FEATURE_SHA"
+          rm -rf "$RUNNER_TEMP/baseline" "$RUNNER_TEMP/feature"
+          git worktree add --detach "$RUNNER_TEMP/baseline" "$BASELINE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/feature" "$FEATURE_SHA"
+          test "$(git -C "$RUNNER_TEMP/baseline" rev-parse HEAD)" = "$BASELINE_SHA"
+          test "$(git -C "$RUNNER_TEMP/feature" rev-parse HEAD)" = "$FEATURE_SHA"
+          test -z "$(git -C "$RUNNER_TEMP/baseline" status --porcelain)"
+          test -z "$(git -C "$RUNNER_TEMP/feature" status --porcelain)"
+          chmod +x "$RUNNER_TEMP/baseline/gradlew" "$RUNNER_TEMP/feature/gradlew"
+
+          mkdir -p "$RUNNER_TEMP/baseline/app/src/androidTest/java/com/photobook/app/feature/vault"
+          cat > "$RUNNER_TEMP/baseline/app/src/androidTest/java/com/photobook/app/feature/vault/LegacyVaultUpgradeSeedInstrumentedTest.kt" <<'KOTLIN'
+          package com.photobook.app.feature.vault
+
+          import androidx.security.crypto.EncryptedFile
+          import androidx.security.crypto.MasterKey
+          import androidx.test.ext.junit.runners.AndroidJUnit4
+          import androidx.test.platform.app.InstrumentationRegistry
+          import com.photobook.app.data.db.VaultEntity
+          import dagger.hilt.android.EntryPointAccessors
+          import java.io.File
+          import kotlinx.coroutines.runBlocking
+          import org.junit.Assert.assertArrayEquals
+          import org.junit.Assert.assertEquals
+          import org.junit.Assert.assertTrue
+          import org.junit.Test
+          import org.junit.runner.RunWith
+
+          @RunWith(AndroidJUnit4::class)
+          class LegacyVaultUpgradeSeedInstrumentedTest {
+              @Test
+              fun seedRealLegacyEncryptedFileAndRoomRow() = runBlocking {
+                  val context = InstrumentationRegistry.getInstrumentation().targetContext
+                  val vaultDir = File(context.filesDir, "vault_store").apply { mkdirs() }
+                  val legacyFile = File(vaultDir, LEGACY_FILE_NAME)
+                  if (legacyFile.exists()) assertTrue(legacyFile.delete())
+
+                  val masterKey = MasterKey.Builder(context)
+                      .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                      .build()
+                  val encryptedFile = EncryptedFile.Builder(
+                      context,
+                      legacyFile,
+                      masterKey,
+                      EncryptedFile.FileEncryptionScheme.AES256_GCM_HKDF_4KB,
+                  ).build()
+                  val payload = fixturePayload()
+                  encryptedFile.openFileOutput().use { it.write(payload) }
+                  assertTrue(legacyFile.exists())
+                  assertArrayEquals(payload, encryptedFile.openFileInput().use { it.readBytes() })
+
+                  val dao = EntryPointAccessors.fromApplication(
+                      context.applicationContext,
+                      VaultServiceEntryPoint::class.java,
+                  ).vaultDao()
+                  val inserted = dao.insertVaultItem(
+                      VaultEntity(
+                          id = ITEM_ID,
+                          sourcePhotoId = SOURCE_PHOTO_ID,
+                          originalFileName = "upgrade-fixture.jpg",
+                          mimeType = "image/jpeg",
+                          encryptedFileName = LEGACY_FILE_NAME,
+                          addedAtMs = 1_700_000_000_000L,
+                      ),
+                  )
+                  assertTrue("fixture row must insert", inserted != -1L)
+                  assertEquals(LEGACY_FILE_NAME, dao.getVaultItemById(ITEM_ID)?.encryptedFileName)
+              }
+
+              private fun fixturePayload(): ByteArray =
+                  ByteArray(512 * 1024) { index -> ((index * 31 + 7) % 251).toByte() }
+
+              companion object {
+                  private const val ITEM_ID = "upgrade-item-001"
+                  private const val SOURCE_PHOTO_ID = 9_876_543_210L
+                  private const val LEGACY_FILE_NAME = "upgrade_fixture.pbvault"
+              }
+          }
+          KOTLIN
+
+          mkdir -p "$RUNNER_TEMP/feature/app/src/androidTest/java/com/photobook/app/feature/vault"
+          cat > "$RUNNER_TEMP/feature/app/src/androidTest/java/com/photobook/app/feature/vault/VaultUpgradeCompatibilityInstrumentedTest.kt" <<'KOTLIN'
+          package com.photobook.app.feature.vault
+
+          import androidx.test.ext.junit.runners.AndroidJUnit4
+          import androidx.test.platform.app.InstrumentationRegistry
+          import com.google.crypto.tink.KeysetHandle
+          import com.google.crypto.tink.RegistryConfiguration
+          import com.google.crypto.tink.StreamingAead
+          import com.google.crypto.tink.streamingaead.PredefinedStreamingAeadParameters
+          import com.google.crypto.tink.streamingaead.StreamingAeadConfig
+          import java.io.File
+          import kotlinx.coroutines.runBlocking
+          import org.junit.Assert.assertArrayEquals
+          import org.junit.Assert.assertEquals
+          import org.junit.Assert.assertFalse
+          import org.junit.Assert.assertTrue
+          import org.junit.Test
+          import org.junit.runner.RunWith
+
+          @RunWith(AndroidJUnit4::class)
+          class VaultUpgradeCompatibilityInstrumentedTest {
+              @Test
+              fun realTink18Ciphertext_migratesLosslesslyToV2_andIsIdempotent() = runBlocking {
+                  val context = InstrumentationRegistry.getInstrumentation().targetContext
+                  val vaultDir = File(context.filesDir, "vault_store")
+                  val legacyFile = File(vaultDir, LEGACY_FILE_NAME)
+                  assertTrue("baseline legacy fixture must survive app upgrade", legacyFile.exists())
+
+                  StreamingAeadConfig.register()
+                  val handle = KeysetHandle.generateNew(
+                      PredefinedStreamingAeadParameters.AES256_GCM_HKDF_4KB,
+                  )
+                  val session = VaultCryptoSession(
+                      handle.getPrimitive(RegistryConfiguration.get(), StreamingAead::class.java),
+                  )
+                  val service = VaultService(context)
+
+                  val first = service.listItems(session = session, includePreviews = false)
+                      .single { it.id == ITEM_ID }
+                  assertTrue(first.encryptedFileName.endsWith(VaultAuthCrypto.V2_FILE_SUFFIX))
+                  assertFalse("legacy ciphertext must be removed after verified DB switch", legacyFile.exists())
+
+                  val v2File = File(vaultDir, first.encryptedFileName)
+                  assertTrue(v2File.exists())
+                  val crypto = VaultAuthCrypto(context)
+                  val decrypted = crypto.openDecryptedInput(
+                      session,
+                      v2File,
+                      crypto.associatedData(ITEM_ID),
+                  ).use { it.readBytes() }
+                  assertArrayEquals(fixturePayload(), decrypted)
+
+                  val wrongHandle = KeysetHandle.generateNew(
+                      PredefinedStreamingAeadParameters.AES256_GCM_HKDF_4KB,
+                  )
+                  val wrongSession = VaultCryptoSession(
+                      wrongHandle.getPrimitive(RegistryConfiguration.get(), StreamingAead::class.java),
+                  )
+                  val wrongKeyRead = runCatching {
+                      crypto.openDecryptedInput(
+                          wrongSession,
+                          v2File,
+                          crypto.associatedData(ITEM_ID),
+                      ).use { it.readBytes() }
+                  }
+                  assertTrue("a different keyset must not decrypt Vault v2", wrongKeyRead.isFailure)
+
+                  val second = service.listItems(session = session, includePreviews = false)
+                      .single { it.id == ITEM_ID }
+                  assertEquals(first.encryptedFileName, second.encryptedFileName)
+                  assertArrayEquals(
+                      fixturePayload(),
+                      crypto.openDecryptedInput(
+                          session,
+                          v2File,
+                          crypto.associatedData(ITEM_ID),
+                      ).use { it.readBytes() },
+                  )
+              }
+
+              private fun fixturePayload(): ByteArray =
+                  ByteArray(512 * 1024) { index -> ((index * 31 + 7) % 251).toByte() }
+
+              companion object {
+                  private const val ITEM_ID = "upgrade-item-001"
+                  private const val LEGACY_FILE_NAME = "upgrade_fixture.pbvault"
+              }
+          }
+          KOTLIN
+
+          baseline_changed="$(git -C "$RUNNER_TEMP/baseline" ls-files --others --exclude-standard)"
+          feature_changed="$(git -C "$RUNNER_TEMP/feature" ls-files --others --exclude-standard)"
+          [[ "$baseline_changed" == 'app/src/androidTest/java/com/photobook/app/feature/vault/LegacyVaultUpgradeSeedInstrumentedTest.kt' ]]
+          [[ "$feature_changed" == 'app/src/androidTest/java/com/photobook/app/feature/vault/VaultUpgradeCompatibilityInstrumentedTest.kt' ]]
+
+      - name: Resolve exact Tink versions and build both APK pairs
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/baseline"
+          ./gradlew :app:dependencyInsight --dependency tink-android --configuration debugRuntimeClasspath | tee "$GITHUB_WORKSPACE/tink-baseline.txt"
+          grep -Fq 'com.google.crypto.tink:tink-android:1.8.0' "$GITHUB_WORKSPACE/tink-baseline.txt"
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+
+          cd "$RUNNER_TEMP/feature"
+          ./gradlew :app:dependencyInsight --dependency tink-android --configuration debugRuntimeClasspath | tee "$GITHUB_WORKSPACE/tink-feature.txt"
+          grep -Fq 'com.google.crypto.tink:tink-android:1.23.0' "$GITHUB_WORKSPACE/tink-feature.txt"
+          ./gradlew :app:compileDebugAndroidTestKotlin :app:assembleDebug :app:assembleDebugAndroidTest
+
+      - name: Boot API35 emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort | tail -n1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager | sort | tail -n1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          IMAGE='system-images;android-35;google_apis;x86_64'
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 emulator "$IMAGE"
+          echo no | "$AVDMANAGER" create avd --force --name pb-vault-upgrade-v2 --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/pb-vault-upgrade-v2.avd"
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+          nohup "$EMULATOR" -avd pb-vault-upgrade-v2 -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 4096 -cores 2 > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 150); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/emulator.log"; exit 1; }
+            sleep 2
+          done
+          "$ADB" wait-for-device
+          for _ in $(seq 1 150); do
+            [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break
+            sleep 2
+          done
+          [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
+
+      - name: Seed baseline then upgrade in place and migrate offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt | sort -V | tail -n1)"
+          uid="$(id -u)"
+
+          baseline_app="$(find "$RUNNER_TEMP/baseline/app/build/outputs/apk/debug" -type f -name '*arm64-v8a*.apk' -print -quit)"
+          baseline_test="$(find "$RUNNER_TEMP/baseline/app/build/outputs/apk/androidTest/debug" -type f -name '*.apk' -print -quit)"
+          feature_app="$(find "$RUNNER_TEMP/feature/app/build/outputs/apk/debug" -type f -name '*arm64-v8a*.apk' -print -quit)"
+          feature_test="$(find "$RUNNER_TEMP/feature/app/build/outputs/apk/androidTest/debug" -type f -name '*.apk' -print -quit)"
+          test -f "$baseline_app" && test -f "$baseline_test" && test -f "$feature_app" && test -f "$feature_test"
+          ! "$AAPT" dump permissions "$baseline_app" | grep -q 'android.permission.INTERNET'
+          ! "$AAPT" dump permissions "$feature_app" | grep -q 'android.permission.INTERNET'
+
+          "$ADB" uninstall com.photobook.app >/dev/null 2>&1 || true
+          "$ADB" install "$baseline_app" | tee "$RUNNER_TEMP/install-baseline-app.txt"
+          "$ADB" install "$baseline_test" | tee "$RUNNER_TEMP/install-baseline-test.txt"
+          grep -Fq Success "$RUNNER_TEMP/install-baseline-app.txt"
+          grep -Fq Success "$RUNNER_TEMP/install-baseline-test.txt"
+          baseline_instrumentation="$("$ADB" shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
+          "$ADB" shell am instrument -w -r -e class com.photobook.app.feature.vault.LegacyVaultUpgradeSeedInstrumentedTest "$baseline_instrumentation" | tee "$RUNNER_TEMP/baseline-seed.txt"
+          grep -Eq 'OK \(1 test\)|OK \(1 tests\)' "$RUNNER_TEMP/baseline-seed.txt"
+
+          "$ADB" install -r "$feature_app" | tee "$RUNNER_TEMP/install-feature-app.txt"
+          "$ADB" install -r "$feature_test" | tee "$RUNNER_TEMP/install-feature-test.txt"
+          grep -Fq Success "$RUNNER_TEMP/install-feature-app.txt"
+          grep -Fq Success "$RUNNER_TEMP/install-feature-test.txt"
+
+          "$ADB" shell cmd connectivity airplane-mode enable || true
+          "$ADB" shell svc wifi disable || true
+          "$ADB" shell svc data disable || true
+          sudo iptables -I OUTPUT 1 -o lo -j ACCEPT
+          sudo iptables -I OUTPUT 2 -m owner --uid-owner "$uid" -j REJECT
+          cleanup() {
+            sudo iptables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null || true
+            sudo iptables -D OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          [[ "$("$ADB" shell settings get global airplane_mode_on | tr -d '\r')" == 1 ]]
+          if curl -fsS --connect-timeout 2 --max-time 3 https://www.google.com >/dev/null 2>&1; then exit 1; fi
+
+          feature_instrumentation="$("$ADB" shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
+          "$ADB" logcat -c
+          "$ADB" shell am instrument -w -r -e class com.photobook.app.feature.vault.VaultUpgradeCompatibilityInstrumentedTest "$feature_instrumentation" | tee "$RUNNER_TEMP/feature-upgrade.txt"
+          grep -Eq 'OK \(1 test\)|OK \(1 tests\)' "$RUNNER_TEMP/feature-upgrade.txt"
+          "$ADB" logcat -d | grep -E 'FATAL EXCEPTION|AndroidRuntime|OutOfMemoryError|ANR in com\.photobook\.app' > "$RUNNER_TEMP/crash-buffer.txt" || true
+          test ! -s "$RUNNER_TEMP/crash-buffer.txt"
+
+          cat > "$GITHUB_WORKSPACE/report.txt" <<EOF
+          baseline_sha=$BASELINE_SHA
+          feature_sha=$FEATURE_SHA
+          baseline_tink=1.8.0
+          feature_tink=1.23.0
+          app_data_preserved=true
+          offline=true
+          migration=pass
+          plaintext_byte_match=pass
+          wrong_key_rejected=pass
+          idempotent_second_read=pass
+          crash_markers=none
+          EOF
+
+      - name: Upload upgrade proof evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vault-v1-v2-upgrade-v2-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            report.txt
+            tink-baseline.txt
+            tink-feature.txt
+            ${{ runner.temp }}/baseline-seed.txt
+            ${{ runner.temp }}/feature-upgrade.txt
+            ${{ runner.temp }}/crash-buffer.txt
+            ${{ runner.temp }}/emulator.log
