@@ -107,9 +107,10 @@ class VaultService @Inject constructor(
     internal fun isPreviewLoadCurrent(generation: Long): Boolean =
         previewCacheGeneration.get() == generation
 
-    internal fun invalidatePreviewCache() {
-        previewCacheGeneration.incrementAndGet()
+    internal fun invalidatePreviewCache(): Long {
+        val generation = previewCacheGeneration.incrementAndGet()
         previewCacheNeedsCleanup.set(true)
+        return generation
     }
 
     internal fun prepareAuthentication(): VaultAuthPreparation = authCrypto.prepareAuthentication()
@@ -362,9 +363,12 @@ class VaultService @Inject constructor(
         }.getOrDefault(false)
     }
 
-    suspend fun clearPreviewCache(): Boolean = withContext(Dispatchers.IO) {
+    suspend fun clearPreviewCache(expectedGeneration: Long): Boolean = withContext(Dispatchers.IO) {
         previewCacheMutex.lock()
         try {
+            if (previewCacheGeneration.get() != expectedGeneration) {
+                return@withContext false
+            }
             val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)
             val cleared = try {
                 !previewRoot.exists() || previewRoot.deleteRecursively()

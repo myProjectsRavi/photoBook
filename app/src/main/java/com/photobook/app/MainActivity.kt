@@ -215,12 +215,12 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
 
     fun closeVault() {
         showVault = false
-        vaultService.invalidatePreviewCache()
+        val previewCleanupGeneration = vaultService.invalidatePreviewCache()
         vaultItems = emptyList()
         isVaultLoading = false
         isVaultBusy = false
         coroutineScope.launch {
-            vaultService.clearPreviewCache()
+            vaultService.clearPreviewCache(previewCleanupGeneration)
         }
     }
 
