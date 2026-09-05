@@ -1,0 +1,145 @@
+name: Vault Preview Reopen Race Guard (Disposable)
+
+on:
+  push:
+    branches:
+      - fix/2.0.15-vault-preview-reopen-race
+    paths:
+      - .github/workflows/vault-preview-cache-fix.yml
+
+permissions:
+  contents: write
+
+env:
+  BASE_SHA: 4ce788f0dd5bdff1aa774a73a943a0da03e7787a
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: fix/2.0.15-vault-preview-reopen-race
+
+      - name: Verify isolated starting scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t changed < <(git diff --name-only "$BASE_SHA"...HEAD | sort)
+          printf '%s\n' "${changed[@]}"
+          test "${#changed[@]}" -eq 1
+          test "${changed[0]}" = ".github/workflows/vault-preview-cache-fix.yml"
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Apply reopen-race guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(text, old, new, expected, label):
+              count = text.count(old)
+              if count != expected:
+                  raise SystemExit(f'{label}: expected {expected} matches, got {count}')
+              return text.replace(old, new)
+
+          main_path = Path('app/src/main/java/com/photobook/app/MainActivity.kt')
+          main = main_path.read_text()
+          main = replace_exact(
+              main,
+              '        showVault = false\n'
+              '        vaultService.invalidatePreviewCache()\n'
+              '        vaultItems = emptyList()\n'
+              '        isVaultLoading = false\n'
+              '        isVaultBusy = false\n'
+              '        coroutineScope.launch {\n'
+              '            vaultService.clearPreviewCache()\n'
+              '        }\n',
+              '        showVault = false\n'
+              '        val previewCleanupGeneration = vaultService.invalidatePreviewCache()\n'
+              '        vaultItems = emptyList()\n'
+              '        isVaultLoading = false\n'
+              '        isVaultBusy = false\n'
+              '        coroutineScope.launch {\n'
+              '            vaultService.clearPreviewCache(previewCleanupGeneration)\n'
+              '        }\n',
+              1,
+              'closeVault generation guard',
+          )
+          main_path.write_text(main)
+
+          service_path = Path('app/src/main/java/com/photobook/app/feature/vault/VaultService.kt')
+          service = service_path.read_text()
+          service = replace_exact(
+              service,
+              '    internal fun invalidatePreviewCache() {\n'
+              '        previewCacheGeneration.incrementAndGet()\n'
+              '        previewCacheNeedsCleanup.set(true)\n'
+              '    }\n',
+              '    internal fun invalidatePreviewCache(): Long {\n'
+              '        val generation = previewCacheGeneration.incrementAndGet()\n'
+              '        previewCacheNeedsCleanup.set(true)\n'
+              '        return generation\n'
+              '    }\n',
+              1,
+              'invalidatePreviewCache return token',
+          )
+          service = replace_exact(
+              service,
+              '    suspend fun clearPreviewCache(): Boolean = withContext(Dispatchers.IO) {\n'
+              '        previewCacheMutex.lock()\n'
+              '        try {\n'
+              '            val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)\n',
+              '    suspend fun clearPreviewCache(expectedGeneration: Long): Boolean = withContext(Dispatchers.IO) {\n'
+              '        previewCacheMutex.lock()\n'
+              '        try {\n'
+              '            if (previewCacheGeneration.get() != expectedGeneration) {\n'
+              '                return@withContext false\n'
+              '            }\n'
+              '            val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)\n',
+              1,
+              'clearPreviewCache generation token',
+          )
+          service_path.write_text(service)
+          PY
+          git diff --check
+
+      - name: Prove reopen-race invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          main=app/src/main/java/com/photobook/app/MainActivity.kt
+          vault=app/src/main/java/com/photobook/app/feature/vault/VaultService.kt
+          test "$(grep -c 'val previewCleanupGeneration = vaultService.invalidatePreviewCache()' "$main")" -eq 1
+          test "$(grep -c 'vaultService.clearPreviewCache(previewCleanupGeneration)' "$main")" -eq 1
+          test "$(grep -c 'internal fun invalidatePreviewCache(): Long' "$vault")" -eq 1
+          test "$(grep -c 'suspend fun clearPreviewCache(expectedGeneration: Long): Boolean' "$vault")" -eq 1
+          test "$(grep -c 'previewCacheGeneration.get() != expectedGeneration' "$vault")" -eq 1
+          ! grep -q 'vaultService.clearPreviewCache()' "$main"
+
+      - name: Compile production and test source
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:compileDebugKotlin :app:compileDebugAndroidTestKotlin :app:testDebugUnitTest :app:lintDebug
+
+      - name: Commit only reviewed production delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "PhotoBook verification"
+          git config user.email "95069115+myProjectsRavi@users.noreply.github.com"
+          git add app/src/main/java/com/photobook/app/MainActivity.kt \
+                  app/src/main/java/com/photobook/app/feature/vault/VaultService.kt
+          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" = "2"
+          git commit -m "Guard Vault cleanup across rapid reopen"
+          git push origin HEAD:fix/2.0.15-vault-preview-reopen-race
