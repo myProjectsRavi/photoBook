@@ -1,0 +1,246 @@
+name: Vault Preview Cache Lifecycle Fix (Disposable)
+
+on:
+  push:
+    branches:
+      - fix/2.0.15-vault-preview-cache-lifecycle
+    paths:
+      - .github/workflows/vault-preview-cache-fix.yml
+
+permissions:
+  contents: write
+
+env:
+  CANDIDATE_SHA: 52b118732adb6fd6fc62d730245472b34272e90e
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: fix/2.0.15-vault-preview-cache-lifecycle
+      - name: Verify isolated starting scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t changed < <(git diff --name-only "$CANDIDATE_SHA"...HEAD | sort)
+          printf '%s\n' "${changed[@]}"
+          test "${#changed[@]}" -eq 1
+          test "${changed[0]}" = ".github/workflows/vault-preview-cache-fix.yml"
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Apply exact guarded source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          main_path = Path('app/src/main/java/com/photobook/app/MainActivity.kt')
+          main = main_path.read_text()
+
+          old_refresh = '''    fun refreshVault(session: VaultCryptoSession) {
+              showVault = true
+              coroutineScope.launch {
+                  isVaultLoading = true
+                  runCatching {
+                      vaultService.listItems(session = session, includePreviews = true)
+                  }.onSuccess { items ->
+                      vaultItems = items
+          '''
+          new_refresh = '''    suspend fun loadVisibleVaultItems(session: VaultCryptoSession): List<VaultItem> {
+              if (!showVault) {
+                  vaultService.clearPreviewCache()
+                  return emptyList()
+              }
+              val items = vaultService.listItems(session = session, includePreviews = true)
+              return if (showVault) {
+                  items
+              } else {
+                  vaultService.clearPreviewCache()
+                  emptyList()
+              }
+          }
+
+              fun refreshVault(session: VaultCryptoSession) {
+              showVault = true
+              coroutineScope.launch {
+                  isVaultLoading = true
+                  runCatching {
+                      loadVisibleVaultItems(session)
+                  }.onSuccess { items ->
+                      vaultItems = items
+          '''
+          if main.count(old_refresh) != 1:
+              raise SystemExit(f'expected exactly one refreshVault anchor, got {main.count(old_refresh)}')
+          main = main.replace(old_refresh, new_refresh)
+
+          old_list = '''vaultItems = runCatching {
+                          vaultService.listItems(session = session, includePreviews = true)
+                      }.getOrDefault(emptyList())'''
+          new_list = '''vaultItems = runCatching {
+                          loadVisibleVaultItems(session)
+                      }.getOrDefault(emptyList())'''
+          if main.count(old_list) != 3:
+              raise SystemExit(f'expected exactly three post-operation preview refreshes, got {main.count(old_list)}')
+          main = main.replace(old_list, new_list)
+          main_path.write_text(main)
+
+          service_path = Path('app/src/main/java/com/photobook/app/feature/vault/VaultService.kt')
+          service = service_path.read_text()
+
+          old_auth = '''    private val authCrypto: VaultAuthCrypto by lazy {
+              VaultAuthCrypto(context)
+          }
+          '''
+          new_auth = '''    private val authCrypto: VaultAuthCrypto by lazy {
+              VaultAuthCrypto(context)
+          }
+
+              private val previewCacheGeneration = java.util.concurrent.atomic.AtomicLong(0L)
+
+              init {
+              // Decrypted previews are strictly ephemeral. Remove residue left by process death/crash
+              // as soon as the Vault service exists in a new app process.
+              clearPreviewCache()
+          }
+          '''
+          if service.count(old_auth) != 1:
+              raise SystemExit('VaultAuthCrypto anchor mismatch')
+          service = service.replace(old_auth, new_auth)
+
+          old_list_items = '''    ): List<VaultItem> = withContext(Dispatchers.IO) {
+              migrateLegacyItemsIfNeeded()
+              migrateLegacyCiphertextIfNeeded(session)
+              vaultDao.getAllVaultItems().map { entity ->
+                  val item = entity.toVaultItem()
+                  if (includePreviews) {
+                      item.copy(previewUri = createPreviewUri(entity, session))
+                  } else {
+                      item
+                  }
+              }
+          }
+          '''
+          new_list_items = '''    ): List<VaultItem> = withContext(Dispatchers.IO) {
+              val expectedPreviewGeneration = if (includePreviews) previewCacheGeneration.get() else null
+              migrateLegacyItemsIfNeeded()
+              migrateLegacyCiphertextIfNeeded(session)
+              vaultDao.getAllVaultItems().map { entity ->
+                  val item = entity.toVaultItem()
+                  if (expectedPreviewGeneration != null) {
+                      item.copy(
+                          previewUri = createPreviewUri(
+                              entity = entity,
+                              session = session,
+                              expectedPreviewGeneration = expectedPreviewGeneration,
+                          ),
+                      )
+                  } else {
+                      item
+                  }
+              }
+          }
+          '''
+          if service.count(old_list_items) != 1:
+              raise SystemExit('Vault listItems anchor mismatch')
+          service = service.replace(old_list_items, new_list_items)
+
+          old_clear = '''    fun clearPreviewCache() {
+              runCatching {
+                  File(context.cacheDir, VAULT_PREVIEW_DIR).deleteRecursively()
+              }
+          }
+          '''
+          new_clear = '''    fun clearPreviewCache() {
+              previewCacheGeneration.incrementAndGet()
+              runCatching {
+                  File(context.cacheDir, VAULT_PREVIEW_DIR).deleteRecursively()
+              }
+          }
+          '''
+          if service.count(old_clear) != 1:
+              raise SystemExit('clearPreviewCache anchor mismatch')
+          service = service.replace(old_clear, new_clear)
+
+          old_create = '''    private fun createPreviewUri(
+              entity: VaultEntity,
+              session: VaultCryptoSession,
+          ): Uri? {
+              val encryptedSource = File(vaultDir, entity.encryptedFileName)
+              if (!encryptedSource.exists()) return null
+
+              val previewFile = previewFile(entity.id)
+              if (previewFile.exists() && previewFile.length() > 0L) {
+                  return Uri.fromFile(previewFile)
+              }
+          '''
+          new_create = '''    private fun createPreviewUri(
+              entity: VaultEntity,
+              session: VaultCryptoSession,
+              expectedPreviewGeneration: Long,
+          ): Uri? {
+              if (previewCacheGeneration.get() != expectedPreviewGeneration) return null
+
+              val encryptedSource = File(vaultDir, entity.encryptedFileName)
+              if (!encryptedSource.exists()) return null
+
+              val previewFile = previewFile(entity.id)
+              if (previewFile.exists() && previewFile.length() > 0L) {
+                  return if (previewCacheGeneration.get() == expectedPreviewGeneration) {
+                      Uri.fromFile(previewFile)
+                  } else {
+                      runCatching { previewFile.delete() }
+                      null
+                  }
+              }
+          '''
+          if service.count(old_create) != 1:
+              raise SystemExit('createPreviewUri anchor mismatch')
+          service = service.replace(old_create, new_create)
+
+          old_return = '''            bitmap.recycle()
+              Uri.fromFile(previewFile)
+          }.getOrNull()
+          '''
+          new_return = '''            bitmap.recycle()
+              if (previewCacheGeneration.get() == expectedPreviewGeneration) {
+                  Uri.fromFile(previewFile)
+              } else {
+                  runCatching { previewFile.delete() }
+                  null
+              }
+          }.getOrNull()
+          '''
+          if service.count(old_return) != 1:
+              raise SystemExit('preview finalization anchor mismatch')
+          service = service.replace(old_return, new_return)
+          service_path.write_text(service)
+          PY
+
+          git diff --check
+          git diff -- app/src/main/java/com/photobook/app/MainActivity.kt app/src/main/java/com/photobook/app/feature/vault/VaultService.kt
+      - name: Compile, unit test and lint patched source
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:compileDebugKotlin :app:testDebugUnitTest :app:lintDebug
+      - name: Commit only the validated production patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "PhotoBook verification"
+          git config user.email "95069115+myProjectsRavi@users.noreply.github.com"
+          git add app/src/main/java/com/photobook/app/MainActivity.kt \
+                  app/src/main/java/com/photobook/app/feature/vault/VaultService.kt
+          test -n "$(git diff --cached --name-only)"
+          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" = "2"
+          git commit -m "Harden Vault preview cache lifecycle"
+          git push origin HEAD:fix/2.0.15-vault-preview-cache-lifecycle
