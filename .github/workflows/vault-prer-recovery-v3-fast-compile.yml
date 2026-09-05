@@ -1,0 +1,27 @@
+name: Vault pre-R Recovery v3 Fast Compile (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-vault-prer-recovery-v3-compile
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Compile Vault recovery helper and existing tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:compileDebugKotlin :app:compileDebugAndroidTestKotlin :app:testDebugUnitTest
