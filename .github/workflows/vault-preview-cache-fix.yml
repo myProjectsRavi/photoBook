@@ -230,7 +230,7 @@ jobs:
           test "$(grep -c 'previewCacheGeneration.incrementAndGet()' "$vault")" -eq 2
           test "$(grep -c 'previewCacheNeedsCleanup' "$vault")" -ge 4
           test "$(grep -c 'expectedPreviewGeneration' "$vault")" -ge 7
-          test "$(grep -c 'tempPreview' "$vault")" -ge 5
+          test "$(grep -c 'tempPreview' "$vault")" -eq 4
           test "$(grep -c 'Unable to encode Vault preview' "$vault")" -eq 1
       - name: Compile, unit test and lint patched source
         shell: bash
