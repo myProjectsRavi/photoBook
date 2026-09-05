@@ -25,103 +25,65 @@ jobs:
           from pathlib import Path
           p = Path('app/src/main/java/com/photobook/app/feature/vault/VaultAuthCrypto.kt')
           s = p.read_text()
-          old = '''    when (policy) {
-          KeyPolicy.R_PLUS_COMBINED -> {
-              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                  configureRPlusPrimaryKey(builder)
-              } else {
-                  throw IllegalStateException(
-                      "Android 11+ Vault key policy requested below API 30",
-                  )
-              }
-          }
-          KeyPolicy.PRE_R_BIOMETRIC -> {
-              check(Build.VERSION.SDK_INT < Build.VERSION_CODES.R)
-              @Suppress("DEPRECATION")
-              builder.setUserAuthenticationValidityDurationSeconds(-1)
-              builder.setInvalidatedByBiometricEnrollment(true)
-          }
-          }
-
-          '''
-          old = '\n'.join(line[4:] if line.startswith('    ') else line for line in old.splitlines()) + '\n'
-          # The previous guarded patch intentionally changed only this block but flattened its indentation.
-          flat = '''    when (policy) {
-          KeyPolicy.R_PLUS_COMBINED -> {
-              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                  configureRPlusPrimaryKey(builder)
-              } else {
-                  throw IllegalStateException(
-                      "Android 11+ Vault key policy requested below API 30",
-                  )
-              }
-          }
-          KeyPolicy.PRE_R_BIOMETRIC -> {
-              check(Build.VERSION.SDK_INT < Build.VERSION_CODES.R)
-              @Suppress("DEPRECATION")
-              builder.setUserAuthenticationValidityDurationSeconds(-1)
-              builder.setInvalidatedByBiometricEnrollment(true)
-          }
-          }
-          '''
-          flat = '\n'.join(line[4:] if line.startswith('    ') else line for line in flat.splitlines()) + '\n'
-          # Build the actual flattened text explicitly to avoid another indentation transform.
-          flat = '''    when (policy) {
-KeyPolicy.R_PLUS_COMBINED -> {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-        configureRPlusPrimaryKey(builder)
-    } else {
-        throw IllegalStateException(
-            "Android 11+ Vault key policy requested below API 30",
-        )
-    }
-}
-KeyPolicy.PRE_R_BIOMETRIC -> {
-    check(Build.VERSION.SDK_INT < Build.VERSION_CODES.R)
-    @Suppress("DEPRECATION")
-    builder.setUserAuthenticationValidityDurationSeconds(-1)
-    builder.setInvalidatedByBiometricEnrollment(true)
-}
-}
-'''
-          proper = '''        when (policy) {
-            KeyPolicy.R_PLUS_COMBINED -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    configureRPlusPrimaryKey(builder)
-                } else {
-                    throw IllegalStateException(
-                        "Android 11+ Vault key policy requested below API 30",
-                    )
-                }
-            }
-            KeyPolicy.PRE_R_BIOMETRIC -> {
-                check(Build.VERSION.SDK_INT < Build.VERSION_CODES.R)
-                @Suppress("DEPRECATION")
-                builder.setUserAuthenticationValidityDurationSeconds(-1)
-                builder.setInvalidatedByBiometricEnrollment(true)
-            }
-        }
-'''
-          flat_helper = '''@androidx.annotation.RequiresApi(Build.VERSION_CODES.R)
-private fun configureRPlusPrimaryKey(builder: KeyGenParameterSpec.Builder) {
-    builder.setUserAuthenticationParameters(
-        0,
-        KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL,
-    )
-}
-'''
-          proper_helper = '''    @androidx.annotation.RequiresApi(Build.VERSION_CODES.R)
-    private fun configureRPlusPrimaryKey(builder: KeyGenParameterSpec.Builder) {
-        builder.setUserAuthenticationParameters(
-            0,
-            KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL,
-        )
-    }
-'''
+          flat = (
+              "    when (policy) {\n"
+              "KeyPolicy.R_PLUS_COMBINED -> {\n"
+              "    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {\n"
+              "        configureRPlusPrimaryKey(builder)\n"
+              "    } else {\n"
+              "        throw IllegalStateException(\n"
+              "            \"Android 11+ Vault key policy requested below API 30\",\n"
+              "        )\n"
+              "    }\n"
+              "}\n"
+              "KeyPolicy.PRE_R_BIOMETRIC -> {\n"
+              "    check(Build.VERSION.SDK_INT < Build.VERSION_CODES.R)\n"
+              "    @Suppress(\"DEPRECATION\")\n"
+              "    builder.setUserAuthenticationValidityDurationSeconds(-1)\n"
+              "    builder.setInvalidatedByBiometricEnrollment(true)\n"
+              "}\n"
+              "}\n"
+          )
+          proper = (
+              "        when (policy) {\n"
+              "            KeyPolicy.R_PLUS_COMBINED -> {\n"
+              "                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {\n"
+              "                    configureRPlusPrimaryKey(builder)\n"
+              "                } else {\n"
+              "                    throw IllegalStateException(\n"
+              "                        \"Android 11+ Vault key policy requested below API 30\",\n"
+              "                    )\n"
+              "                }\n"
+              "            }\n"
+              "            KeyPolicy.PRE_R_BIOMETRIC -> {\n"
+              "                check(Build.VERSION.SDK_INT < Build.VERSION_CODES.R)\n"
+              "                @Suppress(\"DEPRECATION\")\n"
+              "                builder.setUserAuthenticationValidityDurationSeconds(-1)\n"
+              "                builder.setInvalidatedByBiometricEnrollment(true)\n"
+              "            }\n"
+              "        }\n"
+          )
+          flat_helper = (
+              "@androidx.annotation.RequiresApi(Build.VERSION_CODES.R)\n"
+              "private fun configureRPlusPrimaryKey(builder: KeyGenParameterSpec.Builder) {\n"
+              "    builder.setUserAuthenticationParameters(\n"
+              "        0,\n"
+              "        KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL,\n"
+              "    )\n"
+              "}\n"
+          )
+          proper_helper = (
+              "    @androidx.annotation.RequiresApi(Build.VERSION_CODES.R)\n"
+              "    private fun configureRPlusPrimaryKey(builder: KeyGenParameterSpec.Builder) {\n"
+              "        builder.setUserAuthenticationParameters(\n"
+              "            0,\n"
+              "            KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL,\n"
+              "        )\n"
+              "    }\n"
+          )
           if s.count(flat) != 1 or s.count(flat_helper) != 1:
               raise SystemExit('Flattened Vault API boundary block not found exactly once')
-          s = s.replace(flat, proper, 1).replace(flat_helper, proper_helper, 1)
-          p.write_text(s)
+          p.write_text(s.replace(flat, proper, 1).replace(flat_helper, proper_helper, 1))
           PY
           rm .github/workflows/vault-v3-format-api-boundary.yml
           git diff --check
