@@ -104,12 +104,19 @@ jobs:
           } | tee "$GITHUB_WORKSPACE/build/reports/hosted-16k/summary.txt"
           "$ADB" root | tee -a "$GITHUB_WORKSPACE/build/reports/hosted-16k/summary.txt"
           "$ADB" wait-for-device
-          for _ in $(seq 1 30); do
-            [[ "$("$ADB" shell id -u 2>/dev/null | tr -d '\r')" == 0 ]] && break
+          for _ in $(seq 1 60); do
+            uid="$($ADB shell id -u 2>/dev/null | tr -d '\r' || true)"
+            package_service="$($ADB shell service check package 2>/dev/null | tr -d '\r' || true)"
+            activity_service="$($ADB shell service check activity 2>/dev/null | tr -d '\r' || true)"
+            if [[ "$uid" == 0 && "$package_service" == *found* && "$activity_service" == *found* ]]; then
+              break
+            fi
             sleep 1
           done
-          [[ "$("$ADB" shell id -u | tr -d '\r')" == 0 ]]
-      - name: Disable 16K compatibility, run exact app offline and all instrumentation
+          [[ "$($ADB shell id -u | tr -d '\r')" == 0 ]]
+          "$ADB" shell service check package | grep -q found
+          "$ADB" shell service check activity | grep -q found
+      - name: Disable 16K compatibility, block egress, run exact app and all instrumentation
         working-directory: ${{ runner.temp }}/candidate
         shell: bash
         run: |
@@ -123,9 +130,9 @@ jobs:
           "$ADB" shell setprop pm.16kb.app_compat.disabled true
           [[ "$("$ADB" shell getprop bionic.linker.16kb.app_compat.enabled | tr -d '\r')" == false ]]
           [[ "$("$ADB" shell getprop pm.16kb.app_compat.disabled | tr -d '\r')" == true ]]
-          "$ADB" shell cmd connectivity airplane-mode enable || true
-          "$ADB" shell svc wifi disable || true
-          "$ADB" shell svc data disable || true
+
+          # The ps16k image can temporarily lack connectivity/wifi shell services after adb root.
+          # Enforce offline behavior at the host process boundary instead; emulator/qemu runs as this UID.
           sudo iptables -I OUTPUT 1 -o lo -j ACCEPT
           sudo iptables -I OUTPUT 2 -m owner --uid-owner "$uid" -j REJECT
           cleanup() {
@@ -133,8 +140,17 @@ jobs:
             sudo iptables -D OUTPUT -o lo -j ACCEPT 2>/dev/null || true
           }
           trap cleanup EXIT
-          [[ "$("$ADB" shell settings get global airplane_mode_on | tr -d '\r')" == 1 ]]
-          if curl -fsS --connect-timeout 2 --max-time 3 https://www.google.com >/dev/null 2>&1; then exit 1; fi
+          if curl -fsS --connect-timeout 2 --max-time 3 https://www.google.com >/dev/null 2>&1; then
+            echo 'Host egress unexpectedly available' >&2
+            exit 1
+          fi
+          if "$ADB" shell 'command -v ping >/dev/null 2>&1'; then
+            if "$ADB" shell ping -c 1 -W 1 8.8.8.8 >/dev/null 2>&1; then
+              echo 'Guest egress unexpectedly available through host network' >&2
+              exit 1
+            fi
+          fi
+
           app_apk="$(find app/build/outputs/apk/debug -type f -name '*arm64-v8a*.apk' -print -quit)"
           test_apk="$(find app/build/outputs/apk/androidTest/debug -type f -name '*.apk' -print -quit)"
           test -f "$app_apk" && test -f "$test_apk"
@@ -143,12 +159,15 @@ jobs:
           "$ADB" install -r "$test_apk" | tee "$RUNNER_TEMP/install-test.txt"
           grep -Fq Success "$RUNNER_TEMP/install-app.txt"
           grep -Fq Success "$RUNNER_TEMP/install-test.txt"
+          "$ADB" shell dumpsys package com.photobook.app > "$RUNNER_TEMP/package-16k.txt"
+          ! sed -n '/requested permissions:/,/install permissions:/p' "$RUNNER_TEMP/package-16k.txt" | grep -q 'android.permission.INTERNET'
           "$ADB" shell am start -W -n com.photobook.app/.MainActivity | tee "$RUNNER_TEMP/startup-16k.txt"
           grep -Fq 'Status: ok' "$RUNNER_TEMP/startup-16k.txt"
           instrumentation="$("$ADB" shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
           test -n "$instrumentation"
           "$ADB" shell am instrument -w -r -e class com.photobook.app.ml.LocalOcrEngineInstrumentedTest "$instrumentation" | tee "$RUNNER_TEMP/ocr-16k.txt"
           grep -Eq 'OK \(1 tests?\)' "$RUNNER_TEMP/ocr-16k.txt"
+          ! grep -Eq 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' "$RUNNER_TEMP/ocr-16k.txt"
           "$ADB" shell am instrument -w -r "$instrumentation" | tee "$RUNNER_TEMP/all-tests-16k.txt"
           ! grep -Eq 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' "$RUNNER_TEMP/all-tests-16k.txt"
           grep -Eq 'OK \([0-9]+ tests?\)' "$RUNNER_TEMP/all-tests-16k.txt"
@@ -158,7 +177,9 @@ jobs:
           {
             echo 'bionic_16k_compat=false'
             echo 'pm_16k_compat_disabled=true'
-            echo 'offline_network_gate=PASS'
+            echo 'host_egress_block=PASS'
+            echo 'guest_egress_block=PASS'
+            echo 'installed_internet_permission=ABSENT'
             echo 'startup_16k=PASS'
             echo 'bundled_ocr_16k=PASS'
             echo "instrumentation_tests_16k=$count"
@@ -177,5 +198,6 @@ jobs:
             ${{ runner.temp }}/ocr-16k.txt
             ${{ runner.temp }}/all-tests-16k.txt
             ${{ runner.temp }}/logcat-16k.txt
+            ${{ runner.temp }}/package-16k.txt
           retention-days: 14
           if-no-files-found: warn
