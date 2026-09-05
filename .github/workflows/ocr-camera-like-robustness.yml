@@ -131,11 +131,18 @@ jobs:
             "$instrumentation" | tee "$RUNNER_TEMP/ocr-robustness.txt"
           grep -Eq 'OK \(5 tests?\)' "$RUNNER_TEMP/ocr-robustness.txt"
           ! grep -Eq 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' "$RUNNER_TEMP/ocr-robustness.txt"
+
+          # Preserve the complete logcat for diagnosis, but fail only on PhotoBook's crash buffer.
+          # A prior run proved a global dlopen grep is invalid because unrelated Google Velvet logs
+          # can contain expected optional-library dlopen failures while PhotoBook passes 5/5 tests.
           "$ADB" logcat -d > "$RUNNER_TEMP/ocr-robustness-logcat.txt"
-          if grep -Eqi 'FATAL EXCEPTION|OutOfMemoryError|UnsatisfiedLinkError|dlopen failed' "$RUNNER_TEMP/ocr-robustness-logcat.txt"; then
-            echo 'FAIL: fatal/native/OOM marker in robustness logcat' >&2
+          "$ADB" logcat -b crash -d > "$RUNNER_TEMP/ocr-robustness-crash-buffer.txt" || true
+          if grep -Eqi 'Process: com\.photobook\.app|com\.photobook\.app.*(FATAL EXCEPTION|OutOfMemoryError|UnsatisfiedLinkError|dlopen failed)' "$RUNNER_TEMP/ocr-robustness-crash-buffer.txt"; then
+            echo 'FAIL: PhotoBook crash/native/OOM marker in crash buffer' >&2
+            cat "$RUNNER_TEMP/ocr-robustness-crash-buffer.txt" >&2
             exit 1
           fi
+          echo 'photobook_crash_buffer=CLEAN' | tee -a "$REPORT"
           echo 'camera_like_variants=5' | tee -a "$REPORT"
           echo 'camera_like_ocr_robustness=PASS' | tee -a "$REPORT"
           echo 'NOTE=synthetic deterministic surrogate; not real-camera evidence' | tee -a "$REPORT"
@@ -149,6 +156,7 @@ jobs:
             changed-files.txt
             ${{ runner.temp }}/ocr-robustness.txt
             ${{ runner.temp }}/ocr-robustness-logcat.txt
+            ${{ runner.temp }}/ocr-robustness-crash-buffer.txt
             ${{ runner.temp }}/ocr-robustness-emulator.log
           retention-days: 14
           if-no-files-found: warn
