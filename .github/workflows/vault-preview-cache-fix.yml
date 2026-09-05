@@ -1,9 +1,9 @@
-name: Vault Preview Cache Lifecycle Final (Disposable)
+name: Vault Preview Cache Lifecycle V4 (Disposable)
 
 on:
   push:
     branches:
-      - fix/2.0.15-vault-preview-cache-lifecycle-v3
+      - fix/2.0.15-vault-preview-cache-lifecycle-v4
     paths:
       - .github/workflows/vault-preview-cache-fix.yml
 
@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 env:
-  CANDIDATE_SHA: 52b118732adb6fd6fc62d730245472b34272e90e
+  BASE_SHA: 50385fc6c062a269e41c0921954639682eb0b593
 
 jobs:
   patch-and-verify:
@@ -21,21 +21,24 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: fix/2.0.15-vault-preview-cache-lifecycle-v3
-      - name: Verify isolated starting scope
+          ref: fix/2.0.15-vault-preview-cache-lifecycle-v4
+
+      - name: Verify isolated v3 starting point
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t changed < <(git diff --name-only "$CANDIDATE_SHA"...HEAD | sort)
+          mapfile -t changed < <(git diff --name-only "$BASE_SHA"...HEAD | sort)
           printf '%s\n' "${changed[@]}"
           test "${#changed[@]}" -eq 1
           test "${changed[0]}" = ".github/workflows/vault-preview-cache-fix.yml"
+
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
           cache: gradle
-      - name: Apply exact guarded source patch
+
+      - name: Apply reviewed v4 delta
         shell: bash
         run: |
           set -euo pipefail
@@ -50,195 +53,272 @@ jobs:
 
           main_path = Path('app/src/main/java/com/photobook/app/MainActivity.kt')
           main = main_path.read_text()
-          preview_call = 'vaultService.listItems(session = session, includePreviews = true)'
-          main = replace_exact(main, preview_call, 'loadVisibleVaultItems(session)', 4, 'MainActivity preview calls')
-          refresh_anchor = '    fun refreshVault(session: VaultCryptoSession) {\n'
-          helper = (
-              '    suspend fun loadVisibleVaultItems(session: VaultCryptoSession): List<VaultItem> {\n'
-              '        if (!showVault) return emptyList()\n'
-              '        val previewGeneration = vaultService.beginPreviewLoad()\n'
-              '        val items = vaultService.listItems(\n'
-              '            session = session,\n'
-              '            includePreviews = true,\n'
-              '            previewGeneration = previewGeneration,\n'
-              '        )\n'
-              '        return if (showVault) {\n'
-              '            items\n'
-              '        } else {\n'
-              '            vaultService.clearPreviewCache()\n'
-              '            emptyList()\n'
-              '        }\n'
-              '    }\n\n'
-          )
-          main = replace_exact(main, refresh_anchor, helper + refresh_anchor, 1, 'refreshVault anchor')
+
+          old_close = '''    fun closeVault() {
+              vaultService.clearPreviewCache()
+              showVault = false
+              vaultItems = emptyList()
+              isVaultLoading = false
+              isVaultBusy = false
+          }
+          '''
+          new_close = '''    fun closeVault() {
+              showVault = false
+              vaultService.invalidatePreviewCache()
+              vaultItems = emptyList()
+              isVaultLoading = false
+              isVaultBusy = false
+              coroutineScope.launch {
+                  runCatching { vaultService.clearPreviewCache() }
+              }
+          }
+          '''
+          main = replace_exact(main, old_close, new_close, 1, 'closeVault')
+
+          old_return = '''        return if (showVault) {
+                      items
+                  } else {
+                      vaultService.clearPreviewCache()
+                      emptyList()
+                  }
+          '''
+          new_return = '''        return when {
+                      !showVault -> emptyList()
+                      vaultService.isPreviewLoadCurrent(previewGeneration) -> items
+                      else -> vaultItems
+                  }
+          '''
+          main = replace_exact(main, old_return, new_return, 1, 'visible Vault result arbitration')
           main_path.write_text(main)
 
           service_path = Path('app/src/main/java/com/photobook/app/feature/vault/VaultService.kt')
           service = service_path.read_text()
-          auth_anchor = (
-              '    private val authCrypto: VaultAuthCrypto by lazy {\n'
-              '        VaultAuthCrypto(context)\n'
-              '    }\n'
-          )
-          auth_replacement = auth_anchor + (
-              '\n'
-              '    private val previewCacheGeneration = java.util.concurrent.atomic.AtomicLong(0L)\n'
-              '    private val previewCacheNeedsCleanup = java.util.concurrent.atomic.AtomicBoolean(true)\n'
-              '\n'
-              '    internal fun beginPreviewLoad(): Long = previewCacheGeneration.incrementAndGet()\n'
-          )
-          service = replace_exact(service, auth_anchor, auth_replacement, 1, 'authCrypto anchor')
 
-          list_signature = (
-              '    suspend fun listItems(\n'
-              '        session: VaultCryptoSession,\n'
-              '        includePreviews: Boolean = false,\n'
-              '    ): List<VaultItem> = withContext(Dispatchers.IO) {\n'
-              '        migrateLegacyItemsIfNeeded()\n'
-          )
-          list_replacement = (
-              '    suspend fun listItems(\n'
-              '        session: VaultCryptoSession,\n'
-              '        includePreviews: Boolean = false,\n'
-              '        previewGeneration: Long? = null,\n'
-              '    ): List<VaultItem> = withContext(Dispatchers.IO) {\n'
-              '        val expectedPreviewGeneration = if (includePreviews) {\n'
-              '            requireNotNull(previewGeneration) { "Preview generation is required for Vault previews" }\n'
-              '        } else {\n'
-              '            null\n'
-              '        }\n'
-              '        if (\n'
-              '            expectedPreviewGeneration != null &&\n'
-              '            previewCacheNeedsCleanup.compareAndSet(true, false)\n'
-              '        ) {\n'
-              '            val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)\n'
-              '            if (previewRoot.exists() && !previewRoot.deleteRecursively()) {\n'
-              '                previewCacheNeedsCleanup.set(true)\n'
-              '                throw IOException("Unable to clear stale Vault preview cache")\n'
-              '            }\n'
-              '        }\n'
-              '        migrateLegacyItemsIfNeeded()\n'
-          )
-          service = replace_exact(service, list_signature, list_replacement, 1, 'listItems signature')
+          import_anchor = 'import kotlinx.coroutines.Dispatchers\nimport kotlinx.coroutines.withContext\n'
+          import_replacement = 'import kotlinx.coroutines.Dispatchers\nimport kotlinx.coroutines.sync.Mutex\nimport kotlinx.coroutines.withContext\n'
+          service = replace_exact(service, import_anchor, import_replacement, 1, 'Mutex import')
 
-          preview_branch = (
-              '            if (includePreviews) {\n'
-              '                item.copy(previewUri = createPreviewUri(entity, session))\n'
-              '            } else {\n'
-          )
-          preview_branch_replacement = (
-              '            if (expectedPreviewGeneration != null) {\n'
-              '                item.copy(\n'
-              '                    previewUri = createPreviewUri(\n'
-              '                        entity = entity,\n'
-              '                        session = session,\n'
-              '                        expectedPreviewGeneration = expectedPreviewGeneration,\n'
-              '                    ),\n'
-              '                )\n'
-              '            } else {\n'
-          )
-          service = replace_exact(service, preview_branch, preview_branch_replacement, 1, 'preview branch')
+          old_fields = '''    private val previewCacheGeneration = java.util.concurrent.atomic.AtomicLong(0L)
+              private val previewCacheNeedsCleanup = java.util.concurrent.atomic.AtomicBoolean(true)
+          
+              internal fun beginPreviewLoad(): Long = previewCacheGeneration.incrementAndGet()
+          '''
+          new_fields = '''    private val previewCacheGeneration = java.util.concurrent.atomic.AtomicLong(0L)
+              private val previewCacheNeedsCleanup = java.util.concurrent.atomic.AtomicBoolean(true)
+              private val previewCacheMutex = Mutex()
+          
+              internal fun beginPreviewLoad(): Long = previewCacheGeneration.incrementAndGet()
+          
+              internal fun isPreviewLoadCurrent(generation: Long): Boolean =
+                  previewCacheGeneration.get() == generation
+          
+              internal fun invalidatePreviewCache() {
+                  previewCacheGeneration.incrementAndGet()
+                  previewCacheNeedsCleanup.set(true)
+              }
+          '''
+          service = replace_exact(service, old_fields, new_fields, 1, 'preview state fields')
 
-          clear_anchor = (
-              '    fun clearPreviewCache() {\n'
-              '        runCatching {\n'
-          )
-          clear_replacement = (
-              '    fun clearPreviewCache() {\n'
-              '        previewCacheGeneration.incrementAndGet()\n'
-              '        previewCacheNeedsCleanup.set(true)\n'
-              '        runCatching {\n'
-          )
-          service = replace_exact(service, clear_anchor, clear_replacement, 1, 'clearPreviewCache')
+          old_list = '''    suspend fun listItems(
+              session: VaultCryptoSession,
+              includePreviews: Boolean = false,
+              previewGeneration: Long? = null,
+          ): List<VaultItem> = withContext(Dispatchers.IO) {
+              val expectedPreviewGeneration = if (includePreviews) {
+                  requireNotNull(previewGeneration) { "Preview generation is required for Vault previews" }
+              } else {
+                  null
+              }
+              if (
+                  expectedPreviewGeneration != null &&
+                  previewCacheNeedsCleanup.compareAndSet(true, false)
+              ) {
+                  val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)
+                  if (previewRoot.exists() && !previewRoot.deleteRecursively()) {
+                      previewCacheNeedsCleanup.set(true)
+                      throw IOException("Unable to clear stale Vault preview cache")
+                  }
+              }
+              migrateLegacyItemsIfNeeded()
+              migrateLegacyCiphertextIfNeeded(session)
+              vaultDao.getAllVaultItems().map { entity ->
+                  val item = entity.toVaultItem()
+                  if (expectedPreviewGeneration != null) {
+                      item.copy(
+                          previewUri = createPreviewUri(
+                              entity = entity,
+                              session = session,
+                              expectedPreviewGeneration = expectedPreviewGeneration,
+                          ),
+                      )
+                  } else {
+                      item
+                  }
+              }
+          }
+          '''
+          new_list = '''    suspend fun listItems(
+              session: VaultCryptoSession,
+              includePreviews: Boolean = false,
+              previewGeneration: Long? = null,
+          ): List<VaultItem> = withContext(Dispatchers.IO) {
+              val expectedPreviewGeneration = if (includePreviews) {
+                  requireNotNull(previewGeneration) { "Preview generation is required for Vault previews" }
+              } else {
+                  null
+              }
+              if (expectedPreviewGeneration != null) {
+                  previewCacheMutex.lock()
+              }
+              try {
+                  if (expectedPreviewGeneration != null) {
+                      if (previewCacheGeneration.get() != expectedPreviewGeneration) {
+                          return@withContext emptyList()
+                      }
+                      if (previewCacheNeedsCleanup.compareAndSet(true, false)) {
+                          val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)
+                          if (previewRoot.exists() && !previewRoot.deleteRecursively()) {
+                              previewCacheNeedsCleanup.set(true)
+                              throw IOException("Unable to clear stale Vault preview cache")
+                          }
+                      }
+                      if (previewCacheGeneration.get() != expectedPreviewGeneration) {
+                          return@withContext emptyList()
+                      }
+                  }
+                  migrateLegacyItemsIfNeeded()
+                  migrateLegacyCiphertextIfNeeded(session)
+                  if (
+                      expectedPreviewGeneration != null &&
+                      previewCacheGeneration.get() != expectedPreviewGeneration
+                  ) {
+                      return@withContext emptyList()
+                  }
+                  vaultDao.getAllVaultItems().map { entity ->
+                      val item = entity.toVaultItem()
+                      if (expectedPreviewGeneration != null) {
+                          item.copy(
+                              previewUri = createPreviewUri(
+                                  entity = entity,
+                                  session = session,
+                                  expectedPreviewGeneration = expectedPreviewGeneration,
+                              ),
+                          )
+                      } else {
+                          item
+                      }
+                  }
+              } finally {
+                  if (expectedPreviewGeneration != null) {
+                      previewCacheMutex.unlock()
+                  }
+              }
+          }
+          '''
+          service = replace_exact(service, old_list, new_list, 1, 'listItems serialization')
 
-          create_signature = (
-              '    private fun createPreviewUri(\n'
-              '        entity: VaultEntity,\n'
-              '        session: VaultCryptoSession,\n'
-              '    ): Uri? {\n'
-          )
-          create_replacement = (
-              '    private fun createPreviewUri(\n'
-              '        entity: VaultEntity,\n'
-              '        session: VaultCryptoSession,\n'
-              '        expectedPreviewGeneration: Long,\n'
-              '    ): Uri? {\n'
-              '        if (previewCacheGeneration.get() != expectedPreviewGeneration) return null\n'
-          )
-          service = replace_exact(service, create_signature, create_replacement, 1, 'createPreviewUri signature')
+          old_clear = '''    fun clearPreviewCache() {
+              previewCacheGeneration.incrementAndGet()
+              previewCacheNeedsCleanup.set(true)
+              runCatching {
+                  File(context.cacheDir, VAULT_PREVIEW_DIR).deleteRecursively()
+              }
+          }
+          '''
+          new_clear = '''    suspend fun clearPreviewCache() = withContext(Dispatchers.IO) {
+              previewCacheMutex.lock()
+              try {
+                  val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)
+                  if (previewRoot.exists() && !previewRoot.deleteRecursively()) {
+                      previewCacheNeedsCleanup.set(true)
+                      throw IOException("Unable to clear Vault preview cache")
+                  }
+                  previewCacheNeedsCleanup.set(false)
+              } finally {
+                  previewCacheMutex.unlock()
+              }
+          }
+          '''
+          service = replace_exact(service, old_clear, new_clear, 1, 'IO-bound preview clear')
 
-          cached_return = (
-              '        if (previewFile.exists() && previewFile.length() > 0L) {\n'
-              '            return Uri.fromFile(previewFile)\n'
-              '        }\n'
-          )
-          cached_replacement = (
-              '        if (previewFile.exists() && previewFile.length() > 0L) {\n'
-              '            return if (previewCacheGeneration.get() == expectedPreviewGeneration) {\n'
-              '                Uri.fromFile(previewFile)\n'
-              '            } else {\n'
-              '                null\n'
-              '            }\n'
-              '        }\n'
-          )
-          service = replace_exact(service, cached_return, cached_replacement, 1, 'cached preview return')
+          bounds_anchor = '''            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+                  return@runCatching null
+              }
+          
+              val options = BitmapFactory.Options().apply {
+          '''
+          bounds_replacement = '''            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+                  return@runCatching null
+              }
+              if (previewCacheGeneration.get() != expectedPreviewGeneration) {
+                  return@runCatching null
+              }
+          
+              val options = BitmapFactory.Options().apply {
+          '''
+          service = replace_exact(service, bounds_anchor, bounds_replacement, 1, 'post-bounds stale check')
 
-          write_block = (
-              '            previewFile.parentFile?.mkdirs()\n'
-              '            previewFile.outputStream().use { output ->\n'
-              '                bitmap.compress(Bitmap.CompressFormat.JPEG, PREVIEW_JPEG_QUALITY, output)\n'
-              '            }\n'
-              '            bitmap.recycle()\n'
-              '            Uri.fromFile(previewFile)\n'
-          )
-          write_replacement = (
-              '            previewFile.parentFile?.mkdirs()\n'
-              '            val tempPreview = File(\n'
-              '                previewFile.parentFile,\n'
-              '                ".${previewFile.name}.${UUID.randomUUID().toString().take(8)}.tmp",\n'
-              '            )\n'
-              '            try {\n'
-              '                tempPreview.outputStream().use { output ->\n'
-              '                    if (!bitmap.compress(Bitmap.CompressFormat.JPEG, PREVIEW_JPEG_QUALITY, output)) {\n'
-              '                        throw IOException("Unable to encode Vault preview")\n'
-              '                    }\n'
-              '                }\n'
-              '                if (previewCacheGeneration.get() != expectedPreviewGeneration) {\n'
-              '                    return@runCatching null\n'
-              '                }\n'
-              '                authCrypto.renameAtomically(tempPreview, previewFile)\n'
-              '                Uri.fromFile(previewFile)\n'
-              '            } finally {\n'
-              '                bitmap.recycle()\n'
-              '                runCatching { tempPreview.delete() }\n'
-              '            }\n'
-          )
-          service = replace_exact(service, write_block, write_replacement, 1, 'preview write block')
+          bitmap_anchor = '''            val bitmap = openVaultInput(entity, session).use { input ->
+                  BitmapFactory.decodeStream(input, null, options)
+              } ?: return@runCatching null
+          
+              previewFile.parentFile?.mkdirs()
+          '''
+          bitmap_replacement = '''            val bitmap = openVaultInput(entity, session).use { input ->
+                  BitmapFactory.decodeStream(input, null, options)
+              } ?: return@runCatching null
+              if (previewCacheGeneration.get() != expectedPreviewGeneration) {
+                  bitmap.recycle()
+                  return@runCatching null
+              }
+          
+              previewFile.parentFile?.mkdirs()
+          '''
+          service = replace_exact(service, bitmap_anchor, bitmap_replacement, 1, 'post-decode stale check')
+
+          publish_anchor = '''                authCrypto.renameAtomically(tempPreview, previewFile)
+                  Uri.fromFile(previewFile)
+          '''
+          publish_replacement = '''                authCrypto.renameAtomically(tempPreview, previewFile)
+                  if (previewCacheGeneration.get() != expectedPreviewGeneration) {
+                      runCatching { previewFile.delete() }
+                      return@runCatching null
+                  }
+                  Uri.fromFile(previewFile)
+          '''
+          service = replace_exact(service, publish_anchor, publish_replacement, 1, 'post-publish stale check')
+
           service_path.write_text(service)
           PY
-
           git diff --check
-      - name: Prove intended source semantics
+
+      - name: Prove reviewed invariants
         shell: bash
         run: |
           set -euo pipefail
           main=app/src/main/java/com/photobook/app/MainActivity.kt
           vault=app/src/main/java/com/photobook/app/feature/vault/VaultService.kt
-          test "$(grep -c 'loadVisibleVaultItems(session)' "$main")" -eq 4
-          test "$(grep -c 'beginPreviewLoad()' "$main")" -eq 1
-          test "$(grep -c 'internal fun beginPreviewLoad' "$vault")" -eq 1
-          test "$(grep -c 'previewCacheGeneration.incrementAndGet()' "$vault")" -eq 2
-          test "$(grep -c 'previewCacheNeedsCleanup' "$vault")" -ge 4
-          test "$(grep -c 'expectedPreviewGeneration' "$vault")" -ge 7
-          test "$(grep -c 'tempPreview' "$vault")" -eq 4
-          test "$(grep -c 'Unable to encode Vault preview' "$vault")" -eq 1
-      - name: Compile, unit test and lint patched source
+          test "$(grep -c 'vaultService.invalidatePreviewCache()' "$main")" -eq 1
+          test "$(grep -c 'isPreviewLoadCurrent(previewGeneration)' "$main")" -eq 1
+          test "$(grep -c 'suspend fun clearPreviewCache' "$vault")" -eq 1
+          test "$(grep -c 'private val previewCacheMutex = Mutex()' "$vault")" -eq 1
+          test "$(grep -c 'previewCacheMutex.lock()' "$vault")" -eq 2
+          test "$(grep -c 'previewCacheMutex.unlock()' "$vault")" -eq 2
+          test "$(grep -c 'internal fun invalidatePreviewCache' "$vault")" -eq 1
+          test "$(grep -c 'internal fun isPreviewLoadCurrent' "$vault")" -eq 1
+          test "$(grep -c 'return@withContext emptyList()' "$vault")" -ge 3
+          test "$(grep -c 'runCatching { previewFile.delete() }' "$vault")" -eq 1
+          ! grep -q 'fun clearPreviewCache() {' "$vault"
+          ! grep -A2 'fun closeVault()' "$main" | grep -q 'clearPreviewCache()'
+
+      - name: Compile production and test source
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./gradlew
-          ./gradlew :app:compileDebugKotlin :app:testDebugUnitTest :app:lintDebug
-      - name: Commit only the validated production patch
+          ./gradlew :app:compileDebugKotlin :app:compileDebugAndroidTestKotlin :app:testDebugUnitTest :app:lintDebug
+
+      - name: Commit only reviewed production delta
         shell: bash
         run: |
           set -euo pipefail
@@ -246,7 +326,6 @@ jobs:
           git config user.email "95069115+myProjectsRavi@users.noreply.github.com"
           git add app/src/main/java/com/photobook/app/MainActivity.kt \
                   app/src/main/java/com/photobook/app/feature/vault/VaultService.kt
-          test -n "$(git diff --cached --name-only)"
           test "$(git diff --cached --name-only | wc -l | tr -d ' ')" = "2"
-          git commit -m "Harden Vault preview cache lifecycle"
-          git push origin HEAD:fix/2.0.15-vault-preview-cache-lifecycle-v3
+          git commit -m "Serialize and offload Vault preview cleanup"
+          git push origin HEAD:fix/2.0.15-vault-preview-cache-lifecycle-v4
