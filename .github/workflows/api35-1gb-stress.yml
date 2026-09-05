@@ -1,0 +1,154 @@
+name: API35 1GB Lifecycle Stress (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-api35-1gb-stress
+
+permissions:
+  contents: read
+
+jobs:
+  low-memory-stress:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      CANDIDATE_SHA: 04909b6e485c1ede12160aeac136598bee8d303f
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Install emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+      - name: Checkout exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "$CANDIDATE_SHA"
+          rm -rf "$RUNNER_TEMP/candidate"
+          git worktree add --detach "$RUNNER_TEMP/candidate" "$CANDIDATE_SHA"
+          test "$(git -C "$RUNNER_TEMP/candidate" rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git -C "$RUNNER_TEMP/candidate" status --porcelain)"
+      - name: Build exact minified benchmark APK
+        working-directory: ${{ runner.temp }}/candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:assembleBenchmark
+      - name: Provision API35 1GB emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager 2>/dev/null | sort | tail -n1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          IMAGE="system-images;android-35;google_apis;x86_64"
+          AVD="photobook-api35-1gb"
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 emulator "$IMAGE"
+          echo no | "$AVDMANAGER" create avd --force --name "$AVD" --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/$AVD.avd"
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+          nohup "$EMULATOR" -avd "$AVD" -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 1024 -cores 2 > "$RUNNER_TEMP/api35-1gb-emulator.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 150); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/api35-1gb-emulator.log"; exit 1; }
+            sleep 2
+          done
+          "$ADB" wait-for-device
+          for _ in $(seq 1 150); do
+            [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break
+            sleep 2
+          done
+          [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
+          sdk="$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"
+          abi="$("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r')"
+          abilist="$("$ADB" shell getprop ro.product.cpu.abilist | tr -d '\r')"
+          ram_kb="$("$ADB" shell awk '/MemTotal/ {print $2; exit}' /proc/meminfo | tr -d '\r')"
+          echo "candidate_sha=$CANDIDATE_SHA" | tee low-memory-report.txt
+          echo "sdk=$sdk" | tee -a low-memory-report.txt
+          echo "abi=$abi" | tee -a low-memory-report.txt
+          echo "abilist=$abilist" | tee -a low-memory-report.txt
+          echo "ram_kb=$ram_kb" | tee -a low-memory-report.txt
+          [[ "$sdk" == 35 ]]
+          [[ ",$abilist," == *,arm64-v8a,* ]]
+          # Fail if the supposedly low-memory profile silently received >1.30 GiB RAM.
+          (( ram_kb <= 1363148 ))
+      - name: Cut network, install exact minified candidate, and run 50 stress iterations
+        working-directory: ${{ runner.temp }}/candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          export PATH="$SDK_ROOT/platform-tools:$PATH"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt 2>/dev/null | sort -V | tail -n1)"
+          uid="$(id -u)"
+          REPORT="$GITHUB_WORKSPACE/low-memory-report.txt"
+          "$ADB" shell cmd connectivity airplane-mode enable || true
+          "$ADB" shell svc wifi disable || true
+          "$ADB" shell svc data disable || true
+          sudo iptables -I OUTPUT 1 -o lo -j ACCEPT
+          sudo iptables -I OUTPUT 2 -m owner --uid-owner "$uid" -j REJECT
+          cleanup() {
+            sudo iptables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null || true
+            sudo iptables -D OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          [[ "$("$ADB" shell settings get global airplane_mode_on | tr -d '\r')" == 1 ]]
+          if curl -fsS --connect-timeout 2 --max-time 3 https://www.google.com >/dev/null 2>&1; then
+            echo 'FAIL: host outbound network reachable' >&2
+            exit 1
+          fi
+          if "$ADB" shell 'command -v ping >/dev/null 2>&1'; then
+            ! "$ADB" shell ping -c 1 -W 1 8.8.8.8 >/dev/null 2>&1
+          fi
+          echo 'offline_network_gate=PASS' | tee -a "$REPORT"
+
+          apk="$(find app/build/outputs/apk/benchmark -type f -name '*arm64-v8a*.apk' | head -n1)"
+          test -f "$apk"
+          ! "$AAPT" dump permissions "$apk" | grep -q 'android.permission.INTERNET'
+          "$ADB" install -r "$apk" | tee "$RUNNER_TEMP/install.txt"
+          grep -Fq Success "$RUNNER_TEMP/install.txt"
+          "$ADB" shell dumpsys package com.photobook.app > "$RUNNER_TEMP/package.txt"
+          ! sed -n '/requested permissions:/,/install permissions:/p' "$RUNNER_TEMP/package.txt" | grep -q 'android.permission.INTERNET'
+          echo 'installed_internet_permission=ABSENT' | tee -a "$REPORT"
+
+          "$ADB" shell am start -W -n com.photobook.app/.MainActivity | tee "$RUNNER_TEMP/initial-startup.txt"
+          grep -Fq 'Status: ok' "$RUNNER_TEMP/initial-startup.txt"
+          OUT_DIR="$GITHUB_WORKSPACE/low-memory-stress" ITERATIONS=50 PRESERVE_LOGCAT=0 bash tools/benchmark/phase0_device_stress.sh | tee "$RUNNER_TEMP/stress-output.txt"
+          grep -Fq 'PASS: no crash/ANR/OOM signature observed' "$RUNNER_TEMP/stress-output.txt"
+          echo 'lifecycle_stress_iterations=50' | tee -a "$REPORT"
+          echo 'crash_anr_oom=ABSENT' | tee -a "$REPORT"
+          echo 'api35_1gb_emulator_stress=PASS' | tee -a "$REPORT"
+          echo 'NOTE=emulator low-memory surrogate; not physical-device evidence' | tee -a "$REPORT"
+      - name: Upload low-memory evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: api35-1gb-stress-${{ github.run_id }}
+          path: |
+            low-memory-report.txt
+            low-memory-stress/
+            ${{ runner.temp }}/api35-1gb-emulator.log
+            ${{ runner.temp }}/initial-startup.txt
+            ${{ runner.temp }}/stress-output.txt
+          retention-days: 14
+          if-no-files-found: warn
