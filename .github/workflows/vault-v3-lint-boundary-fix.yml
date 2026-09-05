@@ -26,23 +26,16 @@ jobs:
 
           p = Path('app/src/main/java/com/photobook/app/feature/vault/VaultAuthCrypto.kt')
           s = p.read_text()
-          old = '''        when (policy) {
-              KeyPolicy.R_PLUS_COMBINED -> {
-                  check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
-                  builder.setUserAuthenticationParameters(
-                      0,
-                      KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL,
-                  )
-              }
-              KeyPolicy.PRE_R_BIOMETRIC -> {
-                  check(Build.VERSION.SDK_INT < Build.VERSION_CODES.R)
-                  @Suppress("DEPRECATION")
-                  builder.setUserAuthenticationValidityDurationSeconds(-1)
-                  builder.setInvalidatedByBiometricEnrollment(true)
-              }
-          }
-          '''
-          new = '''        when (policy) {
+          start_marker = '        when (policy) {\n'
+          end_marker = '\n        return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE).run {\n'
+          start = s.find(start_marker)
+          end = s.find(end_marker, start)
+          if start < 0 or end < 0 or s.find(start_marker, start + 1) >= 0:
+              raise SystemExit('Ambiguous or missing primary-key policy block')
+          block = s[start:end]
+          if 'builder.setUserAuthenticationParameters(' not in block or 'setInvalidatedByBiometricEnrollment(true)' not in block:
+              raise SystemExit('Primary-key policy block no longer matches expected semantics')
+          replacement = '''        when (policy) {
               KeyPolicy.R_PLUS_COMBINED -> {
                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                       configureRPlusPrimaryKey(builder)
@@ -60,15 +53,12 @@ jobs:
               }
           }
           '''
-          old = '\n'.join(line[4:] if line.startswith('    ') else line for line in old.splitlines()) + '\n'
-          new = '\n'.join(line[4:] if line.startswith('    ') else line for line in new.splitlines()) + '\n'
-          if s.count(old) != 1:
-              raise SystemExit(f'Expected exactly one API policy block, found {s.count(old)}')
-          s = s.replace(old, new, 1)
+          replacement = '\n'.join(line[4:] if line.startswith('    ') else line for line in replacement.splitlines()) + '\n'
+          s = s[:start] + replacement + s[end:]
 
-          anchor = '''    private fun getOrCreateRecoveryKey(): SecretKey {
-          '''
-          anchor = '\n'.join(line[4:] if line.startswith('    ') else line for line in anchor.splitlines()) + '\n'
+          anchor = '    private fun getOrCreateRecoveryKey(): SecretKey {\n'
+          if s.count(anchor) != 1 or 'private fun configureRPlusPrimaryKey' in s:
+              raise SystemExit('Recovery-key insertion anchor is ambiguous')
           helper = '''    @androidx.annotation.RequiresApi(Build.VERSION_CODES.R)
               private fun configureRPlusPrimaryKey(builder: KeyGenParameterSpec.Builder) {
                   builder.setUserAuthenticationParameters(
@@ -79,19 +69,13 @@ jobs:
 
           '''
           helper = '\n'.join(line[4:] if line.startswith('    ') else line for line in helper.splitlines()) + '\n'
-          if anchor not in s:
-              raise SystemExit('Recovery key anchor missing')
-          if 'private fun configureRPlusPrimaryKey' in s:
-              raise SystemExit('API30 helper already exists')
           s = s.replace(anchor, helper + anchor, 1)
           p.write_text(s)
           PY
 
           rm .github/workflows/vault-v3-lint-boundary-fix.yml
           git diff --check
-          changed="$(git status --short | awk '{print $2}' | sort)"
-          expected=$'.github/workflows/vault-v3-lint-boundary-fix.yml\napp/src/main/java/com/photobook/app/feature/vault/VaultAuthCrypto.kt'
-          test "$changed" = "$expected"
+          test "$(git status --short | wc -l)" -eq 2
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A .github/workflows/vault-v3-lint-boundary-fix.yml app/src/main/java/com/photobook/app/feature/vault/VaultAuthCrypto.kt
