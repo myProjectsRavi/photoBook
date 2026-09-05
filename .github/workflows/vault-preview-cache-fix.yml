@@ -50,7 +50,6 @@ jobs:
 
           main_path = Path('app/src/main/java/com/photobook/app/MainActivity.kt')
           main = main_path.read_text()
-
           preview_call = 'vaultService.listItems(session = session, includePreviews = true)'
           main = replace_exact(
               main,
@@ -59,15 +58,16 @@ jobs:
               4,
               'MainActivity preview-producing call sites',
           )
-
           refresh_anchor = '    fun refreshVault(session: VaultCryptoSession) {\n'
           helper = (
               '    suspend fun loadVisibleVaultItems(session: VaultCryptoSession): List<VaultItem> {\n'
-              '        if (!showVault) {\n'
-              '            vaultService.clearPreviewCache()\n'
-              '            return emptyList()\n'
-              '        }\n'
-              '        val items = vaultService.listItems(session = session, includePreviews = true)\n'
+              '        if (!showVault) return emptyList()\n'
+              '        val previewGeneration = vaultService.beginPreviewLoad()\n'
+              '        val items = vaultService.listItems(\n'
+              '            session = session,\n'
+              '            includePreviews = true,\n'
+              '            previewGeneration = previewGeneration,\n'
+              '        )\n'
               '        return if (showVault) {\n'
               '            items\n'
               '        } else {\n'
@@ -76,18 +76,11 @@ jobs:
               '        }\n'
               '    }\n\n'
           )
-          main = replace_exact(
-              main,
-              refresh_anchor,
-              helper + refresh_anchor,
-              1,
-              'refreshVault insertion anchor',
-          )
+          main = replace_exact(main, refresh_anchor, helper + refresh_anchor, 1, 'refreshVault insertion anchor')
           main_path.write_text(main)
 
           service_path = Path('app/src/main/java/com/photobook/app/feature/vault/VaultService.kt')
           service = service_path.read_text()
-
           auth_anchor = (
               '    private val authCrypto: VaultAuthCrypto by lazy {\n'
               '        VaultAuthCrypto(context)\n'
@@ -96,25 +89,39 @@ jobs:
           auth_replacement = auth_anchor + (
               '\n'
               '    private val previewCacheGeneration = java.util.concurrent.atomic.AtomicLong(0L)\n'
+              '    private val previewCacheNeedsInitialCleanup = java.util.concurrent.atomic.AtomicBoolean(true)\n'
               '\n'
-              '    init {\n'
-              '        // Decrypted previews are strictly ephemeral. Remove residue left by process death/crash\n'
-              '        // as soon as the Vault service exists in a new app process.\n'
-              '        clearPreviewCache()\n'
-              '    }\n'
+              '    internal fun beginPreviewLoad(): Long = previewCacheGeneration.incrementAndGet()\n'
           )
           service = replace_exact(service, auth_anchor, auth_replacement, 1, 'authCrypto anchor')
 
-          list_start = (
+          list_signature = (
+              '    suspend fun listItems(\n'
+              '        session: VaultCryptoSession,\n'
+              '        includePreviews: Boolean = false,\n'
               '    ): List<VaultItem> = withContext(Dispatchers.IO) {\n'
               '        migrateLegacyItemsIfNeeded()\n'
           )
-          list_start_replacement = (
+          list_replacement = (
+              '    suspend fun listItems(\n'
+              '        session: VaultCryptoSession,\n'
+              '        includePreviews: Boolean = false,\n'
+              '        previewGeneration: Long? = null,\n'
               '    ): List<VaultItem> = withContext(Dispatchers.IO) {\n'
-              '        val expectedPreviewGeneration = if (includePreviews) previewCacheGeneration.get() else null\n'
+              '        val expectedPreviewGeneration = if (includePreviews) {\n'
+              '            requireNotNull(previewGeneration) { "Preview generation is required for Vault previews" }\n'
+              '        } else {\n'
+              '            null\n'
+              '        }\n'
+              '        if (\n'
+              '            expectedPreviewGeneration != null &&\n'
+              '            previewCacheNeedsInitialCleanup.compareAndSet(true, false)\n'
+              '        ) {\n'
+              '            File(context.cacheDir, VAULT_PREVIEW_DIR).deleteRecursively()\n'
+              '        }\n'
               '        migrateLegacyItemsIfNeeded()\n'
           )
-          service = replace_exact(service, list_start, list_start_replacement, 1, 'listItems start')
+          service = replace_exact(service, list_signature, list_replacement, 1, 'listItems signature/start')
 
           preview_branch = (
               '            if (includePreviews) {\n'
@@ -171,27 +178,41 @@ jobs:
               '            return if (previewCacheGeneration.get() == expectedPreviewGeneration) {\n'
               '                Uri.fromFile(previewFile)\n'
               '            } else {\n'
-              '                runCatching { previewFile.delete() }\n'
               '                null\n'
               '            }\n'
               '        }\n'
           )
           service = replace_exact(service, cached_return, cached_return_replacement, 1, 'cached preview return')
 
-          final_return = (
+          write_block = (
+              '            previewFile.parentFile?.mkdirs()\n'
+              '            previewFile.outputStream().use { output ->\n'
+              '                bitmap.compress(Bitmap.CompressFormat.JPEG, PREVIEW_JPEG_QUALITY, output)\n'
+              '            }\n'
               '            bitmap.recycle()\n'
               '            Uri.fromFile(previewFile)\n'
           )
-          final_return_replacement = (
-              '            bitmap.recycle()\n'
-              '            if (previewCacheGeneration.get() == expectedPreviewGeneration) {\n'
+          write_replacement = (
+              '            previewFile.parentFile?.mkdirs()\n'
+              '            val tempPreview = File(\n'
+              '                previewFile.parentFile,\n'
+              '                ".${previewFile.name}.${UUID.randomUUID().toString().take(8)}.tmp",\n'
+              '            )\n'
+              '            try {\n'
+              '                tempPreview.outputStream().use { output ->\n'
+              '                    bitmap.compress(Bitmap.CompressFormat.JPEG, PREVIEW_JPEG_QUALITY, output)\n'
+              '                }\n'
+              '                if (previewCacheGeneration.get() != expectedPreviewGeneration) {\n'
+              '                    return@runCatching null\n'
+              '                }\n'
+              '                authCrypto.renameAtomically(tempPreview, previewFile)\n'
               '                Uri.fromFile(previewFile)\n'
-              '            } else {\n'
-              '                runCatching { previewFile.delete() }\n'
-              '                null\n'
+              '            } finally {\n'
+              '                bitmap.recycle()\n'
+              '                runCatching { tempPreview.delete() }\n'
               '            }\n'
           )
-          service = replace_exact(service, final_return, final_return_replacement, 1, 'new preview finalization')
+          service = replace_exact(service, write_block, write_replacement, 1, 'preview write block')
           service_path.write_text(service)
           PY
 
@@ -202,8 +223,11 @@ jobs:
         run: |
           set -euo pipefail
           test "$(grep -c 'loadVisibleVaultItems(session)' app/src/main/java/com/photobook/app/MainActivity.kt)" -eq 4
-          test "$(grep -c 'previewCacheGeneration.incrementAndGet()' app/src/main/java/com/photobook/app/feature/vault/VaultService.kt)" -eq 1
-          test "$(grep -c 'expectedPreviewGeneration' app/src/main/java/com/photobook/app/feature/vault/VaultService.kt)" -ge 6
+          test "$(grep -c 'beginPreviewLoad()' app/src/main/java/com/photobook/app/MainActivity.kt)" -eq 1
+          test "$(grep -c 'previewCacheGeneration.incrementAndGet()' app/src/main/java/com/photobook/app/feature/vault/VaultService.kt)" -eq 2
+          test "$(grep -c 'previewCacheNeedsInitialCleanup' app/src/main/java/com/photobook/app/feature/vault/VaultService.kt)" -eq 2
+          test "$(grep -c 'expectedPreviewGeneration' app/src/main/java/com/photobook/app/feature/vault/VaultService.kt)" -ge 7
+          ! grep -q 'init {' app/src/main/java/com/photobook/app/feature/vault/VaultService.kt || true
       - name: Compile, unit test and lint patched source
         shell: bash
         run: |
