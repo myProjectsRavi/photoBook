@@ -1,0 +1,166 @@
+name: AOSP Low-RAM Offline Stress v2 (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-aosp-lowram-offline-stress-v2
+
+permissions:
+  contents: read
+
+jobs:
+  aosp-lowram-stress:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      CANDIDATE_SHA: 04909b6e485c1ede12160aeac136598bee8d303f
+    steps:
+      - name: Checkout disposable workflow branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Install emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+
+      - name: Checkout exact candidate and build minified ARM64 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "$CANDIDATE_SHA"
+          rm -rf "$RUNNER_TEMP/candidate"
+          git worktree add --detach "$RUNNER_TEMP/candidate" "$CANDIDATE_SHA"
+          test "$(git -C "$RUNNER_TEMP/candidate" rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git -C "$RUNNER_TEMP/candidate" status --porcelain)"
+          cd "$RUNNER_TEMP/candidate"
+          chmod +x ./gradlew
+          ./gradlew :app:assembleBenchmark
+          apk="$(find app/build/outputs/apk/benchmark -type f -name '*arm64-v8a*.apk' -print -quit)"
+          test -f "$apk"
+          AAPT="$(find "${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools" -type f -name aapt | sort -V | tail -n1)"
+          ! "$AAPT" dump permissions "$apk" | grep -q 'android.permission.INTERNET'
+          {
+            echo "candidate_sha=$CANDIDATE_SHA"
+            sha256sum "$apk"
+            stat -c 'benchmark_apk_bytes=%s' "$apk"
+            echo 'benchmark_apk_internet=ABSENT'
+          } > "$GITHUB_WORKSPACE/aosp-lowram-v2-report.txt"
+
+      - name: Provision API35 AOSP constrained-memory emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort | tail -n1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager | sort | tail -n1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          IMAGE='system-images;android-35;default;x86_64'
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 emulator "$IMAGE"
+          echo no | "$AVDMANAGER" create avd --force --name photobook-aosp-lowram --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/photobook-aosp-lowram.avd"
+          # Request a constrained guest. The measured /proc/meminfo value below is authoritative.
+          printf '\nhw.ramSize=2048\n' >> "$ANDROID_AVD_HOME/photobook-aosp-lowram.avd/config.ini"
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+          nohup "$EMULATOR" -avd photobook-aosp-lowram -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 2048 -cores 2 > "$RUNNER_TEMP/aosp-lowram-v2-emulator.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 150); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/aosp-lowram-v2-emulator.log"; exit 1; }
+            sleep 2
+          done
+          "$ADB" wait-for-device
+          for _ in $(seq 1 150); do
+            [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break
+            sleep 2
+          done
+          [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
+          sdk="$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"
+          abi="$("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r')"
+          abilist="$("$ADB" shell getprop ro.product.cpu.abilist | tr -d '\r')"
+          mem_kb="$("$ADB" shell cat /proc/meminfo | tr -d '\r' | awk '$1 == "MemTotal:" {print $2; exit}')"
+          {
+            echo "sdk=$sdk"
+            echo "abi=$abi"
+            echo "abilist=$abilist"
+            echo "mem_total_kb=$mem_kb"
+          } | tee -a "$GITHUB_WORKSPACE/aosp-lowram-v2-report.txt"
+          [[ "$sdk" == 35 ]]
+          [[ "$mem_kb" =~ ^[0-9]+$ ]]
+          # User target includes 4 GB devices; require a materially stricter <=3 GiB measured guest.
+          (( mem_kb <= 3145728 ))
+          if "$ADB" shell pm path com.google.android.gms 2>/dev/null | grep -q '^package:'; then
+            echo 'FAIL: Google Play Services unexpectedly present on AOSP image' >&2
+            exit 1
+          fi
+          echo 'google_play_services=ABSENT' | tee -a "$GITHUB_WORKSPACE/aosp-lowram-v2-report.txt"
+          if [[ ",$abilist," != *,arm64-v8a,* ]]; then
+            echo 'FAIL_INFRASTRUCTURE: official AOSP x86_64 image has no ARM64 translation; exact ARM64 candidate cannot execute here' | tee -a "$GITHUB_WORKSPACE/aosp-lowram-v2-report.txt"
+            exit 86
+          fi
+          echo 'arm64_translation=AVAILABLE' | tee -a "$GITHUB_WORKSPACE/aosp-lowram-v2-report.txt"
+
+      - name: Run exact candidate offline for 50 lifecycle iterations
+        working-directory: ${{ runner.temp }}/candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          export PATH="$SDK_ROOT/platform-tools:$PATH"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          uid="$(id -u)"
+          REPORT="$GITHUB_WORKSPACE/aosp-lowram-v2-report.txt"
+          "$ADB" shell cmd connectivity airplane-mode enable || true
+          "$ADB" shell svc wifi disable || true
+          "$ADB" shell svc data disable || true
+          sudo iptables -I OUTPUT 1 -o lo -j ACCEPT
+          sudo iptables -I OUTPUT 2 -m owner --uid-owner "$uid" -j REJECT
+          cleanup() {
+            sudo iptables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null || true
+            sudo iptables -D OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          [[ "$("$ADB" shell settings get global airplane_mode_on | tr -d '\r')" == 1 ]]
+          if curl -fsS --connect-timeout 2 --max-time 3 https://www.google.com >/dev/null 2>&1; then exit 1; fi
+          if "$ADB" shell 'command -v ping >/dev/null 2>&1'; then ! "$ADB" shell ping -c 1 -W 1 8.8.8.8 >/dev/null 2>&1; fi
+          echo 'offline_network_gate=PASS' | tee -a "$REPORT"
+          apk="$(find app/build/outputs/apk/benchmark -type f -name '*arm64-v8a*.apk' -print -quit)"
+          "$ADB" install -r "$apk" | tee "$RUNNER_TEMP/aosp-lowram-v2-install.txt"
+          grep -Fq Success "$RUNNER_TEMP/aosp-lowram-v2-install.txt"
+          "$ADB" shell dumpsys package com.photobook.app > "$RUNNER_TEMP/aosp-lowram-v2-package.txt"
+          ! sed -n '/requested permissions:/,/install permissions:/p' "$RUNNER_TEMP/aosp-lowram-v2-package.txt" | grep -q 'android.permission.INTERNET'
+          "$ADB" shell am start -W -n com.photobook.app/.MainActivity | tee "$RUNNER_TEMP/aosp-lowram-v2-startup.txt"
+          grep -Fq 'Status: ok' "$RUNNER_TEMP/aosp-lowram-v2-startup.txt"
+          OUT_DIR="$GITHUB_WORKSPACE/aosp-lowram-v2-stress" ITERATIONS=50 PRESERVE_LOGCAT=0 bash tools/benchmark/phase0_device_stress.sh | tee "$RUNNER_TEMP/aosp-lowram-v2-stress-output.txt"
+          grep -Fq 'PASS: no crash/ANR/OOM signature observed' "$RUNNER_TEMP/aosp-lowram-v2-stress-output.txt"
+          echo 'aosp_lowram_offline_stress_50=PASS' | tee -a "$REPORT"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: aosp-lowram-v2-${{ github.run_id }}
+          path: |
+            aosp-lowram-v2-report.txt
+            aosp-lowram-v2-stress/
+            ${{ runner.temp }}/aosp-lowram-v2-emulator.log
+            ${{ runner.temp }}/aosp-lowram-v2-startup.txt
+            ${{ runner.temp }}/aosp-lowram-v2-stress-output.txt
+          retention-days: 14
+          if-no-files-found: warn
