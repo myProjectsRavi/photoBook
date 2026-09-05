@@ -1,0 +1,78 @@
+name: Phase 5 Release Gate Static Proof (Disposable)
+
+on:
+  push:
+    branches:
+      - cert/2.0.15-phase5-release-gate
+    paths:
+      - tools/benchmark/run_api26_arm32_compatibility.sh
+      - tools/benchmark/run_phase5_release_gate.sh
+      - .github/workflows/phase5-release-gate-static.yml
+
+permissions:
+  contents: read
+
+jobs:
+  static-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      CANDIDATE_SHA: 9fd29f9987f6879f330b5b9cb4f33cde3c9b6d23
+      EXPECTED_ARM32_BLOB: feaefac4e1ffce2f428b02fe74906349e4472556
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Prove tooling-only scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t changed < <(git diff --name-only "$CANDIDATE_SHA"..HEAD | sort)
+          printf '%s\n' "${changed[@]}"
+          expected=(
+            .github/workflows/phase5-release-gate-static.yml
+            tools/benchmark/run_api26_arm32_compatibility.sh
+            tools/benchmark/run_phase5_release_gate.sh
+          )
+          [[ "${changed[*]}" == "${expected[*]}" ]]
+          [[ "$(git hash-object tools/benchmark/run_api26_arm32_compatibility.sh)" == "$EXPECTED_ARM32_BLOB" ]]
+          if git diff --name-only "$CANDIDATE_SHA"..HEAD -- app/ baselineprofile/ gradle/ build.gradle.kts settings.gradle.kts | grep -q .; then
+            echo 'Production/build source changed on tooling branch' >&2
+            exit 1
+          fi
+          echo phase5_tooling_scope=PASS
+
+      - name: Bash syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n tools/benchmark/run_api26_arm32_compatibility.sh
+          bash -n tools/benchmark/run_phase5_release_gate.sh
+          echo phase5_tooling_syntax=PASS
+
+      - name: Prove fail-closed dispatcher validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          script=tools/benchmark/run_phase5_release_gate.sh
+          expect_exit() {
+            local expected="$1" name="$2"; shift 2
+            set +e
+            "$@" >"$RUNNER_TEMP/$name.out" 2>"$RUNNER_TEMP/$name.err"
+            rc=$?
+            set -e
+            if [[ "$rc" != "$expected" ]]; then
+              cat "$RUNNER_TEMP/$name.out"
+              cat "$RUNNER_TEMP/$name.err" >&2
+              echo "$name expected rc=$expected got rc=$rc" >&2
+              exit 1
+            fi
+          }
+          expect_exit 2 missing_mode env -u MODE bash "$script"
+          expect_exit 2 stale_sha env MODE=api26-arm32 APP_SOURCE_SHA=04909b6e485c1ede12160aeac136598bee8d303f ITERATIONS=50 bash "$script"
+          expect_exit 2 short_api26 env MODE=api26-arm32 ITERATIONS=49 bash "$script"
+          expect_exit 2 bad_library env MODE=api29-scale LIBRARY_SIZE=12345 STRESS_ITERATIONS=12 bash "$script"
+          expect_exit 2 short_api29 env MODE=api29-scale LIBRARY_SIZE=10000 STRESS_ITERATIONS=11 bash "$script"
+          grep -Fq "$CANDIDATE_SHA" "$script"
+          echo phase5_dispatcher_fail_closed=PASS
