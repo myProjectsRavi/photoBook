@@ -59,8 +59,9 @@ class VaultAuthKeyEnvelope @Inject constructor(
     @Synchronized
     @Throws(GeneralSecurityException::class)
     fun prepareAuthentication(): AuthenticationRequest {
-        val key = getOrCreateWrappingKey()
-        return if (envelopeFile.exists()) {
+        val envelopeExists = envelopeFile.exists()
+        val key = getWrappingKey(createIfMissing = !envelopeExists)
+        return if (envelopeExists) {
             val envelope = readEnvelope()
             val cipher = newCipher().apply {
                 init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, envelope.iv))
@@ -154,12 +155,15 @@ class VaultAuthKeyEnvelope @Inject constructor(
         return cipher
     }
 
-    private fun getOrCreateWrappingKey(): SecretKey {
+    private fun getWrappingKey(createIfMissing: Boolean): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         val existing = keyStore.getKey(KEY_ALIAS, null)
         if (existing != null) {
             return existing as? SecretKey
                 ?: throw GeneralSecurityException("Vault wrapping key has unexpected type")
+        }
+        if (!createIfMissing) {
+            throw VaultWrappingKeyUnavailableException()
         }
 
         val builder = KeyGenParameterSpec.Builder(
@@ -260,12 +264,11 @@ class VaultAuthKeyEnvelope @Inject constructor(
 
         envelopeFile.parentFile?.mkdirs()
         val atomicFile = AtomicFile(envelopeFile)
-        var output = atomicFile.startWrite()
+        val output = atomicFile.startWrite()
         try {
             output.write(encoded)
             output.fd.sync()
             atomicFile.finishWrite(output)
-            output = null
         } catch (error: Throwable) {
             atomicFile.failWrite(output)
             throw error
@@ -318,5 +321,8 @@ class VaultAuthKeyEnvelope @Inject constructor(
 
 class VaultWrappingKeyInvalidatedException(cause: Throwable) :
     GeneralSecurityException("Vault authentication key is no longer valid", cause)
+
+class VaultWrappingKeyUnavailableException :
+    GeneralSecurityException("Vault key envelope exists but its Android Keystore key is unavailable")
 
 class VaultKeyEnvelopeCorruptException(message: String) : GeneralSecurityException(message)
