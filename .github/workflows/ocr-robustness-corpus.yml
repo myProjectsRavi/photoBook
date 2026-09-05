@@ -1,0 +1,166 @@
+name: OCR Robustness Corpus (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-ocr-robustness-corpus
+
+permissions:
+  contents: read
+
+jobs:
+  offline-ocr-robustness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout disposable test branch
+        uses: actions/checkout@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Install emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+
+      - name: Prove production delta is test-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin 04909b6e485c1ede12160aeac136598bee8d303f
+          git diff --name-only 04909b6e485c1ede12160aeac136598bee8d303f...HEAD | tee "$RUNNER_TEMP/delta.txt"
+          grep -Fxq '.github/workflows/ocr-robustness-corpus.yml' "$RUNNER_TEMP/delta.txt"
+          grep -Fxq 'app/src/androidTest/java/com/photobook/app/ml/LocalOcrRobustnessInstrumentedTest.kt' "$RUNNER_TEMP/delta.txt"
+          [[ "$(wc -l < "$RUNNER_TEMP/delta.txt")" -eq 2 ]]
+          echo 'production_delta=ZERO'
+
+      - name: Build app plus disposable robustness instrumentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+          manifest="$(find app/build/intermediates/merged_manifest/debug -type f -name AndroidManifest.xml | head -n1)"
+          test -f "$manifest"
+          ! grep -q 'android.permission.INTERNET' "$manifest"
+          echo 'debug_merged_manifest_internet=ABSENT'
+
+      - name: Provision API35 emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager 2>/dev/null | sort | tail -n1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          IMAGE="system-images;android-35;google_apis;x86_64"
+          AVD="photobook-ocr-robustness-api35"
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 emulator "$IMAGE"
+          echo no | "$AVDMANAGER" create avd --force --name "$AVD" --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/$AVD.avd"
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+          "$EMULATOR" -accel-check
+          nohup "$EMULATOR" -avd "$AVD" -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 2048 -cores 2 > "$RUNNER_TEMP/ocr-robustness-emulator.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 120); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/ocr-robustness-emulator.log"; exit 1; }
+            sleep 2
+          done
+          "$ADB" wait-for-device
+          for _ in $(seq 1 120); do
+            [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break
+            sleep 2
+          done
+          [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
+          echo "sdk=$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r') abi=$("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r') abilist=$("$ADB" shell getprop ro.product.cpu.abilist | tr -d '\r') page_size=$("$ADB" shell getconf PAGE_SIZE | tr -d '\r')" | tee "$GITHUB_WORKSPACE/ocr-robustness-report.txt"
+
+      - name: Cut network and run real bundled OCR corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt 2>/dev/null | sort -V | tail -n1)"
+          uid="$(id -u)"
+          REPORT="$GITHUB_WORKSPACE/ocr-robustness-report.txt"
+
+          "$ADB" shell cmd connectivity airplane-mode enable || true
+          "$ADB" shell svc wifi disable || true
+          "$ADB" shell svc data disable || true
+          sudo iptables -I OUTPUT 1 -o lo -j ACCEPT
+          sudo iptables -I OUTPUT 2 -m owner --uid-owner "$uid" -j REJECT
+          cleanup() {
+            sudo iptables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null || true
+            sudo iptables -D OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          [[ "$("$ADB" shell settings get global airplane_mode_on | tr -d '\r')" == 1 ]]
+          if curl -fsS --connect-timeout 2 --max-time 3 https://www.google.com >/dev/null 2>&1; then
+            echo 'FAIL: host outbound network reachable' >&2
+            exit 1
+          fi
+          if "$ADB" shell 'command -v ping >/dev/null 2>&1'; then
+            ! "$ADB" shell ping -c 1 -W 1 8.8.8.8 >/dev/null 2>&1
+          fi
+          echo 'offline_network_gate=PASS' | tee -a "$REPORT"
+
+          app_apk="$(find app/build/outputs/apk/debug -type f -name '*arm64-v8a*.apk' | head -n1)"
+          test_apk="$(find app/build/outputs/apk/androidTest/debug -type f -name '*.apk' | head -n1)"
+          test -f "$app_apk"
+          test -f "$test_apk"
+          ! "$AAPT" dump permissions "$app_apk" | grep -q 'android.permission.INTERNET'
+          "$ADB" install -r "$app_apk" | tee "$RUNNER_TEMP/install-app.txt"
+          grep -Fq Success "$RUNNER_TEMP/install-app.txt"
+          "$ADB" install -r "$test_apk" | tee "$RUNNER_TEMP/install-test.txt"
+          grep -Fq Success "$RUNNER_TEMP/install-test.txt"
+
+          instrumentation="$("$ADB" shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
+          test -n "$instrumentation"
+          "$ADB" logcat -c
+          "$ADB" shell am instrument -w -r \
+            -e class com.photobook.app.ml.LocalOcrRobustnessInstrumentedTest \
+            "$instrumentation" | tee "$RUNNER_TEMP/ocr-robustness.txt"
+          grep -Eq 'OK \(1 test\)|OK \(1 tests\)' "$RUNNER_TEMP/ocr-robustness.txt"
+          ! grep -Eq 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' "$RUNNER_TEMP/ocr-robustness.txt"
+          grep 'OCR_ROBUSTNESS' "$RUNNER_TEMP/ocr-robustness.txt" | tee -a "$REPORT"
+          count="$(grep -c 'OCR_ROBUSTNESS fixture=' "$RUNNER_TEMP/ocr-robustness.txt")"
+          echo "robustness_fixture_count=$count" | tee -a "$REPORT"
+          [[ "$count" -eq 7 ]]
+
+          "$ADB" shell dumpsys meminfo com.photobook.app > "$RUNNER_TEMP/meminfo.txt" || true
+          "$ADB" logcat -d > "$RUNNER_TEMP/logcat.txt"
+          if grep -Eqi 'FATAL EXCEPTION|OutOfMemoryError|UnsatisfiedLinkError|dlopen failed|cannot locate symbol|Process crashed' "$RUNNER_TEMP/logcat.txt"; then
+            echo 'FAIL: fatal/native/OOM marker in OCR robustness logcat' >&2
+            exit 1
+          fi
+          echo 'ocr_robustness_logcat=CLEAN' | tee -a "$REPORT"
+          echo 'offline_ocr_robustness_corpus=PASS' | tee -a "$REPORT"
+
+      - name: Upload OCR robustness evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ocr-robustness-${{ github.run_id }}
+          path: |
+            ocr-robustness-report.txt
+            ${{ runner.temp }}/ocr-robustness.txt
+            ${{ runner.temp }}/meminfo.txt
+            ${{ runner.temp }}/logcat.txt
+            ${{ runner.temp }}/ocr-robustness-emulator.log
+          retention-days: 14
+          if-no-files-found: warn
