@@ -1,0 +1,192 @@
+name: API35 16K Runtime Proof V2 (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-api35-16k-runtime-proof-v2
+
+permissions:
+  contents: read
+
+jobs:
+  api35-16k-runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      CANDIDATE_SHA: 04909b6e485c1ede12160aeac136598bee8d303f
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Install emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+      - name: Checkout exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "$CANDIDATE_SHA"
+          rm -rf "$RUNNER_TEMP/candidate"
+          git worktree add --detach "$RUNNER_TEMP/candidate" "$CANDIDATE_SHA"
+          test "$(git -C "$RUNNER_TEMP/candidate" rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git -C "$RUNNER_TEMP/candidate" status --porcelain)"
+      - name: Build exact debug app and instrumentation
+        working-directory: ${{ runner.temp }}/candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+          manifest="$(find app/build/intermediates/merged_manifest/debug -type f -name AndroidManifest.xml | head -n1)"
+          test -f "$manifest"
+          ! grep -q 'android.permission.INTERNET' "$manifest"
+      - name: Provision and boot real API35 16K emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager 2>/dev/null | sort | tail -n1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          IMAGE="system-images;android-35;google_apis_ps16k;x86_64"
+          AVD="photobook-api35-16k-v2"
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 emulator "$IMAGE"
+          echo no | "$AVDMANAGER" create avd --force --name "$AVD" --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/$AVD.avd"
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+          nohup "$EMULATOR" -avd "$AVD" -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 2048 -cores 2 > "$RUNNER_TEMP/api35-16k-v2-emulator.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 150); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/api35-16k-v2-emulator.log"; exit 1; }
+            sleep 2
+          done
+          "$ADB" wait-for-device
+          for _ in $(seq 1 150); do
+            [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break
+            sleep 2
+          done
+          [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
+          sdk="$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"
+          abi="$("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r')"
+          abilist="$("$ADB" shell getprop ro.product.cpu.abilist | tr -d '\r')"
+          page="$("$ADB" shell getconf PAGE_SIZE | tr -d '\r')"
+          {
+            echo "candidate_sha=$CANDIDATE_SHA"
+            echo "sdk=$sdk"
+            echo "abi=$abi"
+            echo "abilist=$abilist"
+            echo "page_size=$page"
+          } | tee "$GITHUB_WORKSPACE/api35-16k-v2-report.txt"
+          [[ "$sdk" == 35 ]]
+          [[ "$page" == 16384 ]]
+          [[ ",$abilist," == *,arm64-v8a,* ]]
+          "$ADB" root | tee -a "$GITHUB_WORKSPACE/api35-16k-v2-report.txt"
+          "$ADB" wait-for-device
+          for _ in $(seq 1 30); do
+            [[ "$("$ADB" shell id -u 2>/dev/null | tr -d '\r')" == 0 ]] && break
+            sleep 1
+          done
+          [[ "$("$ADB" shell id -u | tr -d '\r')" == 0 ]]
+          echo 'adb_root=PASS' | tee -a "$GITHUB_WORKSPACE/api35-16k-v2-report.txt"
+      - name: Disable 16K compatibility mode, cut network, install and test candidate
+        working-directory: ${{ runner.temp }}/candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt 2>/dev/null | sort -V | tail -n1)"
+          uid="$(id -u)"
+          REPORT="$GITHUB_WORKSPACE/api35-16k-v2-report.txt"
+          "$ADB" shell setprop bionic.linker.16kb.app_compat.enabled false
+          "$ADB" shell setprop pm.16kb.app_compat.disabled true
+          bionic="$("$ADB" shell getprop bionic.linker.16kb.app_compat.enabled | tr -d '\r')"
+          pm_disabled="$("$ADB" shell getprop pm.16kb.app_compat.disabled | tr -d '\r')"
+          echo "bionic_16k_compat=$bionic" | tee -a "$REPORT"
+          echo "pm_16k_compat_disabled=$pm_disabled" | tee -a "$REPORT"
+          [[ "$bionic" == false ]]
+          [[ "$pm_disabled" == true ]]
+
+          "$ADB" shell cmd connectivity airplane-mode enable || true
+          "$ADB" shell svc wifi disable || true
+          "$ADB" shell svc data disable || true
+          sudo iptables -I OUTPUT 1 -o lo -j ACCEPT
+          sudo iptables -I OUTPUT 2 -m owner --uid-owner "$uid" -j REJECT
+          cleanup() {
+            sudo iptables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null || true
+            sudo iptables -D OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          [[ "$("$ADB" shell settings get global airplane_mode_on | tr -d '\r')" == 1 ]]
+          if curl -fsS --connect-timeout 2 --max-time 3 https://www.google.com >/dev/null 2>&1; then exit 1; fi
+          if "$ADB" shell 'command -v ping >/dev/null 2>&1'; then ! "$ADB" shell ping -c 1 -W 1 8.8.8.8 >/dev/null 2>&1; fi
+          echo 'offline_network_gate=PASS' | tee -a "$REPORT"
+
+          app_apk="$(find app/build/outputs/apk/debug -type f -name '*arm64-v8a*.apk' | head -n1)"
+          test_apk="$(find app/build/outputs/apk/androidTest/debug -type f -name '*.apk' | head -n1)"
+          test -f "$app_apk" && test -f "$test_apk"
+          ! "$AAPT" dump permissions "$app_apk" | grep -q 'android.permission.INTERNET'
+          "$ADB" install -r "$app_apk" | tee "$RUNNER_TEMP/install-app.txt"
+          "$ADB" install -r "$test_apk" | tee "$RUNNER_TEMP/install-test.txt"
+          grep -Fq Success "$RUNNER_TEMP/install-app.txt"
+          grep -Fq Success "$RUNNER_TEMP/install-test.txt"
+          "$ADB" shell dumpsys package com.photobook.app > "$RUNNER_TEMP/package.txt"
+          ! sed -n '/requested permissions:/,/install permissions:/p' "$RUNNER_TEMP/package.txt" | grep -q 'android.permission.INTERNET'
+          echo 'installed_internet_permission=ABSENT' | tee -a "$REPORT"
+
+          "$ADB" logcat -c
+          "$ADB" shell am force-stop com.photobook.app
+          "$ADB" shell am start -W -n com.photobook.app/.MainActivity | tee "$RUNNER_TEMP/startup-16k-v2.txt"
+          grep -Fq 'Status: ok' "$RUNNER_TEMP/startup-16k-v2.txt"
+          echo 'startup_16k=PASS' | tee -a "$REPORT"
+          sleep 2
+
+          instrumentation="$("$ADB" shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
+          test -n "$instrumentation"
+          "$ADB" shell am instrument -w -r -e class com.photobook.app.ml.LocalOcrEngineInstrumentedTest "$instrumentation" | tee "$RUNNER_TEMP/ocr-16k-v2.txt"
+          grep -Eq 'OK \(1 tests?\)' "$RUNNER_TEMP/ocr-16k-v2.txt"
+          ! grep -Eq 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' "$RUNNER_TEMP/ocr-16k-v2.txt"
+          echo 'bundled_ocr_16k=PASS' | tee -a "$REPORT"
+
+          "$ADB" shell am instrument -w -r "$instrumentation" | tee "$RUNNER_TEMP/all-tests-16k-v2.txt"
+          ! grep -Eq 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' "$RUNNER_TEMP/all-tests-16k-v2.txt"
+          grep -Eq 'OK \([0-9]+ tests?\)' "$RUNNER_TEMP/all-tests-16k-v2.txt"
+          count="$(grep -Eo 'OK \([0-9]+ tests?\)' "$RUNNER_TEMP/all-tests-16k-v2.txt" | tail -n1 | grep -Eo '[0-9]+')"
+          echo "instrumentation_tests_16k=$count" | tee -a "$REPORT"
+
+          "$ADB" logcat -d > "$RUNNER_TEMP/logcat-16k-v2.txt"
+          if grep -Eqi 'FATAL EXCEPTION|UnsatisfiedLinkError|dlopen failed|cannot locate symbol|bad ELF|alignment.*error' "$RUNNER_TEMP/logcat-16k-v2.txt"; then
+            grep -Ei 'FATAL EXCEPTION|UnsatisfiedLinkError|dlopen failed|cannot locate symbol|bad ELF|alignment.*error' "$RUNNER_TEMP/logcat-16k-v2.txt" | tail -n 80 >&2
+            exit 1
+          fi
+          echo 'native_linkage_logcat_16k=CLEAN' | tee -a "$REPORT"
+          echo 'api35_16k_runtime_proof=PASS' | tee -a "$REPORT"
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: api35-16k-runtime-v2-${{ github.run_id }}
+          path: |
+            api35-16k-v2-report.txt
+            ${{ runner.temp }}/api35-16k-v2-emulator.log
+            ${{ runner.temp }}/startup-16k-v2.txt
+            ${{ runner.temp }}/ocr-16k-v2.txt
+            ${{ runner.temp }}/all-tests-16k-v2.txt
+            ${{ runner.temp }}/logcat-16k-v2.txt
+          retention-days: 14
+          if-no-files-found: warn
