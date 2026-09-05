@@ -335,7 +335,7 @@ internal sealed interface VaultAuthPreparation {
     ) : VaultAuthPreparation
 }
 
-internal class VaultCryptoSession(
+class VaultCryptoSession internal constructor(
     internal val streamingAead: StreamingAead,
 )
 
