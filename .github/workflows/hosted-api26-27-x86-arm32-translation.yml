@@ -1,0 +1,189 @@
+name: Hosted API26-27 ARM32 Translation Probe (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-hosted-max-acceptance
+    paths:
+      - .github/workflows/hosted-api26-27-x86-arm32-translation.yml
+
+permissions:
+  contents: read
+
+jobs:
+  old-android-arm32:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [26, 27]
+    env:
+      CANDIDATE_SHA: 9fd29f9987f6879f330b5b9cb4f33cde3c9b6d23
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Prove production tree unchanged and checkout exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --name-only "$CANDIDATE_SHA"...HEAD | grep -E '^app/src/main/|^app/build.gradle.kts$|^app/proguard-rules.pro$|^gradle/|^build.gradle.kts$|^settings.gradle.kts$'; then
+            echo 'Production/build source changed on hosted-proof branch' >&2
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/candidate"
+          git worktree add --detach "$RUNNER_TEMP/candidate" "$CANDIDATE_SHA"
+          test "$(git -C "$RUNNER_TEMP/candidate" rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git -C "$RUNNER_TEMP/candidate" status --porcelain)"
+      - name: Build exact ARM32 minified benchmark APK
+        working-directory: ${{ runner.temp }}/candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:assembleBenchmark
+          apk="$(find app/build/outputs/apk/benchmark -type f -name '*armeabi-v7a*.apk' -print -quit)"
+          test -f "$apk"
+      - name: Install emulator host runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+      - name: Boot old-Android x86 guest and inspect ARM translation
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort | tail -n1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager | sort | tail -n1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          API='${{ matrix.api }}'
+          IMAGE="system-images;android-${API};google_apis;x86"
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user-${API}"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd-${API}"
+          REPORT="$GITHUB_WORKSPACE/build/reports/hosted-api${API}-arm32"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME" "$REPORT"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          if ! "$SDKMANAGER" --channel=0 emulator "$IMAGE" > "$RUNNER_TEMP/sdkmanager-${API}.txt" 2>&1; then
+            cat "$RUNNER_TEMP/sdkmanager-${API}.txt"
+            echo "api=${API}" > "$REPORT/summary.txt"
+            echo 'system_image=UNAVAILABLE' >> "$REPORT/summary.txt"
+            echo 'hosted_old_android_arm32_runtime=UNAVAILABLE' >> "$REPORT/summary.txt"
+            exit 0
+          fi
+          echo no | "$AVDMANAGER" create avd --force --name "pb-api${API}-x86" --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/pb-api${API}-x86.avd"
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+          nohup "$EMULATOR" -avd "pb-api${API}-x86" -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 1536 -cores 2 > "$RUNNER_TEMP/emulator-${API}.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 180); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/emulator-${API}.log"; exit 1; }
+            sleep 2
+          done
+          "$ADB" wait-for-device
+          for _ in $(seq 1 180); do
+            [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break
+            sleep 2
+          done
+          [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
+          sdk="$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"
+          abilist="$("$ADB" shell getprop ro.product.cpu.abilist | tr -d '\r')"
+          abilist32="$("$ADB" shell getprop ro.product.cpu.abilist32 | tr -d '\r')"
+          bridge="$("$ADB" shell getprop ro.dalvik.vm.native.bridge | tr -d '\r')"
+          [[ "$sdk" == "$API" ]]
+          {
+            echo "candidate_sha=$CANDIDATE_SHA"
+            echo "api=$API"
+            echo "abilist=$abilist"
+            echo "abilist32=$abilist32"
+            echo "native_bridge=${bridge:-<empty>}"
+          } | tee "$REPORT/summary.txt"
+      - name: Install ARM32 app if translation exists, block network, run 50 cycles
+        working-directory: ${{ runner.temp }}/candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt | sort -V | tail -n1)"
+          API='${{ matrix.api }}'
+          REPORT="$GITHUB_WORKSPACE/build/reports/hosted-api${API}-arm32"
+          if grep -Fq 'hosted_old_android_arm32_runtime=UNAVAILABLE' "$REPORT/summary.txt" 2>/dev/null; then
+            echo 'System image unavailable; capability probe already recorded.'
+            exit 0
+          fi
+          abilist="$("$ADB" shell getprop ro.product.cpu.abilist | tr -d '\r')"
+          abilist32="$("$ADB" shell getprop ro.product.cpu.abilist32 | tr -d '\r')"
+          bridge="$("$ADB" shell getprop ro.dalvik.vm.native.bridge | tr -d '\r')"
+          if ! printf '%s\n%s\n' "$abilist" "$abilist32" | tr ',' '\n' | grep -Fxq 'armeabi-v7a' && [[ -z "$bridge" || "$bridge" == 0 ]]; then
+            echo 'arm32_translation=UNAVAILABLE' | tee -a "$REPORT/summary.txt"
+            echo 'hosted_old_android_arm32_runtime=UNAVAILABLE' | tee -a "$REPORT/summary.txt"
+            exit 0
+          fi
+
+          apk="$(find app/build/outputs/apk/benchmark -type f -name '*armeabi-v7a*.apk' -print -quit)"
+          test -f "$apk"
+          ! "$AAPT" dump permissions "$apk" | grep -q 'android.permission.INTERNET'
+
+          "$ADB" shell cmd connectivity airplane-mode enable >/dev/null 2>&1 || "$ADB" shell settings put global airplane_mode_on 1 || true
+          "$ADB" shell svc wifi disable >/dev/null 2>&1 || true
+          "$ADB" shell svc data disable >/dev/null 2>&1 || true
+          uid="$(id -u)"
+          sudo iptables -I OUTPUT 1 -o lo -j ACCEPT
+          sudo iptables -I OUTPUT 2 -m owner --uid-owner "$uid" -j REJECT
+          cleanup() {
+            sudo iptables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null || true
+            sudo iptables -D OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          if curl -fsS --connect-timeout 2 --max-time 3 https://www.google.com >/dev/null 2>&1; then exit 1; fi
+
+          set +e
+          "$ADB" install -r "$apk" > "$RUNNER_TEMP/install-${API}.txt" 2>&1
+          rc=$?
+          set -e
+          cat "$RUNNER_TEMP/install-${API}.txt"
+          if (( rc != 0 )); then
+            if grep -Eq 'INSTALL_FAILED_NO_MATCHING_ABIS|Failed to extract native libraries' "$RUNNER_TEMP/install-${API}.txt"; then
+              echo 'arm32_translation=UNAVAILABLE_AT_INSTALL' | tee -a "$REPORT/summary.txt"
+              echo 'hosted_old_android_arm32_runtime=UNAVAILABLE' | tee -a "$REPORT/summary.txt"
+              exit 0
+            fi
+            exit "$rc"
+          fi
+          grep -Fq Success "$RUNNER_TEMP/install-${API}.txt"
+          "$ADB" shell dumpsys package com.photobook.app > "$RUNNER_TEMP/package-${API}.txt"
+          ! sed -n '/requested permissions:/,/install permissions:/p' "$RUNNER_TEMP/package-${API}.txt" | grep -q 'android.permission.INTERNET'
+          "$ADB" shell am start -W -n com.photobook.app/.MainActivity | tee "$RUNNER_TEMP/start-${API}.txt"
+          grep -Fq 'Status: ok' "$RUNNER_TEMP/start-${API}.txt"
+          OUT_DIR="$REPORT/stress" ITERATIONS=50 PRESERVE_LOGCAT=0 bash tools/benchmark/phase0_device_stress.sh | tee "$RUNNER_TEMP/stress-${API}.txt"
+          grep -Fq 'PASS: no crash/ANR/OOM signature observed' "$RUNNER_TEMP/stress-${API}.txt"
+          {
+            echo 'arm32_translation=AVAILABLE'
+            echo 'installed_internet_permission=ABSENT'
+            echo 'stress_iterations=50'
+            echo 'crash_anr_oom=ABSENT'
+            echo 'hosted_old_android_arm32_runtime=PASS'
+            echo 'NOTE=x86 emulator native-bridge surrogate; not physical armeabi-v7a hardware evidence'
+          } | tee -a "$REPORT/summary.txt"
+      - name: Upload capability/stress evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hosted-api${{ matrix.api }}-arm32-translation-${{ github.run_id }}
+          path: |
+            build/reports/hosted-api${{ matrix.api }}-arm32/
+            ${{ runner.temp }}/emulator-${{ matrix.api }}.log
+            ${{ runner.temp }}/install-${{ matrix.api }}.txt
+            ${{ runner.temp }}/start-${{ matrix.api }}.txt
+            ${{ runner.temp }}/stress-${{ matrix.api }}.txt
+          retention-days: 14
+          if-no-files-found: warn
