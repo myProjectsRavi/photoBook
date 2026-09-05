@@ -60,9 +60,13 @@ jobs:
             echo "aab_sha256=$(sha256sum "$aab" | awk '{print $1}')"
             echo "version_metadata=$(./gradlew -q :app:printReleaseMetadata | tr '\n' ' ')"
           } | tee "$report/aab-identity.txt"
-          if jarsigner -verify "$aab" >/dev/null 2>&1; then
+          jarsigner -verify -verbose -certs "$aab" > "$report/jarsigner.txt" 2>&1 || true
+          cat "$report/jarsigner.txt"
+          if zipinfo -1 "$aab" | grep -Eq '^META-INF/[^/]+\.(RSA|DSA|EC)$'; then
+            grep -qi 'jar verified' "$report/jarsigner.txt"
             echo 'aab_signing_state=SIGNED' | tee -a "$report/aab-identity.txt"
           else
+            grep -qi 'jar is unsigned' "$report/jarsigner.txt"
             echo 'aab_signing_state=UNSIGNED' | tee -a "$report/aab-identity.txt"
           fi
       - name: Verify bundletool and corrected Play delivery
