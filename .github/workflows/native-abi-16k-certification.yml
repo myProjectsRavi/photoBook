@@ -1,0 +1,177 @@
+name: Native ABI + 16K Certification (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-native-abi-16k-certification
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      CANDIDATE_SHA: 04909b6e485c1ede12160aeac136598bee8d303f
+    steps:
+      - name: Checkout disposable workflow branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Checkout exact production candidate in isolated worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "$CANDIDATE_SHA"
+          rm -rf "$RUNNER_TEMP/photobook-candidate"
+          git worktree add --detach "$RUNNER_TEMP/photobook-candidate" "$CANDIDATE_SHA"
+          test "$(git -C "$RUNNER_TEMP/photobook-candidate" rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git -C "$RUNNER_TEMP/photobook-candidate" status --porcelain)"
+
+      - name: Build exact release APKs and AAB
+        working-directory: ${{ runner.temp }}/photobook-candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:assembleRelease :app:bundleRelease :app:printReleaseMetadata
+
+      - name: Certify ABI parity, ELF machine, 16K alignment and package invariants
+        working-directory: ${{ runner.temp }}/photobook-candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPORT="$GITHUB_WORKSPACE/native-abi-16k-report.txt"
+          : > "$REPORT"
+
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          test -n "$SDK_ROOT"
+          AAPT="$(find "$SDK_ROOT/build-tools" -maxdepth 2 -type f -name aapt -print | sort -V | tail -n1)"
+          ZIPALIGN="$(find "$SDK_ROOT/build-tools" -maxdepth 2 -type f -name zipalign -print | sort -V | tail -n1)"
+          test -x "$AAPT"
+          test -x "$ZIPALIGN"
+          command -v readelf >/dev/null
+          command -v unzip >/dev/null
+          command -v python3 >/dev/null
+
+          ARM64_APK="$(find app/build/outputs/apk/release -type f -name '*arm64-v8a*release*.apk' -print -quit)"
+          ARM32_APK="$(find app/build/outputs/apk/release -type f -name '*armeabi-v7a*release*.apk' -print -quit)"
+          AAB="$(find app/build/outputs/bundle/release -type f -name '*.aab' -print -quit)"
+          test -f "$ARM64_APK"
+          test -f "$ARM32_APK"
+          test -f "$AAB"
+
+          echo "candidate_sha=$CANDIDATE_SHA" | tee -a "$REPORT"
+          echo "arm64_apk_bytes=$(stat -c%s "$ARM64_APK")" | tee -a "$REPORT"
+          echo "arm32_apk_bytes=$(stat -c%s "$ARM32_APK")" | tee -a "$REPORT"
+          echo "aab_bytes=$(stat -c%s "$AAB")" | tee -a "$REPORT"
+
+          for apk in "$ARM64_APK" "$ARM32_APK"; do
+            "$AAPT" dump permissions "$apk" | tee -a "$REPORT"
+            if "$AAPT" dump permissions "$apk" | grep -Fq 'android.permission.INTERNET'; then
+              echo "FAIL: INTERNET permission present in $apk" >&2
+              exit 1
+            fi
+            "$AAPT" dump badging "$apk" | grep -E "package:|sdkVersion:|targetSdkVersion:" | tee -a "$REPORT"
+            "$AAPT" dump badging "$apk" | grep -Fq "sdkVersion:'26'"
+            "$AAPT" dump badging "$apk" | grep -Fq "targetSdkVersion:'36'"
+          done
+          echo 'internet_permission=ABSENT' | tee -a "$REPORT"
+          echo 'sdk_contract=min26_target36' | tee -a "$REPORT"
+
+          # Android's documented APK verification command for 16 KB zip alignment.
+          "$ZIPALIGN" -c -P 16 -v 4 "$ARM64_APK" | tee -a "$REPORT"
+          echo 'arm64_zipalign_16k=PASS' | tee -a "$REPORT"
+
+          rm -rf "$RUNNER_TEMP/pb-native"
+          mkdir -p "$RUNNER_TEMP/pb-native/arm64" "$RUNNER_TEMP/pb-native/arm32"
+          unzip -qq "$ARM64_APK" 'lib/*/*.so' -d "$RUNNER_TEMP/pb-native/arm64"
+          unzip -qq "$ARM32_APK" 'lib/*/*.so' -d "$RUNNER_TEMP/pb-native/arm32"
+
+          ARM64_DIR="$RUNNER_TEMP/pb-native/arm64/lib/arm64-v8a"
+          ARM32_DIR="$RUNNER_TEMP/pb-native/arm32/lib/armeabi-v7a"
+          test -d "$ARM64_DIR"
+          test -d "$ARM32_DIR"
+
+          find "$ARM64_DIR" -maxdepth 1 -type f -name '*.so' -printf '%f\n' | sort > "$RUNNER_TEMP/arm64-libs.txt"
+          find "$ARM32_DIR" -maxdepth 1 -type f -name '*.so' -printf '%f\n' | sort > "$RUNNER_TEMP/arm32-libs.txt"
+          test -s "$RUNNER_TEMP/arm64-libs.txt"
+          test -s "$RUNNER_TEMP/arm32-libs.txt"
+          diff -u "$RUNNER_TEMP/arm64-libs.txt" "$RUNNER_TEMP/arm32-libs.txt" | tee -a "$REPORT"
+          echo "native_library_count=$(wc -l < "$RUNNER_TEMP/arm64-libs.txt")" | tee -a "$REPORT"
+          echo 'native_library_name_parity=PASS' | tee -a "$REPORT"
+
+          while IFS= read -r lib; do
+            a64="$ARM64_DIR/$lib"
+            a32="$ARM32_DIR/$lib"
+            readelf -h "$a64" | grep -F 'Machine:' | tee -a "$REPORT"
+            readelf -h "$a64" | grep -Fq 'AArch64'
+            readelf -h "$a32" | grep -F 'Machine:' | tee -a "$REPORT"
+            readelf -h "$a32" | grep -Eq 'Machine:[[:space:]]+ARM$'
+
+            # Every ARM64 PT_LOAD segment must advertise >= 16 KiB p_align.
+            mapfile -t aligns < <(readelf -lW "$a64" | awk '$1 == "LOAD" { print $NF }')
+            test "${#aligns[@]}" -gt 0
+            for align in "${aligns[@]}"; do
+              value=$((align))
+              if (( value < 0x4000 )); then
+                echo "FAIL: $lib has ARM64 LOAD alignment $align (< 0x4000)" >&2
+                exit 1
+              fi
+            done
+            printf 'arm64_elf_16k=%s PASS\n' "$lib" | tee -a "$REPORT"
+          done < "$RUNNER_TEMP/arm64-libs.txt"
+          echo 'elf_machine_types=PASS' | tee -a "$REPORT"
+          echo 'arm64_elf_load_alignment_16k=PASS' | tee -a "$REPORT"
+
+          python3 - "$ARM64_APK" "$ARM32_APK" "$AAB" <<'PY' | tee -a "$REPORT"
+          import sys, zipfile
+          arm64_apk, arm32_apk, aab = sys.argv[1:]
+
+          def native_entries(path):
+              with zipfile.ZipFile(path) as z:
+                  return [(i.filename, i.compress_type) for i in z.infolist() if i.filename.endswith('.so')]
+
+          a64 = native_entries(arm64_apk)
+          a32 = native_entries(arm32_apk)
+          bundle = native_entries(aab)
+          assert a64 and a32 and bundle
+          assert all('/arm64-v8a/' in n for n, _ in a64), a64
+          assert all('/armeabi-v7a/' in n for n, _ in a32), a32
+          assert not any('/x86/' in n or '/x86_64/' in n for n, _ in bundle), bundle
+          bundle_abis = set()
+          for n, _ in bundle:
+              parts = n.split('/')
+              for abi in ('arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'):
+                  if abi in parts:
+                      bundle_abis.add(abi)
+          assert bundle_abis == {'arm64-v8a', 'armeabi-v7a'}, bundle_abis
+          # Native libs should be stored, not deflated, when modern JNI packaging is used.
+          assert all(c == zipfile.ZIP_STORED for _, c in a64), a64
+          assert all(c == zipfile.ZIP_STORED for _, c in a32), a32
+          print('apk_native_abi_isolation=PASS')
+          print('aab_native_abis=arm64-v8a,armeabi-v7a')
+          print('aab_x86_native_content=ABSENT')
+          print('apk_native_libs_uncompressed=PASS')
+          PY
+
+          sha256sum "$ARM64_APK" "$ARM32_APK" "$AAB" | tee -a "$REPORT"
+          echo 'native_abi_16k_certification=PASS' | tee -a "$REPORT"
+
+      - name: Upload certification evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-abi-16k-${{ github.run_id }}
+          path: native-abi-16k-report.txt
+          retention-days: 14
+          if-no-files-found: error
