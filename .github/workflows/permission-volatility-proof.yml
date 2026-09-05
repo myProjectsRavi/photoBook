@@ -1,0 +1,180 @@
+name: Permission Volatility Proof (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-permission-volatility-proof
+
+permissions:
+  contents: read
+
+jobs:
+  api35-permission-volatility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CANDIDATE_SHA: 04909b6e485c1ede12160aeac136598bee8d303f
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Prove production tree is unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --name-only "$CANDIDATE_SHA"...HEAD | tee changed-files.txt
+          test "$(wc -l < changed-files.txt)" -eq 2
+          grep -Fxq '.github/workflows/permission-volatility-proof.yml' changed-files.txt
+          grep -Fxq 'app/src/androidTest/java/com/photobook/app/util/PermissionUtilsInstrumentedTest.kt' changed-files.txt
+          if git diff --name-only "$CANDIDATE_SHA"...HEAD | grep -E '^app/src/main/|^app/build.gradle.kts$|^app/proguard-rules.pro$'; then exit 1; fi
+      - name: Install emulator host runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+      - name: Build app and disposable instrumentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+      - name: Boot API35 emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort | tail -n1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager | sort | tail -n1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          IMAGE="system-images;android-35;google_apis;x86_64"
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 emulator "$IMAGE"
+          echo no | "$AVDMANAGER" create avd --force --name pb-permissions --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/pb-permissions.avd"
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+          nohup "$EMULATOR" -avd pb-permissions -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 2048 -cores 2 > "$RUNNER_TEMP/permission-emulator.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 150); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/permission-emulator.log"; exit 1; }
+            sleep 2
+          done
+          "$ADB" wait-for-device
+          for _ in $(seq 1 150); do
+            [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break
+            sleep 2
+          done
+          [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
+          [[ "$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')" == 35 ]]
+          abilist="$("$ADB" shell getprop ro.product.cpu.abilist | tr -d '\r')"
+          [[ ",$abilist," == *,arm64-v8a,* ]]
+          echo "candidate_sha=$CANDIDATE_SHA" | tee permission-volatility-report.txt
+          echo "sdk=35" | tee -a permission-volatility-report.txt
+          echo "abilist=$abilist" | tee -a permission-volatility-report.txt
+      - name: Install offline and exercise None-Limited-Full transitions
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt | sort -V | tail -n1)"
+          REPORT="$GITHUB_WORKSPACE/permission-volatility-report.txt"
+          uid="$(id -u)"
+          "$ADB" shell cmd connectivity airplane-mode enable || true
+          "$ADB" shell svc wifi disable || true
+          "$ADB" shell svc data disable || true
+          sudo iptables -I OUTPUT 1 -o lo -j ACCEPT
+          sudo iptables -I OUTPUT 2 -m owner --uid-owner "$uid" -j REJECT
+          cleanup() {
+            sudo iptables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null || true
+            sudo iptables -D OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          [[ "$("$ADB" shell settings get global airplane_mode_on | tr -d '\r')" == 1 ]]
+          if curl -fsS --connect-timeout 2 --max-time 3 https://www.google.com >/dev/null 2>&1; then exit 1; fi
+
+          app_apk="$(find app/build/outputs/apk/debug -type f -name '*arm64-v8a*.apk' | head -n1)"
+          test_apk="$(find app/build/outputs/apk/androidTest/debug -type f -name '*.apk' | head -n1)"
+          test -f "$app_apk" && test -f "$test_apk"
+          ! "$AAPT" dump permissions "$app_apk" | grep -q 'android.permission.INTERNET'
+          "$ADB" install -r "$app_apk"
+          "$ADB" install -r "$test_apk"
+          "$ADB" shell dumpsys package com.photobook.app > "$RUNNER_TEMP/package.txt"
+          ! sed -n '/requested permissions:/,/install permissions:/p' "$RUNNER_TEMP/package.txt" | grep -q 'android.permission.INTERNET'
+          echo 'offline_no_internet=PASS' | tee -a "$REPORT"
+
+          instrumentation="$("$ADB" shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
+          test -n "$instrumentation"
+          CLASS='com.photobook.app.util.PermissionUtilsInstrumentedTest'
+          IMAGE='android.permission.READ_MEDIA_IMAGES'
+          LIMITED='android.permission.READ_MEDIA_VISUAL_USER_SELECTED'
+
+          assert_mode() {
+            expected="$1"
+            "$ADB" shell am instrument -w -r -e expectedMode "$expected" -e class "$CLASS" "$instrumentation" | tee "$RUNNER_TEMP/mode-$expected-$(date +%s%N).txt"
+            local latest
+            latest="$(ls -1t "$RUNNER_TEMP"/mode-"$expected"-*.txt | head -n1)"
+            grep -Eq 'OK \(1 tests?\)' "$latest"
+            ! grep -Eq 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' "$latest"
+            echo "mode_$expected=PASS" | tee -a "$REPORT"
+          }
+          launch_ok() {
+            "$ADB" shell am force-stop com.photobook.app
+            "$ADB" shell am start -W -n com.photobook.app/.MainActivity > "$RUNNER_TEMP/start-$(date +%s%N).txt"
+            local latest
+            latest="$(ls -1t "$RUNNER_TEMP"/start-*.txt | head -n1)"
+            grep -Fq 'Status: ok' "$latest"
+            sleep 1
+          }
+
+          "$ADB" shell pm revoke com.photobook.app "$IMAGE" >/dev/null 2>&1 || true
+          "$ADB" shell pm revoke com.photobook.app "$LIMITED" >/dev/null 2>&1 || true
+          assert_mode None; launch_ok
+
+          "$ADB" shell pm grant com.photobook.app "$LIMITED"
+          assert_mode Limited; launch_ok
+
+          "$ADB" shell pm grant com.photobook.app "$IMAGE"
+          assert_mode Full; launch_ok
+
+          "$ADB" shell pm revoke com.photobook.app "$IMAGE"
+          assert_mode Limited; launch_ok
+
+          "$ADB" shell pm revoke com.photobook.app "$LIMITED"
+          assert_mode None; launch_ok
+
+          "$ADB" shell pm grant com.photobook.app "$IMAGE"
+          assert_mode Full; launch_ok
+
+          "$ADB" logcat -d -b crash > "$RUNNER_TEMP/permission-crash-buffer.txt" || true
+          if grep -Eqi 'FATAL EXCEPTION|ANR in com\.photobook\.app|OutOfMemoryError' "$RUNNER_TEMP/permission-crash-buffer.txt"; then
+            cat "$RUNNER_TEMP/permission-crash-buffer.txt" >&2
+            exit 1
+          fi
+          echo 'transition_sequence=None-Limited-Full-Limited-None-Full' | tee -a "$REPORT"
+          echo 'crash_anr_oom=ABSENT' | tee -a "$REPORT"
+          echo 'permission_volatility_emulator_proof=PASS' | tee -a "$REPORT"
+          echo 'NOTE=emulator surrogate; selected-photo picker UX itself is not exercised' | tee -a "$REPORT"
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: permission-volatility-${{ github.run_id }}
+          path: |
+            permission-volatility-report.txt
+            changed-files.txt
+            ${{ runner.temp }}/mode-*.txt
+            ${{ runner.temp }}/start-*.txt
+            ${{ runner.temp }}/permission-crash-buffer.txt
+            ${{ runner.temp }}/permission-emulator.log
+          retention-days: 14
+          if-no-files-found: warn
