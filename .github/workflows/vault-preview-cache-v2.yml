@@ -1,0 +1,253 @@
+name: Vault Preview Cache Lifecycle V2 (Disposable)
+
+on:
+  push:
+    branches:
+      - fix/2.0.15-vault-preview-cache-lifecycle-v2
+    paths:
+      - .github/workflows/vault-preview-cache-v2.yml
+
+permissions:
+  contents: write
+
+env:
+  CANDIDATE_SHA: 52b118732adb6fd6fc62d730245472b34272e90e
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: fix/2.0.15-vault-preview-cache-lifecycle-v2
+      - name: Verify isolated starting scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t changed < <(git diff --name-only "$CANDIDATE_SHA"...HEAD | sort)
+          printf '%s\n' "${changed[@]}"
+          test "${#changed[@]}" -eq 1
+          test "${changed[0]}" = ".github/workflows/vault-preview-cache-v2.yml"
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Apply exact guarded source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(text, old, new, expected, label):
+              count = text.count(old)
+              if count != expected:
+                  raise SystemExit(f'{label}: expected {expected} matches, got {count}')
+              return text.replace(old, new)
+
+          main_path = Path('app/src/main/java/com/photobook/app/MainActivity.kt')
+          main = main_path.read_text()
+          preview_call = 'vaultService.listItems(session = session, includePreviews = true)'
+          main = replace_exact(main, preview_call, 'loadVisibleVaultItems(session)', 4, 'MainActivity preview calls')
+          refresh_anchor = '    fun refreshVault(session: VaultCryptoSession) {\n'
+          helper = (
+              '    suspend fun loadVisibleVaultItems(session: VaultCryptoSession): List<VaultItem> {\n'
+              '        if (!showVault) return emptyList()\n'
+              '        val previewGeneration = vaultService.beginPreviewLoad()\n'
+              '        val items = vaultService.listItems(\n'
+              '            session = session,\n'
+              '            includePreviews = true,\n'
+              '            previewGeneration = previewGeneration,\n'
+              '        )\n'
+              '        return if (showVault) {\n'
+              '            items\n'
+              '        } else {\n'
+              '            vaultService.clearPreviewCache()\n'
+              '            emptyList()\n'
+              '        }\n'
+              '    }\n\n'
+          )
+          main = replace_exact(main, refresh_anchor, helper + refresh_anchor, 1, 'refreshVault anchor')
+          main_path.write_text(main)
+
+          service_path = Path('app/src/main/java/com/photobook/app/feature/vault/VaultService.kt')
+          service = service_path.read_text()
+          auth_anchor = (
+              '    private val authCrypto: VaultAuthCrypto by lazy {\n'
+              '        VaultAuthCrypto(context)\n'
+              '    }\n'
+          )
+          auth_replacement = auth_anchor + (
+              '\n'
+              '    private val previewCacheGeneration = java.util.concurrent.atomic.AtomicLong(0L)\n'
+              '    private val previewCacheNeedsCleanup = java.util.concurrent.atomic.AtomicBoolean(true)\n'
+              '\n'
+              '    internal fun beginPreviewLoad(): Long = previewCacheGeneration.incrementAndGet()\n'
+          )
+          service = replace_exact(service, auth_anchor, auth_replacement, 1, 'authCrypto anchor')
+
+          list_signature = (
+              '    suspend fun listItems(\n'
+              '        session: VaultCryptoSession,\n'
+              '        includePreviews: Boolean = false,\n'
+              '    ): List<VaultItem> = withContext(Dispatchers.IO) {\n'
+              '        migrateLegacyItemsIfNeeded()\n'
+          )
+          list_replacement = (
+              '    suspend fun listItems(\n'
+              '        session: VaultCryptoSession,\n'
+              '        includePreviews: Boolean = false,\n'
+              '        previewGeneration: Long? = null,\n'
+              '    ): List<VaultItem> = withContext(Dispatchers.IO) {\n'
+              '        val expectedPreviewGeneration = if (includePreviews) {\n'
+              '            requireNotNull(previewGeneration) { "Preview generation is required for Vault previews" }\n'
+              '        } else {\n'
+              '            null\n'
+              '        }\n'
+              '        if (\n'
+              '            expectedPreviewGeneration != null &&\n'
+              '            previewCacheNeedsCleanup.compareAndSet(true, false)\n'
+              '        ) {\n'
+              '            val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)\n'
+              '            if (previewRoot.exists() && !previewRoot.deleteRecursively()) {\n'
+              '                previewCacheNeedsCleanup.set(true)\n'
+              '                throw IOException("Unable to clear stale Vault preview cache")\n'
+              '            }\n'
+              '        }\n'
+              '        migrateLegacyItemsIfNeeded()\n'
+          )
+          service = replace_exact(service, list_signature, list_replacement, 1, 'listItems signature')
+
+          preview_branch = (
+              '            if (includePreviews) {\n'
+              '                item.copy(previewUri = createPreviewUri(entity, session))\n'
+              '            } else {\n'
+          )
+          preview_branch_replacement = (
+              '            if (expectedPreviewGeneration != null) {\n'
+              '                item.copy(\n'
+              '                    previewUri = createPreviewUri(\n'
+              '                        entity = entity,\n'
+              '                        session = session,\n'
+              '                        expectedPreviewGeneration = expectedPreviewGeneration,\n'
+              '                    ),\n'
+              '                )\n'
+              '            } else {\n'
+          )
+          service = replace_exact(service, preview_branch, preview_branch_replacement, 1, 'preview branch')
+
+          clear_anchor = (
+              '    fun clearPreviewCache() {\n'
+              '        runCatching {\n'
+          )
+          clear_replacement = (
+              '    fun clearPreviewCache() {\n'
+              '        previewCacheGeneration.incrementAndGet()\n'
+              '        previewCacheNeedsCleanup.set(true)\n'
+              '        runCatching {\n'
+          )
+          service = replace_exact(service, clear_anchor, clear_replacement, 1, 'clearPreviewCache')
+
+          create_signature = (
+              '    private fun createPreviewUri(\n'
+              '        entity: VaultEntity,\n'
+              '        session: VaultCryptoSession,\n'
+              '    ): Uri? {\n'
+          )
+          create_replacement = (
+              '    private fun createPreviewUri(\n'
+              '        entity: VaultEntity,\n'
+              '        session: VaultCryptoSession,\n'
+              '        expectedPreviewGeneration: Long,\n'
+              '    ): Uri? {\n'
+              '        if (previewCacheGeneration.get() != expectedPreviewGeneration) return null\n'
+          )
+          service = replace_exact(service, create_signature, create_replacement, 1, 'createPreviewUri signature')
+
+          cached_return = (
+              '        if (previewFile.exists() && previewFile.length() > 0L) {\n'
+              '            return Uri.fromFile(previewFile)\n'
+              '        }\n'
+          )
+          cached_replacement = (
+              '        if (previewFile.exists() && previewFile.length() > 0L) {\n'
+              '            return if (previewCacheGeneration.get() == expectedPreviewGeneration) {\n'
+              '                Uri.fromFile(previewFile)\n'
+              '            } else {\n'
+              '                null\n'
+              '            }\n'
+              '        }\n'
+          )
+          service = replace_exact(service, cached_return, cached_replacement, 1, 'cached preview return')
+
+          write_block = (
+              '            previewFile.parentFile?.mkdirs()\n'
+              '            previewFile.outputStream().use { output ->\n'
+              '                bitmap.compress(Bitmap.CompressFormat.JPEG, PREVIEW_JPEG_QUALITY, output)\n'
+              '            }\n'
+              '            bitmap.recycle()\n'
+              '            Uri.fromFile(previewFile)\n'
+          )
+          write_replacement = (
+              '            previewFile.parentFile?.mkdirs()\n'
+              '            val tempPreview = File(\n'
+              '                previewFile.parentFile,\n'
+              '                ".${previewFile.name}.${UUID.randomUUID().toString().take(8)}.tmp",\n'
+              '            )\n'
+              '            try {\n'
+              '                tempPreview.outputStream().use { output ->\n'
+              '                    if (!bitmap.compress(Bitmap.CompressFormat.JPEG, PREVIEW_JPEG_QUALITY, output)) {\n'
+              '                        throw IOException("Unable to encode Vault preview")\n'
+              '                    }\n'
+              '                }\n'
+              '                if (previewCacheGeneration.get() != expectedPreviewGeneration) {\n'
+              '                    return@runCatching null\n'
+              '                }\n'
+              '                authCrypto.renameAtomically(tempPreview, previewFile)\n'
+              '                Uri.fromFile(previewFile)\n'
+              '            } finally {\n'
+              '                bitmap.recycle()\n'
+              '                runCatching { tempPreview.delete() }\n'
+              '            }\n'
+          )
+          service = replace_exact(service, write_block, write_replacement, 1, 'preview write block')
+          service_path.write_text(service)
+          PY
+
+          git diff --check
+      - name: Prove intended source semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          main=app/src/main/java/com/photobook/app/MainActivity.kt
+          vault=app/src/main/java/com/photobook/app/feature/vault/VaultService.kt
+          test "$(grep -c 'loadVisibleVaultItems(session)' "$main")" -eq 4
+          test "$(grep -c 'beginPreviewLoad()' "$main")" -eq 1
+          test "$(grep -c 'internal fun beginPreviewLoad' "$vault")" -eq 1
+          test "$(grep -c 'previewCacheGeneration.incrementAndGet()' "$vault")" -eq 2
+          test "$(grep -c 'previewCacheNeedsCleanup' "$vault")" -ge 4
+          test "$(grep -c 'expectedPreviewGeneration' "$vault")" -ge 7
+          test "$(grep -c 'tempPreview' "$vault")" -ge 5
+          test "$(grep -c 'Unable to encode Vault preview' "$vault")" -eq 1
+          ! grep -q 'Decrypted previews are strictly ephemeral. Remove residue left by process death/crash' "$vault"
+      - name: Compile, unit test and lint patched source
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:compileDebugKotlin :app:testDebugUnitTest :app:lintDebug
+      - name: Commit only the validated production patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "PhotoBook verification"
+          git config user.email "95069115+myProjectsRavi@users.noreply.github.com"
+          git add app/src/main/java/com/photobook/app/MainActivity.kt \
+                  app/src/main/java/com/photobook/app/feature/vault/VaultService.kt
+          test -n "$(git diff --cached --name-only)"
+          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" = "2"
+          git commit -m "Harden Vault preview cache lifecycle"
+          git push origin HEAD:fix/2.0.15-vault-preview-cache-lifecycle-v2
