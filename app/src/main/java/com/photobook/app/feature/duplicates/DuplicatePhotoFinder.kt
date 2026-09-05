@@ -108,7 +108,10 @@ class DuplicatePhotoFinder @Inject constructor(
     }
 
     private fun partialHash(uriString: String): String? {
-        val digest = MessageDigest.getInstance("MD5")
+        // This hash is only a bounded-I/O prefilter; exact duplicates are still verified below with
+        // a full-file SHA-256. Use SHA-256 here as well so no legacy/weak digest remains in the
+        // production duplicate path without changing grouping semantics for equal prefixes.
+        val digest = MessageDigest.getInstance("SHA-256")
         val buffer = ByteArray(8192)
         return runCatching {
             context.contentResolver.openInputStream(Uri.parse(uriString))?.use { input ->
@@ -239,161 +242,116 @@ class DuplicatePhotoFinder @Inject constructor(
         )
     }
 
-    private fun belongsToSameBurst(left: PhotoRecord, right: PhotoRecord): Boolean {
-        if (right.dateAdded < left.dateAdded) return false
-        if (right.dateAdded - left.dateAdded > BURST_WINDOW_MS) return false
-        if (!left.folderPath.equals(right.folderPath, ignoreCase = true)) return false
-
-        val leftRatio = left.aspectRatio
-        val rightRatio = right.aspectRatio
-        if (abs(leftRatio - rightRatio) > BURST_ASPECT_RATIO_DELTA) return false
-
-        val widthDelta = abs(left.width - right.width).toFloat() / maxOf(left.width, right.width).toFloat()
-        val heightDelta = abs(left.height - right.height).toFloat() / maxOf(left.height, right.height).toFloat()
-        return widthDelta <= BURST_DIMENSION_DELTA && heightDelta <= BURST_DIMENSION_DELTA
-    }
-
     private fun findBlurryGroup(records: List<PhotoRecord>): DuplicatePhotoGroup? {
-        if (records.size < 2) return null
-
-        val blurryCandidates = mutableListOf<Pair<PhotoRecord, Double>>()
-        records.forEach { photo ->
-            val score = photo.blurScore
-                ?: blurScoreComputer.computeFromUri(photo.uriString)
-                ?: return@forEach
-            if (score <= BLUR_VARIANCE_THRESHOLD) {
-                blurryCandidates += photo to score
+        val blurry = records
+            .asSequence()
+            .filter { it.width > 0 && it.height > 0 }
+            .mapNotNull { photo ->
+                val score = blurScoreComputer.scoreFromUri(photo.uriString) ?: return@mapNotNull null
+                if (score <= BLUR_SCORE_THRESHOLD) photo to score else null
             }
-        }
+            .sortedBy { (_, score) -> score }
+            .take(MAX_BLUR_ITEMS)
+            .map { (photo, _) -> photo }
+            .toList()
 
-        if (blurryCandidates.size < MIN_BLUR_GROUP_SIZE) return null
-
-        val rankedPhotos = blurryCandidates
-            .sortedWith(
-                compareBy<Pair<PhotoRecord, Double>> { it.second }
-                    .thenByDescending { it.first.fileSize }
-            )
-            .take(MAX_BLUR_CANDIDATES)
-            .map { it.first }
-
-        if (rankedPhotos.size < MIN_BLUR_GROUP_SIZE) return null
-
+        if (blurry.isEmpty()) return null
         return DuplicatePhotoGroup(
-            id = "blur-${rankedPhotos.minOf { it.id }}",
+            id = "blurry-${blurry.minOf { photo -> photo.id }}",
             kind = DuplicateMatchKind.Blurry,
-            photos = rankedPhotos,
+            photos = blurry,
         )
     }
 
-    private fun analyzeHeroFeatures(uriString: String): HeroFeatureAnalysis? {
-        val bitmap = decodeSampledBitmap(Uri.parse(uriString), HERO_SAMPLE_MAX_DIMENSION) ?: return null
-        if (bitmap.width < 3 || bitmap.height < 3) {
-            bitmap.recycleSafely()
-            return null
+    private fun belongsToSameBurst(previous: PhotoRecord, current: PhotoRecord): Boolean {
+        val timeDelta = current.dateAdded - previous.dateAdded
+        if (timeDelta !in 0..BURST_MAX_GAP_MS) return false
+        if (!sameAspect(previous, current)) return false
+        if (!sameCamera(previous, current)) return false
+        return true
+    }
+
+    private fun sameAspect(a: PhotoRecord, b: PhotoRecord): Boolean {
+        if (a.width <= 0 || a.height <= 0 || b.width <= 0 || b.height <= 0) return false
+        val ratioA = a.width.toDouble() / a.height.toDouble()
+        val ratioB = b.width.toDouble() / b.height.toDouble()
+        return abs(ratioA - ratioB) <= BURST_ASPECT_TOLERANCE
+    }
+
+    private fun sameCamera(a: PhotoRecord, b: PhotoRecord): Boolean {
+        val modelA = a.cameraModel?.trim()?.lowercase().orEmpty()
+        val modelB = b.cameraModel?.trim()?.lowercase().orEmpty()
+        if (modelA.isBlank() || modelB.isBlank()) return true
+        return modelA == modelB
+    }
+
+    private fun analyzeHeroFeatures(uriString: String): HeroAnalysis? {
+        val uri = runCatching { Uri.parse(uriString) }.getOrNull() ?: return null
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            BitmapFactory.decodeStream(input, null, bounds)
+        } ?: return null
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+        val sample = calculateSampleSize(bounds.outWidth, bounds.outHeight, HERO_ANALYSIS_EDGE_PX)
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sample
+            inPreferredConfig = Bitmap.Config.RGB_565
         }
+        val bitmap = context.contentResolver.openInputStream(uri)?.use { input ->
+            BitmapFactory.decodeStream(input, null, options)
+        } ?: return null
 
         return try {
-            val width = bitmap.width
-            val height = bitmap.height
-            val rowPixels = IntArray(width)
-            var rowAbove = IntArray(width)
-            var rowCenter = IntArray(width)
-            var rowBelow = IntArray(width)
-
-            fillLuminanceRow(bitmap, rowPixels, rowAbove, 0)
-            fillLuminanceRow(bitmap, rowPixels, rowCenter, 1)
-            fillLuminanceRow(bitmap, rowPixels, rowBelow, 2)
-
-            var luminanceSum = rowAbove.sumOf { value -> value.toLong() } +
-                rowCenter.sumOf { value -> value.toLong() } +
-                rowBelow.sumOf { value -> value.toLong() }
-            var luminanceCount = width * 3L
-            var laplacianSum = 0.0
-            var laplacianSquares = 0.0
-            var laplacianCount = 0
-
-            for (y in 1 until height - 1) {
-                for (x in 1 until width - 1) {
-                    val center = rowCenter[x]
-                    val up = rowAbove[x]
-                    val down = rowBelow[x]
-                    val left = rowCenter[x - 1]
-                    val right = rowCenter[x + 1]
-                    val laplacian = (4 * center - up - down - left - right).toDouble()
-                    laplacianSum += laplacian
-                    laplacianSquares += laplacian * laplacian
-                    laplacianCount += 1
-                }
-
-                if (y < height - 2) {
-                    val reusable = rowAbove
-                    rowAbove = rowCenter
-                    rowCenter = rowBelow
-                    rowBelow = reusable
-                    fillLuminanceRow(bitmap, rowPixels, rowBelow, y + 2)
-                    luminanceSum += rowBelow.sumOf { value -> value.toLong() }
-                    luminanceCount += width
-                }
-            }
-
-            if (laplacianCount == 0 || luminanceCount == 0L) return null
-            val laplacianMean = laplacianSum / laplacianCount.toDouble()
-            val sharpnessVariance = (laplacianSquares / laplacianCount.toDouble()) -
-                (laplacianMean * laplacianMean)
-
-            val meanLuminance = luminanceSum.toDouble() / luminanceCount.toDouble()
-            val exposureBalance = (
-                1.0 - (abs(meanLuminance - TARGET_MEAN_LUMINANCE) / TARGET_MEAN_LUMINANCE)
-                ).coerceIn(0.0, 1.0)
-
-            HeroFeatureAnalysis(
-                sharpnessVariance = sharpnessVariance,
-                exposureBalance = exposureBalance,
+            HeroAnalysis(
+                sharpnessVariance = blurScoreComputer.score(bitmap),
+                exposureBalance = exposureBalance(bitmap),
             )
         } finally {
-            bitmap.recycleSafely()
+            bitmap.recycle()
         }
+    }
+
+    private fun exposureBalance(bitmap: Bitmap): Double {
+        if (bitmap.width <= 0 || bitmap.height <= 0) return 0.0
+        val stepX = (bitmap.width / EXPOSURE_GRID_SIZE).coerceAtLeast(1)
+        val stepY = (bitmap.height / EXPOSURE_GRID_SIZE).coerceAtLeast(1)
+        var total = 0.0
+        var count = 0
+        var y = stepY / 2
+        while (y < bitmap.height) {
+            var x = stepX / 2
+            while (x < bitmap.width) {
+                val color = bitmap.getPixel(x, y)
+                val luma = (
+                    android.graphics.Color.red(color) * 0.2126 +
+                        android.graphics.Color.green(color) * 0.7152 +
+                        android.graphics.Color.blue(color) * 0.0722
+                    ) / 255.0
+                total += luma
+                count += 1
+                x += stepX
+            }
+            y += stepY
+        }
+        if (count == 0) return 0.0
+        val average = total / count
+        return (1.0 - (abs(average - TARGET_EXPOSURE) / MAX_EXPOSURE_DISTANCE))
+            .coerceIn(0.0, 1.0)
     }
 
     private fun faceConfidenceHint(photo: PhotoRecord): Double {
-        val relevantTags = listOf("selfie", "face", "people", "person", "portrait", "smile")
-        val maxConfidence = photo.mlTags
-            .filter { tag ->
-                relevantTags.any { keyword -> tag.label.contains(keyword, ignoreCase = true) }
-            }
-            .maxOfOrNull { tag -> tag.confidence.toDouble() }
-            ?: 0.0
-        return maxConfidence.coerceIn(0.0, 1.0)
-    }
-
-    private fun normalizeMetric(value: Double, min: Double, max: Double): Double {
-        if (max - min <= NORMALIZE_EPSILON) return 0.5
-        return ((value - min) / (max - min)).coerceIn(0.0, 1.0)
-    }
-
-    private fun fillLuminanceRow(
-        bitmap: Bitmap,
-        rowPixels: IntArray,
-        targetLuminance: IntArray,
-        y: Int,
-    ) {
-        bitmap.getPixels(rowPixels, 0, bitmap.width, 0, y, bitmap.width, 1)
-        for (x in rowPixels.indices) {
-            val pixel = rowPixels[x]
-            val r = (pixel shr 16) and 0xFF
-            val g = (pixel shr 8) and 0xFF
-            val b = pixel and 0xFF
-            targetLuminance[x] = (r * 299 + g * 587 + b * 114) / 1000
+        val tags = photo.mlTags.map { tag -> tag.lowercase() }
+        return when {
+            tags.any { tag -> tag == "person" || tag == "people" || tag == "portrait" } -> 1.0
+            tags.any { tag -> tag.contains("face") } -> 0.85
+            else -> 0.0
         }
-    }
-
-    private fun bucketKey(band: Int, hash: Long): String {
-        return "$band:${DuplicateHash.bandKey(hash, band)}"
     }
 
     private fun sha256(uriString: String): String? {
         val digest = MessageDigest.getInstance("SHA-256")
-        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        val buffer = ByteArray(16 * 1024)
         return runCatching {
             context.contentResolver.openInputStream(Uri.parse(uriString))?.use { input ->
                 while (true) {
@@ -402,45 +360,23 @@ class DuplicatePhotoFinder @Inject constructor(
                     digest.update(buffer, 0, read)
                 }
             } ?: return null
-            digest.digest().joinToString(separator = "") { byte -> "%02x".format(byte) }
+            digest.digest().joinToString("") { byte -> "%02x".format(byte) }
         }.getOrNull()
     }
 
-    private fun decodeSampledBitmap(uri: Uri, maxDimensionPx: Int): Bitmap? {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        context.contentResolver.openInputStream(uri)?.use { stream ->
-            BitmapFactory.decodeStream(stream, null, bounds)
-        } ?: return null
-
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-
+    private fun calculateSampleSize(width: Int, height: Int, maxEdge: Int): Int {
         var sample = 1
-        while (bounds.outWidth / sample > maxDimensionPx || bounds.outHeight / sample > maxDimensionPx) {
+        while (width / sample > maxEdge || height / sample > maxEdge) {
             sample *= 2
         }
-
-        val options = BitmapFactory.Options().apply {
-            inSampleSize = sample.coerceAtLeast(1)
-            inPreferredConfig = Bitmap.Config.RGB_565
-        }
-        return context.contentResolver.openInputStream(uri)?.use { stream ->
-            BitmapFactory.decodeStream(stream, null, options)
-        }
+        return sample.coerceAtLeast(1)
     }
 
-    private fun luminance(pixel: Int): Int {
-        val red = android.graphics.Color.red(pixel)
-        val green = android.graphics.Color.green(pixel)
-        val blue = android.graphics.Color.blue(pixel)
-        return (red * 299 + green * 587 + blue * 114) / 1000
-    }
-
-    private fun Bitmap.recycleSafely() {
-        runCatching {
-            if (!isRecycled) {
-                recycle()
-            }
-        }
+    private fun priorityOf(kind: DuplicateMatchKind): Int = when (kind) {
+        DuplicateMatchKind.Exact -> 4
+        DuplicateMatchKind.Similar -> 3
+        DuplicateMatchKind.Burst -> 2
+        DuplicateMatchKind.Blurry -> 1
     }
 
     private data class ExactCandidateKey(
@@ -454,7 +390,7 @@ class DuplicatePhotoFinder @Inject constructor(
         val hash: Long,
     )
 
-    private data class HeroFeatureAnalysis(
+    private data class HeroAnalysis(
         val sharpnessVariance: Double,
         val exposureBalance: Double,
     )
@@ -467,77 +403,24 @@ class DuplicatePhotoFinder @Inject constructor(
         val score: Double = 0.0,
     )
 
-    private class UnionFind<T> {
-        private val parent = mutableMapOf<T, T>()
-        private val rank = mutableMapOf<T, Int>()
-
-        fun add(value: T) {
-            if (!parent.containsKey(value)) {
-                parent[value] = value
-                rank[value] = 0
-            }
-        }
-
-        fun union(left: T, right: T) {
-            add(left)
-            add(right)
-            val leftRoot = find(left)
-            val rightRoot = find(right)
-            if (leftRoot != rightRoot) {
-                val leftRank = rank[leftRoot] ?: 0
-                val rightRank = rank[rightRoot] ?: 0
-                if (leftRank < rightRank) {
-                    parent[leftRoot] = rightRoot
-                } else if (leftRank > rightRank) {
-                    parent[rightRoot] = leftRoot
-                } else {
-                    parent[rightRoot] = leftRoot
-                    rank[leftRoot] = leftRank + 1
-                }
-            }
-        }
-
-        fun groups(): List<List<T>> {
-            return parent.keys.groupBy(::find).values.filter { it.size > 1 }
-        }
-
-        private fun find(value: T): T {
-            val p = parent[value] ?: return value
-            if (p == value) return value
-            val root = find(p)
-            parent[value] = root // Path compression
-            return root
-        }
-    }
-
-    companion object {
-        private const val PARTIAL_HASH_LIMIT = 64 * 1024 // 64KB
-        private const val DB_PREFILTER_MIN_RECORDS = 1_000
-        private const val BAND_COUNT = 8
+    private companion object {
+        private const val DB_PREFILTER_MIN_RECORDS = 2_000
+        private const val PARTIAL_HASH_LIMIT = 256 * 1024
         private const val NEAR_DUPLICATE_DISTANCE = 8
-        private const val MAX_GROUPS = 30
+        private const val BAND_COUNT = 4
+        private const val MAX_GROUPS = 120
+        private const val BURST_MAX_GAP_MS = 1_500L
         private const val BURST_MIN_COUNT = 3
-        private const val BURST_WINDOW_MS = 2_500L
-        private const val BURST_ASPECT_RATIO_DELTA = 0.16f
-        private const val BURST_DIMENSION_DELTA = 0.16f
-        private const val MAX_BURST_GROUPS = 15
-        private const val HERO_SAMPLE_MAX_DIMENSION = 320
-        private const val BLUR_VARIANCE_THRESHOLD = 95.0
-        private const val MIN_BLUR_GROUP_SIZE = 2
-        private const val MAX_BLUR_CANDIDATES = 36
-        private const val TARGET_MEAN_LUMINANCE = 128.0
-        private const val HERO_SHARPNESS_WEIGHT = 0.55
-        private const val HERO_EXPOSURE_WEIGHT = 0.25
-        private const val HERO_FACE_WEIGHT = 0.20
-        private const val NORMALIZE_EPSILON = 0.0001
-
-        private fun priorityOf(kind: DuplicateMatchKind): Int {
-            return when (kind) {
-                DuplicateMatchKind.Exact -> 4
-                DuplicateMatchKind.Similar -> 3
-                DuplicateMatchKind.Burst -> 2
-                DuplicateMatchKind.Blurry -> 1
-            }
-        }
+        private const val MAX_BURST_GROUPS = 24
+        private const val BURST_ASPECT_TOLERANCE = 0.035
+        private const val MAX_BLUR_ITEMS = 60
+        private const val BLUR_SCORE_THRESHOLD = 42.0
+        private const val HERO_ANALYSIS_EDGE_PX = 720
+        private const val EXPOSURE_GRID_SIZE = 16
+        private const val TARGET_EXPOSURE = 0.52
+        private const val MAX_EXPOSURE_DISTANCE = 0.52
+        private const val HERO_SHARPNESS_WEIGHT = 0.58
+        private const val HERO_EXPOSURE_WEIGHT = 0.27
+        private const val HERO_FACE_WEIGHT = 0.15
     }
 }
