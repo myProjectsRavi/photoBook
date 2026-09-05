@@ -1,4 +1,4 @@
-name: Vault Preview Cache Lifecycle V4 (Disposable)
+name: Vault Preview Cache Lifecycle Final Review (Disposable)
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 env:
-  BASE_SHA: 50385fc6c062a269e41c0921954639682eb0b593
+  BASE_SHA: e91ce30b0df4c6303363a2279df7330baeb900c9
 
 jobs:
   patch-and-verify:
@@ -23,7 +23,7 @@ jobs:
           fetch-depth: 0
           ref: fix/2.0.15-vault-preview-cache-lifecycle-v4
 
-      - name: Verify isolated v3 starting point
+      - name: Verify reviewed v4 starting scope
         shell: bash
         run: |
           set -euo pipefail
@@ -38,7 +38,7 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - name: Apply reviewed v4 delta
+      - name: Apply cancellation-safe cleanup delta
         shell: bash
         run: |
           set -euo pipefail
@@ -51,162 +51,24 @@ jobs:
                   raise SystemExit(f'{label}: expected {expected} matches, got {count}')
               return text.replace(old, new)
 
-          def replace_region(text, start_marker, end_marker, new_region, label):
-              start = text.find(start_marker)
-              if start < 0:
-                  raise SystemExit(f'{label}: start marker not found')
-              end = text.find(end_marker, start)
-              if end < 0:
-                  raise SystemExit(f'{label}: end marker not found')
-              if text.find(start_marker, start + 1) >= 0:
-                  raise SystemExit(f'{label}: start marker not unique')
-              return text[:start] + new_region + text[end:]
-
           main_path = Path('app/src/main/java/com/photobook/app/MainActivity.kt')
           main = main_path.read_text()
-          close_region = (
-              '    fun closeVault() {\n'
-              '        showVault = false\n'
-              '        vaultService.invalidatePreviewCache()\n'
-              '        vaultItems = emptyList()\n'
-              '        isVaultLoading = false\n'
-              '        isVaultBusy = false\n'
+          main = replace_exact(
+              main,
               '        coroutineScope.launch {\n'
               '            runCatching { vaultService.clearPreviewCache() }\n'
-              '        }\n'
-              '    }\n\n'
-          )
-          main = replace_region(
-              main,
-              '    fun closeVault() {\n',
-              '    suspend fun loadVisibleVaultItems',
-              close_region,
-              'closeVault',
-          )
-          helper_region = (
-              '    suspend fun loadVisibleVaultItems(session: VaultCryptoSession): List<VaultItem> {\n'
-              '        if (!showVault) return emptyList()\n'
-              '        val previewGeneration = vaultService.beginPreviewLoad()\n'
-              '        val items = vaultService.listItems(\n'
-              '            session = session,\n'
-              '            includePreviews = true,\n'
-              '            previewGeneration = previewGeneration,\n'
-              '        )\n'
-              '        return when {\n'
-              '            !showVault -> emptyList()\n'
-              '            vaultService.isPreviewLoadCurrent(previewGeneration) -> items\n'
-              '            else -> vaultItems\n'
-              '        }\n'
-              '    }\n\n'
-          )
-          main = replace_region(
-              main,
-              '    suspend fun loadVisibleVaultItems',
-              '    fun refreshVault(session: VaultCryptoSession)',
-              helper_region,
-              'loadVisibleVaultItems',
+              '        }\n',
+              '        coroutineScope.launch {\n'
+              '            vaultService.clearPreviewCache()\n'
+              '        }\n',
+              1,
+              'close-time cleanup launch',
           )
           main_path.write_text(main)
 
           service_path = Path('app/src/main/java/com/photobook/app/feature/vault/VaultService.kt')
           service = service_path.read_text()
-          service = replace_exact(
-              service,
-              'import kotlinx.coroutines.Dispatchers\nimport kotlinx.coroutines.withContext\n',
-              'import kotlinx.coroutines.Dispatchers\nimport kotlinx.coroutines.sync.Mutex\nimport kotlinx.coroutines.withContext\n',
-              1,
-              'Mutex import',
-          )
-          service = replace_exact(
-              service,
-              '    private val previewCacheNeedsCleanup = java.util.concurrent.atomic.AtomicBoolean(true)\n',
-              '    private val previewCacheNeedsCleanup = java.util.concurrent.atomic.AtomicBoolean(true)\n'
-              '    private val previewCacheMutex = Mutex()\n',
-              1,
-              'preview mutex',
-          )
-          service = replace_exact(
-              service,
-              '    internal fun beginPreviewLoad(): Long = previewCacheGeneration.incrementAndGet()\n',
-              '    internal fun beginPreviewLoad(): Long = previewCacheGeneration.incrementAndGet()\n\n'
-              '    internal fun isPreviewLoadCurrent(generation: Long): Boolean =\n'
-              '        previewCacheGeneration.get() == generation\n\n'
-              '    internal fun invalidatePreviewCache() {\n'
-              '        previewCacheGeneration.incrementAndGet()\n'
-              '        previewCacheNeedsCleanup.set(true)\n'
-              '    }\n',
-              1,
-              'preview generation API',
-          )
-
-          list_region = (
-              '    suspend fun listItems(\n'
-              '        session: VaultCryptoSession,\n'
-              '        includePreviews: Boolean = false,\n'
-              '        previewGeneration: Long? = null,\n'
-              '    ): List<VaultItem> = withContext(Dispatchers.IO) {\n'
-              '        val expectedPreviewGeneration = if (includePreviews) {\n'
-              '            requireNotNull(previewGeneration) { "Preview generation is required for Vault previews" }\n'
-              '        } else {\n'
-              '            null\n'
-              '        }\n'
-              '        if (expectedPreviewGeneration != null) {\n'
-              '            previewCacheMutex.lock()\n'
-              '        }\n'
-              '        try {\n'
-              '            if (expectedPreviewGeneration != null) {\n'
-              '                if (previewCacheGeneration.get() != expectedPreviewGeneration) {\n'
-              '                    return@withContext emptyList()\n'
-              '                }\n'
-              '                if (previewCacheNeedsCleanup.compareAndSet(true, false)) {\n'
-              '                    val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)\n'
-              '                    if (previewRoot.exists() && !previewRoot.deleteRecursively()) {\n'
-              '                        previewCacheNeedsCleanup.set(true)\n'
-              '                        throw IOException("Unable to clear stale Vault preview cache")\n'
-              '                    }\n'
-              '                }\n'
-              '                if (previewCacheGeneration.get() != expectedPreviewGeneration) {\n'
-              '                    return@withContext emptyList()\n'
-              '                }\n'
-              '            }\n'
-              '            migrateLegacyItemsIfNeeded()\n'
-              '            migrateLegacyCiphertextIfNeeded(session)\n'
-              '            if (\n'
-              '                expectedPreviewGeneration != null &&\n'
-              '                previewCacheGeneration.get() != expectedPreviewGeneration\n'
-              '            ) {\n'
-              '                return@withContext emptyList()\n'
-              '            }\n'
-              '            vaultDao.getAllVaultItems().map { entity ->\n'
-              '                val item = entity.toVaultItem()\n'
-              '                if (expectedPreviewGeneration != null) {\n'
-              '                    item.copy(\n'
-              '                        previewUri = createPreviewUri(\n'
-              '                            entity = entity,\n'
-              '                            session = session,\n'
-              '                            expectedPreviewGeneration = expectedPreviewGeneration,\n'
-              '                        ),\n'
-              '                    )\n'
-              '                } else {\n'
-              '                    item\n'
-              '                }\n'
-              '            }\n'
-              '        } finally {\n'
-              '            if (expectedPreviewGeneration != null) {\n'
-              '                previewCacheMutex.unlock()\n'
-              '            }\n'
-              '        }\n'
-              '    }\n\n'
-          )
-          service = replace_region(
-              service,
-              '    suspend fun listItems(\n',
-              '    suspend fun addPhotos(\n',
-              list_region,
-              'listItems',
-          )
-
-          clear_region = (
+          old_clear = (
               '    suspend fun clearPreviewCache() = withContext(Dispatchers.IO) {\n'
               '        previewCacheMutex.lock()\n'
               '        try {\n'
@@ -219,84 +81,41 @@ jobs:
               '        } finally {\n'
               '            previewCacheMutex.unlock()\n'
               '        }\n'
-              '    }\n\n'
+              '    }\n'
           )
-          service = replace_region(
-              service,
-              '    fun clearPreviewCache() {\n',
-              '    private fun buildLegacyEncryptedFile',
-              clear_region,
-              'clearPreviewCache',
-          )
-
-          service = replace_exact(
-              service,
-              '            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {\n'
-              '                return@runCatching null\n'
-              '            }\n\n'
-              '            val options = BitmapFactory.Options().apply {\n',
-              '            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {\n'
-              '                return@runCatching null\n'
+          new_clear = (
+              '    suspend fun clearPreviewCache(): Boolean = withContext(Dispatchers.IO) {\n'
+              '        previewCacheMutex.lock()\n'
+              '        try {\n'
+              '            val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)\n'
+              '            val cleared = try {\n'
+              '                !previewRoot.exists() || previewRoot.deleteRecursively()\n'
+              '            } catch (_: SecurityException) {\n'
+              '                false\n'
               '            }\n'
-              '            if (previewCacheGeneration.get() != expectedPreviewGeneration) {\n'
-              '                return@runCatching null\n'
-              '            }\n\n'
-              '            val options = BitmapFactory.Options().apply {\n',
-              1,
-              'post-bounds stale check',
+              '            previewCacheNeedsCleanup.set(!cleared)\n'
+              '            cleared\n'
+              '        } finally {\n'
+              '            previewCacheMutex.unlock()\n'
+              '        }\n'
+              '    }\n'
           )
-          service = replace_exact(
-              service,
-              '            val bitmap = openVaultInput(entity, session).use { input ->\n'
-              '                BitmapFactory.decodeStream(input, null, options)\n'
-              '            } ?: return@runCatching null\n\n'
-              '            previewFile.parentFile?.mkdirs()\n',
-              '            val bitmap = openVaultInput(entity, session).use { input ->\n'
-              '                BitmapFactory.decodeStream(input, null, options)\n'
-              '            } ?: return@runCatching null\n'
-              '            if (previewCacheGeneration.get() != expectedPreviewGeneration) {\n'
-              '                bitmap.recycle()\n'
-              '                return@runCatching null\n'
-              '            }\n\n'
-              '            previewFile.parentFile?.mkdirs()\n',
-              1,
-              'post-decode stale check',
-          )
-          service = replace_exact(
-              service,
-              '                authCrypto.renameAtomically(tempPreview, previewFile)\n'
-              '                Uri.fromFile(previewFile)\n',
-              '                authCrypto.renameAtomically(tempPreview, previewFile)\n'
-              '                if (previewCacheGeneration.get() != expectedPreviewGeneration) {\n'
-              '                    runCatching { previewFile.delete() }\n'
-              '                    return@runCatching null\n'
-              '                }\n'
-              '                Uri.fromFile(previewFile)\n',
-              1,
-              'post-publish stale check',
-          )
+          service = replace_exact(service, old_clear, new_clear, 1, 'clearPreviewCache result')
           service_path.write_text(service)
           PY
           git diff --check
 
-      - name: Prove reviewed invariants
+      - name: Prove final cleanup semantics
         shell: bash
         run: |
           set -euo pipefail
           main=app/src/main/java/com/photobook/app/MainActivity.kt
           vault=app/src/main/java/com/photobook/app/feature/vault/VaultService.kt
-          test "$(grep -c 'vaultService.invalidatePreviewCache()' "$main")" -eq 1
-          test "$(grep -c 'isPreviewLoadCurrent(previewGeneration)' "$main")" -eq 1
-          test "$(grep -c 'suspend fun clearPreviewCache' "$vault")" -eq 1
-          test "$(grep -c 'private val previewCacheMutex = Mutex()' "$vault")" -eq 1
-          test "$(grep -c 'previewCacheMutex.lock()' "$vault")" -eq 2
-          test "$(grep -c 'previewCacheMutex.unlock()' "$vault")" -eq 2
-          test "$(grep -c 'internal fun invalidatePreviewCache' "$vault")" -eq 1
-          test "$(grep -c 'internal fun isPreviewLoadCurrent' "$vault")" -eq 1
-          test "$(grep -c 'return@withContext emptyList()' "$vault")" -ge 3
-          test "$(grep -c 'runCatching { previewFile.delete() }' "$vault")" -eq 1
-          ! grep -q 'fun clearPreviewCache() {' "$vault"
-          ! grep -A2 'fun closeVault()' "$main" | grep -q 'clearPreviewCache()'
+          test "$(grep -c 'vaultService.clearPreviewCache()' "$main")" -eq 1
+          ! grep -q 'runCatching { vaultService.clearPreviewCache() }' "$main"
+          test "$(grep -c 'suspend fun clearPreviewCache(): Boolean' "$vault")" -eq 1
+          test "$(grep -c 'previewCacheNeedsCleanup.set(!cleared)' "$vault")" -eq 1
+          test "$(grep -c 'catch (_: SecurityException)' "$vault")" -eq 1
 
       - name: Compile production and test source
         shell: bash
@@ -305,7 +124,7 @@ jobs:
           chmod +x ./gradlew
           ./gradlew :app:compileDebugKotlin :app:compileDebugAndroidTestKotlin :app:testDebugUnitTest :app:lintDebug
 
-      - name: Commit only reviewed production delta
+      - name: Commit only final reviewed production delta
         shell: bash
         run: |
           set -euo pipefail
@@ -314,5 +133,5 @@ jobs:
           git add app/src/main/java/com/photobook/app/MainActivity.kt \
                   app/src/main/java/com/photobook/app/feature/vault/VaultService.kt
           test "$(git diff --cached --name-only | wc -l | tr -d ' ')" = "2"
-          git commit -m "Serialize and offload Vault preview cleanup"
+          git commit -m "Preserve Vault cleanup cancellation semantics"
           git push origin HEAD:fix/2.0.15-vault-preview-cache-lifecycle-v4
