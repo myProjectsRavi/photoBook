@@ -44,7 +44,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libpulse0
-      - name: Prebuild exact app and OCR instrumentation
+      - name: Prebuild exact app and OCR instrumentation before network cut
         working-directory: ${{ runner.temp }}/candidate
         shell: bash
         run: |
@@ -54,6 +54,9 @@ jobs:
           manifest="$(find app/build/intermediates/merged_manifest/release -type f -name AndroidManifest.xml -print -quit)"
           test -f "$manifest"
           ! grep -q 'android.permission.INTERNET' "$manifest"
+          app_apk="$(find app/build/outputs/apk/debug -type f -name '*arm64-v8a*.apk' -print -quit)"
+          test_apk="$(find app/build/outputs/apk/androidTest/debug -type f -name '*.apk' -print -quit)"
+          test -f "$app_apk" && test -f "$test_apk"
       - name: Provision API35 emulator
         shell: bash
         run: |
@@ -87,15 +90,31 @@ jobs:
           done
           [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
           [[ "$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')" == 35 ]]
-      - name: Run bundled OCR with host and emulator network blocked
+          abilist="$("$ADB" shell getprop ro.product.cpu.abilist | tr -d '\r')"
+          [[ ",$abilist," == *,arm64-v8a,* ]]
+      - name: Install exact prebuilt APKs and run OCR with host and emulator network blocked
         working-directory: ${{ runner.temp }}/candidate
         shell: bash
         run: |
           set -euo pipefail
           SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
           ADB="$SDK_ROOT/platform-tools/adb"
+          AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt | sort -V | tail -n1)"
           uid="$(id -u)"
           REPORT="$GITHUB_WORKSPACE/build/reports/hosted-ocr/summary.txt"
+          app_apk="$(find app/build/outputs/apk/debug -type f -name '*arm64-v8a*.apk' -print -quit)"
+          test_apk="$(find app/build/outputs/apk/androidTest/debug -type f -name '*.apk' -print -quit)"
+          test -f "$app_apk" && test -f "$test_apk"
+          ! "$AAPT" dump permissions "$app_apk" | grep -q 'android.permission.INTERNET'
+          "$ADB" install -r "$app_apk" | tee "$RUNNER_TEMP/ocr-install-app.txt"
+          "$ADB" install -r "$test_apk" | tee "$RUNNER_TEMP/ocr-install-test.txt"
+          grep -Fq Success "$RUNNER_TEMP/ocr-install-app.txt"
+          grep -Fq Success "$RUNNER_TEMP/ocr-install-test.txt"
+          "$ADB" shell dumpsys package com.photobook.app > "$RUNNER_TEMP/ocr-package.txt"
+          ! sed -n '/requested permissions:/,/install permissions:/p' "$RUNNER_TEMP/ocr-package.txt" | grep -q 'android.permission.INTERNET'
+          instrumentation="$("$ADB" shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
+          test -n "$instrumentation"
+
           "$ADB" shell cmd connectivity airplane-mode enable || true
           "$ADB" shell svc wifi disable || true
           "$ADB" shell svc data disable || true
@@ -109,11 +128,18 @@ jobs:
           [[ "$("$ADB" shell settings get global airplane_mode_on | tr -d '\r')" == 1 ]]
           if curl -fsS --connect-timeout 2 --max-time 3 https://www.google.com >/dev/null 2>&1; then exit 1; fi
           if "$ADB" shell 'command -v ping >/dev/null 2>&1'; then ! "$ADB" shell ping -c 1 -W 1 8.8.8.8 >/dev/null 2>&1; fi
-          ./gradlew --offline :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.photobook.app.ml.LocalOcrEngineInstrumentedTest --stacktrace | tee "$RUNNER_TEMP/ocr-test.txt"
+
+          "$ADB" logcat -c
+          "$ADB" shell am instrument -w -r -e class com.photobook.app.ml.LocalOcrEngineInstrumentedTest "$instrumentation" | tee "$RUNNER_TEMP/ocr-test.txt"
+          grep -Eq 'OK \(1 tests?\)' "$RUNNER_TEMP/ocr-test.txt"
+          ! grep -Eq 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' "$RUNNER_TEMP/ocr-test.txt"
+          "$ADB" logcat -b crash -d > "$RUNNER_TEMP/ocr-crash-buffer.txt" || true
+          ! grep -Eqi 'Process: com\.photobook\.app|com\.photobook\.app.*(FATAL EXCEPTION|OutOfMemoryError|UnsatisfiedLinkError|dlopen failed)' "$RUNNER_TEMP/ocr-crash-buffer.txt"
           {
             echo "candidate_sha=$CANDIDATE_SHA"
             echo 'offline_network_gate=PASS'
             echo 'release_internet_permission=ABSENT'
+            echo 'installed_internet_permission=ABSENT'
             echo 'bundled_ocr_instrumentation=PASS'
             echo 'hosted_offline_ocr=PASS'
             echo 'NOTE=synthetic text bitmap on emulator; representative private real-photo corpus still unavailable'
@@ -127,7 +153,7 @@ jobs:
             build/reports/hosted-ocr/
             ${{ runner.temp }}/ocr-emulator.log
             ${{ runner.temp }}/ocr-test.txt
-            ${{ runner.temp }}/candidate/app/build/reports/androidTests/
-            ${{ runner.temp }}/candidate/app/build/outputs/androidTest-results/
+            ${{ runner.temp }}/ocr-crash-buffer.txt
+            ${{ runner.temp }}/ocr-install-*.txt
           retention-days: 14
           if-no-files-found: warn
