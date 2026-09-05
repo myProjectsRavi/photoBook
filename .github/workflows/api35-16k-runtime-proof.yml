@@ -94,7 +94,9 @@ jobs:
           abi="$("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r')"
           abilist="$("$ADB" shell getprop ro.product.cpu.abilist | tr -d '\r')"
           page="$("$ADB" shell getconf PAGE_SIZE | tr -d '\r')"
-          echo "sdk=$sdk abi=$abi abilist=$abilist page_size=$page" | tee "$GITHUB_WORKSPACE/api35-16k-runtime-report.txt"
+          debuggable="$("$ADB" shell getprop ro.debuggable | tr -d '\r')"
+          build_type="$("$ADB" shell getprop ro.build.type | tr -d '\r')"
+          echo "sdk=$sdk abi=$abi abilist=$abilist page_size=$page ro_debuggable=$debuggable build_type=$build_type" | tee "$GITHUB_WORKSPACE/api35-16k-runtime-report.txt"
           [[ "$sdk" == 35 ]]
           [[ "$page" == 16384 ]]
           if [[ ",$abilist," != *,arm64-v8a,* ]]; then
@@ -103,7 +105,37 @@ jobs:
           fi
           echo 'arm64_translation=AVAILABLE' | tee -a "$GITHUB_WORKSPACE/api35-16k-runtime-report.txt"
 
-      - name: Force 16K backcompat off, cut network, install and test exact candidate
+      - name: Root emulator and force 16K backcompat off
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          REPORT="$GITHUB_WORKSPACE/api35-16k-runtime-report.txt"
+          root_output="$("$ADB" root 2>&1 || true)"
+          echo "adb_root_output=$root_output" | tee -a "$REPORT"
+          "$ADB" wait-for-device
+          for _ in $(seq 1 30); do
+            uid="$("$ADB" shell id -u 2>/dev/null | tr -d '\r' || true)"
+            [[ "$uid" == 0 ]] && break
+            sleep 1
+          done
+          echo "adb_shell_uid=${uid:-unknown}" | tee -a "$REPORT"
+          if [[ "${uid:-}" != 0 ]]; then
+            echo 'FAIL_INFRASTRUCTURE: API35 16K Google APIs image does not permit adb root; cannot prove compat mode off' | tee -a "$REPORT"
+            exit 86
+          fi
+          "$ADB" shell setprop bionic.linker.16kb.app_compat.enabled false
+          "$ADB" shell setprop pm.16kb.app_compat.disabled true
+          bionic="$("$ADB" shell getprop bionic.linker.16kb.app_compat.enabled | tr -d '\r')"
+          pm_disabled="$("$ADB" shell getprop pm.16kb.app_compat.disabled | tr -d '\r')"
+          echo "bionic_16k_compat=$bionic" | tee -a "$REPORT"
+          echo "pm_16k_compat_disabled=$pm_disabled" | tee -a "$REPORT"
+          [[ "$bionic" == false ]]
+          [[ "$pm_disabled" == true ]]
+          echo 'compat_mode_off=VERIFIED' | tee -a "$REPORT"
+
+      - name: Cut network, install and test exact candidate
         working-directory: ${{ runner.temp }}/photobook-candidate
         shell: bash
         run: |
@@ -113,11 +145,6 @@ jobs:
           AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt 2>/dev/null | sort -V | tail -n1)"
           uid="$(id -u)"
           REPORT="$GITHUB_WORKSPACE/api35-16k-runtime-report.txt"
-
-          "$ADB" shell setprop bionic.linker.16kb.app_compat.enabled false
-          "$ADB" shell setprop pm.16kb.app_compat.disabled true
-          echo "bionic_16k_compat=$("$ADB" shell getprop bionic.linker.16kb.app_compat.enabled | tr -d '\r')" | tee -a "$REPORT"
-          echo "pm_16k_compat_disabled=$("$ADB" shell getprop pm.16kb.app_compat.disabled | tr -d '\r')" | tee -a "$REPORT"
 
           "$ADB" shell cmd connectivity airplane-mode enable || true
           "$ADB" shell svc wifi disable || true
