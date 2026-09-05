@@ -1,0 +1,90 @@
+name: PhotoBook 2.0.15 D2D Hardening Final CodeQL
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-d2d-final-codeql
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  codeql:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Verify exact production source
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only 52b118732adb6fd6fc62d730245472b34272e90e...HEAD)"
+          test "$changed" = ".github/workflows/d2d-final-codeql.yml"
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: java-kotlin
+          build-mode: manual
+          queries: security-extended
+      - name: Build for CodeQL extraction
+        shell: bash
+        run: |
+          chmod +x ./gradlew
+          ./gradlew clean :app:assembleDebug -x test
+      - name: Analyze locally
+        uses: github/codeql-action/analyze@v4
+        with:
+          upload: never
+          output: codeql-results
+          category: /language:java-kotlin/photobook-2-0-15-d2d-final
+      - name: Require zero Vault and unexpected findings
+        shell: bash
+        run: |
+          python3 - <<'PY' | tee codeql-summary.txt
+          import json
+          from pathlib import Path
+          sarifs = sorted(Path('codeql-results').rglob('*.sarif'))
+          if not sarifs:
+              raise SystemExit('FAIL: no SARIF')
+          findings = []
+          for path in sarifs:
+              data = json.loads(path.read_text())
+              for run in data.get('runs', []):
+                  for result in run.get('results', []):
+                      locs = []
+                      for loc in result.get('locations', []):
+                          p = loc.get('physicalLocation', {})
+                          locs.append((p.get('artifactLocation', {}).get('uri', ''), p.get('region', {}).get('startLine')))
+                      findings.append((result.get('ruleId', '<unknown>'), locs))
+          print(f'codeql_results={len(findings)}')
+          vault = []
+          unexpected = []
+          for rule, locs in findings:
+              rendered = ','.join(f'{u}:{n}' for u, n in locs)
+              print(f'rule={rule} locations={rendered}')
+              is_vault = any('/feature/vault/' in u for u, _ in locs)
+              known_md5 = rule == 'java/potentially-weak-cryptographic-algorithm' and any(u.endswith('DuplicatePhotoFinder.kt') for u, _ in locs)
+              if is_vault:
+                  vault.append((rule, locs))
+              elif not known_md5:
+                  unexpected.append((rule, locs))
+          if vault:
+              raise SystemExit(f'FAIL: Vault findings remain: {vault}')
+          if unexpected:
+              raise SystemExit(f'FAIL: unexpected findings: {unexpected}')
+          print('d2d_hardening_codeql=PASS_ZERO_VAULT_AND_UNEXPECTED_FINDINGS')
+          PY
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: d2d-final-codeql-${{ github.run_id }}
+          path: |
+            codeql-summary.txt
+            codeql-results/
+          retention-days: 14
