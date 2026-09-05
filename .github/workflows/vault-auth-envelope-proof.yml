@@ -1,0 +1,175 @@
+name: Vault Auth Envelope Component Proof
+
+on:
+  push:
+    branches:
+      - feature/2.0.15-vault-auth-envelope
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  component-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      BASE_CANDIDATE_SHA: 04909b6e485c1ede12160aeac136598bee8d303f
+      BASELINE_AAB_BYTES: 20366822
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Verify isolated implementation scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e "$BASE_CANDIDATE_SHA^{commit}"
+          git merge-base --is-ancestor "$BASE_CANDIDATE_SHA" HEAD
+          changed="$(git diff --name-only "$BASE_CANDIDATE_SHA"..HEAD | sort)"
+          expected=$'.github/workflows/vault-auth-envelope-proof.yml\napp/src/androidTest/java/com/photobook/app/feature/vault/VaultAuthKeyEnvelopeInstrumentedTest.kt\napp/src/main/java/com/photobook/app/feature/vault/VaultAuthKeyEnvelope.kt'
+          [[ "$changed" == "$expected" ]]
+          printf 'base_candidate_sha=%s\nfeature_sha=%s\nproduction_vault_service_modified=NO\nmain_activity_modified=NO\nroom_schema_modified=NO\n' \
+            "$BASE_CANDIDATE_SHA" "$(git rev-parse HEAD)" > "$GITHUB_WORKSPACE/vault-auth-envelope-report.txt"
+
+      - name: Install emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+
+      - name: Build full feature stack and enforce release budgets
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:compileDebugAndroidTestKotlin
+          ./gradlew \
+            :app:testDebugUnitTest \
+            :app:lintDebug \
+            :app:assembleDebug \
+            :app:assembleDebugAndroidTest \
+            :app:assembleRelease \
+            :app:bundleRelease \
+            :app:verifyReleaseBundleSize
+
+          aab="$(find app/build/outputs/bundle/release -type f -name '*.aab' -print -quit)"
+          test -f "$aab"
+          patched_bytes="$(stat -c '%s' "$aab")"
+          delta_bytes="$((patched_bytes - BASELINE_AAB_BYTES))"
+          printf 'feature_release_aab_bytes=%s\nbaseline_release_aab_bytes=%s\nfeature_aab_delta_bytes=%s\nfeature_build_stack=PASS\n' \
+            "$patched_bytes" "$BASELINE_AAB_BYTES" "$delta_bytes" | tee -a "$GITHUB_WORKSPACE/vault-auth-envelope-report.txt"
+          (( patched_bytes <= 20 * 1024 * 1024 ))
+
+      - name: Boot API35 emulator with secure credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort | tail -n1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager | sort | tail -n1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          IMAGE='system-images;android-35;google_apis;x86_64'
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 emulator "$IMAGE"
+          echo no | "$AVDMANAGER" create avd --force --name pb-vault-auth-envelope --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/pb-vault-auth-envelope.avd"
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+          nohup "$EMULATOR" -avd pb-vault-auth-envelope -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 4096 -cores 2 > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 150); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/emulator.log"; exit 1; }
+            sleep 2
+          done
+          "$ADB" wait-for-device
+          for _ in $(seq 1 150); do
+            [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break
+            sleep 2
+          done
+          [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
+          "$ADB" shell locksettings set-pin 2468
+          "$ADB" shell locksettings verify --old 2468
+          [[ "$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')" == 35 ]]
+          abilist="$("$ADB" shell getprop ro.product.cpu.abilist | tr -d '\r')"
+          [[ ",$abilist," == *,arm64-v8a,* ]]
+          echo 'secure_credential_setup=PASS' | tee -a "$GITHUB_WORKSPACE/vault-auth-envelope-report.txt"
+
+      - name: Install ARM64 build and run offline fail-closed tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt | sort -V | tail -n1)"
+          uid="$(id -u)"
+          REPORT="$GITHUB_WORKSPACE/vault-auth-envelope-report.txt"
+
+          app_apk="$(find app/build/outputs/apk/debug -type f -name '*arm64-v8a*.apk' -print -quit)"
+          test_apk="$(find app/build/outputs/apk/androidTest/debug -type f -name '*.apk' -print -quit)"
+          test -f "$app_apk" && test -f "$test_apk"
+          ! "$AAPT" dump permissions "$app_apk" | grep -q 'android.permission.INTERNET'
+          echo 'packaged_internet_permission=ABSENT' | tee -a "$REPORT"
+          sha256sum "$app_apk" | tee -a "$REPORT"
+
+          "$ADB" install -r "$app_apk" | tee "$RUNNER_TEMP/install-app.txt"
+          "$ADB" install -r "$test_apk" | tee "$RUNNER_TEMP/install-test.txt"
+          grep -Fq Success "$RUNNER_TEMP/install-app.txt"
+          grep -Fq Success "$RUNNER_TEMP/install-test.txt"
+          installed_abi="$("$ADB" shell dumpsys package com.photobook.app | sed -n 's/.*primaryCpuAbi=//p' | head -n1 | tr -d '\r' | xargs)"
+          [[ "$installed_abi" == arm64-v8a ]]
+          ! "$ADB" shell dumpsys package com.photobook.app | grep -q 'android.permission.INTERNET'
+          printf 'installed_primary_cpu_abi=%s\ninstalled_internet_permission=ABSENT\n' "$installed_abi" | tee -a "$REPORT"
+
+          "$ADB" shell cmd connectivity airplane-mode enable || true
+          "$ADB" shell svc wifi disable || true
+          "$ADB" shell svc data disable || true
+          sudo iptables -I OUTPUT 1 -o lo -j ACCEPT
+          sudo iptables -I OUTPUT 2 -m owner --uid-owner "$uid" -j REJECT
+          cleanup() {
+            sudo iptables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null || true
+            sudo iptables -D OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          [[ "$("$ADB" shell settings get global airplane_mode_on | tr -d '\r')" == 1 ]]
+          if curl -fsS --connect-timeout 2 --max-time 3 https://www.google.com >/dev/null 2>&1; then exit 1; fi
+          echo 'offline_network_gate=PASS' | tee -a "$REPORT"
+
+          instrumentation="$("$ADB" shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
+          test -n "$instrumentation"
+          "$ADB" logcat -c
+          "$ADB" shell am instrument -w -r \
+            -e class com.photobook.app.feature.vault.VaultAuthKeyEnvelopeInstrumentedTest \
+            "$instrumentation" | tee "$RUNNER_TEMP/instrumentation.txt"
+          grep -Eq 'OK \(4 tests\)|OK \(4 test\)' "$RUNNER_TEMP/instrumentation.txt"
+          "$ADB" logcat -d -b crash > "$RUNNER_TEMP/crash-buffer.txt" || true
+          ! grep -Eqi 'FATAL EXCEPTION|Fatal signal|OutOfMemoryError|UnsatisfiedLinkError|dlopen failed|cannot locate symbol' "$RUNNER_TEMP/crash-buffer.txt"
+          echo 'vault_auth_envelope_component=PASS' | tee -a "$REPORT"
+
+      - name: Upload component evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vault-auth-envelope-component-${{ github.run_id }}
+          path: |
+            vault-auth-envelope-report.txt
+            ${{ runner.temp }}/instrumentation.txt
+            ${{ runner.temp }}/crash-buffer.txt
+            ${{ runner.temp }}/emulator.log
+          retention-days: 14
+          if-no-files-found: warn
