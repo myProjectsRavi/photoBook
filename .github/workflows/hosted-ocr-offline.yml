@@ -1,0 +1,133 @@
+name: Hosted Offline OCR Proof (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-hosted-max-acceptance
+    paths:
+      - .github/workflows/hosted-ocr-offline.yml
+
+permissions:
+  contents: read
+
+jobs:
+  api35-offline-ocr:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      CANDIDATE_SHA: 9fd29f9987f6879f330b5b9cb4f33cde3c9b6d23
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Prove production tree unchanged and checkout exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --name-only "$CANDIDATE_SHA"...HEAD | grep -E '^app/src/main/|^app/build.gradle.kts$|^app/proguard-rules.pro$|^gradle/|^build.gradle.kts$|^settings.gradle.kts$'; then
+            echo 'Production/build source changed on hosted-proof branch' >&2
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/candidate"
+          git worktree add --detach "$RUNNER_TEMP/candidate" "$CANDIDATE_SHA"
+          test "$(git -C "$RUNNER_TEMP/candidate" rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git -C "$RUNNER_TEMP/candidate" status --porcelain)"
+          test -f "$RUNNER_TEMP/candidate/app/src/androidTest/java/com/photobook/app/ml/LocalOcrEngineInstrumentedTest.kt"
+      - name: Install emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+      - name: Prebuild exact app and OCR instrumentation
+        working-directory: ${{ runner.temp }}/candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:processReleaseMainManifest :app:assembleDebug :app:assembleDebugAndroidTest
+          manifest="$(find app/build/intermediates/merged_manifest/release -type f -name AndroidManifest.xml -print -quit)"
+          test -f "$manifest"
+          ! grep -q 'android.permission.INTERNET' "$manifest"
+      - name: Provision API35 emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort | tail -n1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager | sort | tail -n1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          IMAGE='system-images;android-35;google_apis;x86_64'
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME" "$GITHUB_WORKSPACE/build/reports/hosted-ocr"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 emulator "$IMAGE"
+          echo no | "$AVDMANAGER" create avd --force --name pb-ocr --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/pb-ocr.avd"
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+          nohup "$EMULATOR" -avd pb-ocr -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 2048 -cores 2 > "$RUNNER_TEMP/ocr-emulator.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 150); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then break; fi
+            kill -0 "$pid" 2>/dev/null || { cat "$RUNNER_TEMP/ocr-emulator.log"; exit 1; }
+            sleep 2
+          done
+          "$ADB" wait-for-device
+          for _ in $(seq 1 150); do
+            [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break
+            sleep 2
+          done
+          [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
+          [[ "$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')" == 35 ]]
+      - name: Run bundled OCR with host and emulator network blocked
+        working-directory: ${{ runner.temp }}/candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          uid="$(id -u)"
+          REPORT="$GITHUB_WORKSPACE/build/reports/hosted-ocr/summary.txt"
+          "$ADB" shell cmd connectivity airplane-mode enable || true
+          "$ADB" shell svc wifi disable || true
+          "$ADB" shell svc data disable || true
+          sudo iptables -I OUTPUT 1 -o lo -j ACCEPT
+          sudo iptables -I OUTPUT 2 -m owner --uid-owner "$uid" -j REJECT
+          cleanup() {
+            sudo iptables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null || true
+            sudo iptables -D OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          [[ "$("$ADB" shell settings get global airplane_mode_on | tr -d '\r')" == 1 ]]
+          if curl -fsS --connect-timeout 2 --max-time 3 https://www.google.com >/dev/null 2>&1; then exit 1; fi
+          if "$ADB" shell 'command -v ping >/dev/null 2>&1'; then ! "$ADB" shell ping -c 1 -W 1 8.8.8.8 >/dev/null 2>&1; fi
+          ./gradlew --offline :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.photobook.app.ml.LocalOcrEngineInstrumentedTest --stacktrace | tee "$RUNNER_TEMP/ocr-test.txt"
+          {
+            echo "candidate_sha=$CANDIDATE_SHA"
+            echo 'offline_network_gate=PASS'
+            echo 'release_internet_permission=ABSENT'
+            echo 'bundled_ocr_instrumentation=PASS'
+            echo 'hosted_offline_ocr=PASS'
+            echo 'NOTE=synthetic text bitmap on emulator; representative private real-photo corpus still unavailable'
+          } | tee "$REPORT"
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hosted-offline-ocr-${{ github.run_id }}
+          path: |
+            build/reports/hosted-ocr/
+            ${{ runner.temp }}/ocr-emulator.log
+            ${{ runner.temp }}/ocr-test.txt
+            ${{ runner.temp }}/candidate/app/build/reports/androidTests/
+            ${{ runner.temp }}/candidate/app/build/outputs/androidTest-results/
+          retention-days: 14
+          if-no-files-found: warn
