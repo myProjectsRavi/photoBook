@@ -28,6 +28,7 @@ import java.util.UUID
 import javax.crypto.Cipher
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 
@@ -97,6 +98,21 @@ class VaultService @Inject constructor(
         VaultAuthCrypto(context)
     }
 
+    private val previewCacheGeneration = java.util.concurrent.atomic.AtomicLong(0L)
+    private val previewCacheNeedsCleanup = java.util.concurrent.atomic.AtomicBoolean(true)
+    private val previewCacheMutex = Mutex()
+
+    internal fun beginPreviewLoad(): Long = previewCacheGeneration.incrementAndGet()
+
+    internal fun isPreviewLoadCurrent(generation: Long): Boolean =
+        previewCacheGeneration.get() == generation
+
+    internal fun invalidatePreviewCache(): Long {
+        val generation = previewCacheGeneration.incrementAndGet()
+        previewCacheNeedsCleanup.set(true)
+        return generation
+    }
+
     internal fun prepareAuthentication(): VaultAuthPreparation = authCrypto.prepareAuthentication()
 
     internal fun completeAuthentication(
@@ -117,15 +133,57 @@ class VaultService @Inject constructor(
     suspend fun listItems(
         session: VaultCryptoSession,
         includePreviews: Boolean = false,
+        previewGeneration: Long? = null,
     ): List<VaultItem> = withContext(Dispatchers.IO) {
-        migrateLegacyItemsIfNeeded()
-        migrateLegacyCiphertextIfNeeded(session)
-        vaultDao.getAllVaultItems().map { entity ->
-            val item = entity.toVaultItem()
-            if (includePreviews) {
-                item.copy(previewUri = createPreviewUri(entity, session))
-            } else {
-                item
+        val expectedPreviewGeneration = if (includePreviews) {
+            requireNotNull(previewGeneration) { "Preview generation is required for Vault previews" }
+        } else {
+            null
+        }
+        if (expectedPreviewGeneration != null) {
+            previewCacheMutex.lock()
+        }
+        try {
+            if (expectedPreviewGeneration != null) {
+                if (previewCacheGeneration.get() != expectedPreviewGeneration) {
+                    return@withContext emptyList()
+                }
+                if (previewCacheNeedsCleanup.compareAndSet(true, false)) {
+                    val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)
+                    if (previewRoot.exists() && !previewRoot.deleteRecursively()) {
+                        previewCacheNeedsCleanup.set(true)
+                        throw IOException("Unable to clear stale Vault preview cache")
+                    }
+                }
+                if (previewCacheGeneration.get() != expectedPreviewGeneration) {
+                    return@withContext emptyList()
+                }
+            }
+            migrateLegacyItemsIfNeeded()
+            migrateLegacyCiphertextIfNeeded(session)
+            if (
+                expectedPreviewGeneration != null &&
+                previewCacheGeneration.get() != expectedPreviewGeneration
+            ) {
+                return@withContext emptyList()
+            }
+            vaultDao.getAllVaultItems().map { entity ->
+                val item = entity.toVaultItem()
+                if (expectedPreviewGeneration != null) {
+                    item.copy(
+                        previewUri = createPreviewUri(
+                            entity = entity,
+                            session = session,
+                            expectedPreviewGeneration = expectedPreviewGeneration,
+                        ),
+                    )
+                } else {
+                    item
+                }
+            }
+        } finally {
+            if (expectedPreviewGeneration != null) {
+                previewCacheMutex.unlock()
             }
         }
     }
@@ -305,9 +363,22 @@ class VaultService @Inject constructor(
         }.getOrDefault(false)
     }
 
-    fun clearPreviewCache() {
-        runCatching {
-            File(context.cacheDir, VAULT_PREVIEW_DIR).deleteRecursively()
+    suspend fun clearPreviewCache(expectedGeneration: Long): Boolean = withContext(Dispatchers.IO) {
+        previewCacheMutex.lock()
+        try {
+            if (previewCacheGeneration.get() != expectedGeneration) {
+                return@withContext false
+            }
+            val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)
+            val cleared = try {
+                !previewRoot.exists() || previewRoot.deleteRecursively()
+            } catch (_: SecurityException) {
+                false
+            }
+            previewCacheNeedsCleanup.set(!cleared)
+            cleared
+        } finally {
+            previewCacheMutex.unlock()
         }
     }
 
@@ -323,13 +394,19 @@ class VaultService @Inject constructor(
     private fun createPreviewUri(
         entity: VaultEntity,
         session: VaultCryptoSession,
+        expectedPreviewGeneration: Long,
     ): Uri? {
+        if (previewCacheGeneration.get() != expectedPreviewGeneration) return null
         val encryptedSource = File(vaultDir, entity.encryptedFileName)
         if (!encryptedSource.exists()) return null
 
         val previewFile = previewFile(entity.id)
         if (previewFile.exists() && previewFile.length() > 0L) {
-            return Uri.fromFile(previewFile)
+            return if (previewCacheGeneration.get() == expectedPreviewGeneration) {
+                Uri.fromFile(previewFile)
+            } else {
+                null
+            }
         }
 
         return runCatching {
@@ -340,6 +417,9 @@ class VaultService @Inject constructor(
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
                 return@runCatching null
             }
+            if (previewCacheGeneration.get() != expectedPreviewGeneration) {
+                return@runCatching null
+            }
 
             val options = BitmapFactory.Options().apply {
                 inPreferredConfig = Bitmap.Config.RGB_565
@@ -348,13 +428,35 @@ class VaultService @Inject constructor(
             val bitmap = openVaultInput(entity, session).use { input ->
                 BitmapFactory.decodeStream(input, null, options)
             } ?: return@runCatching null
+            if (previewCacheGeneration.get() != expectedPreviewGeneration) {
+                bitmap.recycle()
+                return@runCatching null
+            }
 
             previewFile.parentFile?.mkdirs()
-            previewFile.outputStream().use { output ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, PREVIEW_JPEG_QUALITY, output)
+            val tempPreview = File(
+                previewFile.parentFile,
+                ".${previewFile.name}.${UUID.randomUUID().toString().take(8)}.tmp",
+            )
+            try {
+                tempPreview.outputStream().use { output ->
+                    if (!bitmap.compress(Bitmap.CompressFormat.JPEG, PREVIEW_JPEG_QUALITY, output)) {
+                        throw IOException("Unable to encode Vault preview")
+                    }
+                }
+                if (previewCacheGeneration.get() != expectedPreviewGeneration) {
+                    return@runCatching null
+                }
+                authCrypto.renameAtomically(tempPreview, previewFile)
+                if (previewCacheGeneration.get() != expectedPreviewGeneration) {
+                    runCatching { previewFile.delete() }
+                    return@runCatching null
+                }
+                Uri.fromFile(previewFile)
+            } finally {
+                bitmap.recycle()
+                runCatching { tempPreview.delete() }
             }
-            bitmap.recycle()
-            Uri.fromFile(previewFile)
         }.getOrNull()
     }
 
