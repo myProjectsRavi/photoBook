@@ -1,0 +1,132 @@
+name: Vault v3 API30 Boundary Format
+
+on:
+  push:
+    branches:
+      - feature/2.0.15-vault-prer-recovery-v3
+    paths:
+      - .github/workflows/vault-v3-format-api-boundary.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Normalize exact Kotlin block
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/com/photobook/app/feature/vault/VaultAuthCrypto.kt')
+          s = p.read_text()
+          old = '''    when (policy) {
+          KeyPolicy.R_PLUS_COMBINED -> {
+              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                  configureRPlusPrimaryKey(builder)
+              } else {
+                  throw IllegalStateException(
+                      "Android 11+ Vault key policy requested below API 30",
+                  )
+              }
+          }
+          KeyPolicy.PRE_R_BIOMETRIC -> {
+              check(Build.VERSION.SDK_INT < Build.VERSION_CODES.R)
+              @Suppress("DEPRECATION")
+              builder.setUserAuthenticationValidityDurationSeconds(-1)
+              builder.setInvalidatedByBiometricEnrollment(true)
+          }
+          }
+
+          '''
+          old = '\n'.join(line[4:] if line.startswith('    ') else line for line in old.splitlines()) + '\n'
+          # The previous guarded patch intentionally changed only this block but flattened its indentation.
+          flat = '''    when (policy) {
+          KeyPolicy.R_PLUS_COMBINED -> {
+              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                  configureRPlusPrimaryKey(builder)
+              } else {
+                  throw IllegalStateException(
+                      "Android 11+ Vault key policy requested below API 30",
+                  )
+              }
+          }
+          KeyPolicy.PRE_R_BIOMETRIC -> {
+              check(Build.VERSION.SDK_INT < Build.VERSION_CODES.R)
+              @Suppress("DEPRECATION")
+              builder.setUserAuthenticationValidityDurationSeconds(-1)
+              builder.setInvalidatedByBiometricEnrollment(true)
+          }
+          }
+          '''
+          flat = '\n'.join(line[4:] if line.startswith('    ') else line for line in flat.splitlines()) + '\n'
+          # Build the actual flattened text explicitly to avoid another indentation transform.
+          flat = '''    when (policy) {
+KeyPolicy.R_PLUS_COMBINED -> {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        configureRPlusPrimaryKey(builder)
+    } else {
+        throw IllegalStateException(
+            "Android 11+ Vault key policy requested below API 30",
+        )
+    }
+}
+KeyPolicy.PRE_R_BIOMETRIC -> {
+    check(Build.VERSION.SDK_INT < Build.VERSION_CODES.R)
+    @Suppress("DEPRECATION")
+    builder.setUserAuthenticationValidityDurationSeconds(-1)
+    builder.setInvalidatedByBiometricEnrollment(true)
+}
+}
+'''
+          proper = '''        when (policy) {
+            KeyPolicy.R_PLUS_COMBINED -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    configureRPlusPrimaryKey(builder)
+                } else {
+                    throw IllegalStateException(
+                        "Android 11+ Vault key policy requested below API 30",
+                    )
+                }
+            }
+            KeyPolicy.PRE_R_BIOMETRIC -> {
+                check(Build.VERSION.SDK_INT < Build.VERSION_CODES.R)
+                @Suppress("DEPRECATION")
+                builder.setUserAuthenticationValidityDurationSeconds(-1)
+                builder.setInvalidatedByBiometricEnrollment(true)
+            }
+        }
+'''
+          flat_helper = '''@androidx.annotation.RequiresApi(Build.VERSION_CODES.R)
+private fun configureRPlusPrimaryKey(builder: KeyGenParameterSpec.Builder) {
+    builder.setUserAuthenticationParameters(
+        0,
+        KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL,
+    )
+}
+'''
+          proper_helper = '''    @androidx.annotation.RequiresApi(Build.VERSION_CODES.R)
+    private fun configureRPlusPrimaryKey(builder: KeyGenParameterSpec.Builder) {
+        builder.setUserAuthenticationParameters(
+            0,
+            KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL,
+        )
+    }
+'''
+          if s.count(flat) != 1 or s.count(flat_helper) != 1:
+              raise SystemExit('Flattened Vault API boundary block not found exactly once')
+          s = s.replace(flat, proper, 1).replace(flat_helper, proper_helper, 1)
+          p.write_text(s)
+          PY
+          rm .github/workflows/vault-v3-format-api-boundary.yml
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A .github/workflows/vault-v3-format-api-boundary.yml app/src/main/java/com/photobook/app/feature/vault/VaultAuthCrypto.kt
+          git commit -m "Normalize Vault API30 boundary formatting"
+          git push origin HEAD:feature/2.0.15-vault-prer-recovery-v3
