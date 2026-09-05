@@ -1,0 +1,112 @@
+name: Final Play Delivery Measurement (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-final-play-delivery
+
+permissions:
+  contents: read
+
+concurrency:
+  group: final-play-delivery-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CANDIDATE_SHA: 4d461f79032c5529b0ab1d28cfa1ff1de07d3180
+
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout exact final candidate
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 1
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Build exact release bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+          chmod +x ./gradlew
+          ./gradlew :app:bundleRelease :app:verifyReleaseBundleSize
+          test -f app/build/outputs/bundle/release/app-release.aab
+      - name: Download and verify official bundletool
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --retry-delay 2 \
+            -o bundletool.jar \
+            https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar
+          echo 'a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29  bundletool.jar' | sha256sum -c -
+          test "$(java -jar bundletool.jar version)" = '1.18.3'
+      - name: Measure exact one-device Play delivery
+        shell: bash
+        run: |
+          set -euo pipefail
+          report=build/reports/final-play-delivery
+          mkdir -p "$report"
+          cat > "$report/arm64-api36.json" <<'JSON'
+          {"supportedAbis":["arm64-v8a"],"supportedLocales":["en"],"screenDensity":420,"sdkVersion":36}
+          JSON
+          cat > "$report/armeabi-api26.json" <<'JSON'
+          {"supportedAbis":["armeabi-v7a"],"supportedLocales":["en"],"screenDensity":320,"sdkVersion":26}
+          JSON
+
+          result="$report/result.txt"
+          : > "$result"
+          echo "candidate_sha=$CANDIDATE_SHA" | tee -a "$result"
+          echo "bundletool_version=$(java -jar bundletool.jar version)" | tee -a "$result"
+          echo "aab_bytes=$(stat -c %s app/build/outputs/bundle/release/app-release.aab)" | tee -a "$result"
+
+          for spec in arm64-api36 armeabi-api26; do
+            java -jar bundletool.jar build-apks \
+              --bundle=app/build/outputs/bundle/release/app-release.aab \
+              --output="$report/$spec.apks" \
+              --device-spec="$report/$spec.json" \
+              --overwrite
+
+            raw="$report/$spec-size.csv"
+            java -jar bundletool.jar get-size total \
+              --apks="$report/$spec.apks" \
+              --device-spec="$report/$spec.json" | tee "$raw"
+
+            python3 - "$spec" "$raw" "$result" <<'PY'
+          import csv, pathlib, sys
+          spec = sys.argv[1]
+          raw = pathlib.Path(sys.argv[2])
+          result = pathlib.Path(sys.argv[3])
+          rows = list(csv.reader(raw.read_text().splitlines()))
+          if len(rows) != 2 or rows[0] != ['MIN', 'MAX']:
+              raise SystemExit(f'unexpected bundletool get-size output for {spec}: {rows!r}')
+          minimum, maximum = map(int, rows[1])
+          limit = 15 * 1024 * 1024
+          with result.open('a') as f:
+              f.write(f'device={spec}\n')
+              f.write(f'bundletool_min_bytes={minimum}\n')
+              f.write(f'bundletool_max_bytes={maximum}\n')
+              f.write(f'bundletool_max_mib={maximum/1024/1024:.3f}\n')
+              f.write(f'margin_to_15mib={limit-maximum}\n')
+          if maximum >= limit:
+              raise SystemExit(f'{spec} bundletool MAX is not under 15 MiB: {maximum}')
+          PY
+          done
+
+          cat "$result"
+          echo 'final_play_delivery=PASS' | tee -a "$result"
+      - name: Upload final delivery evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: final-play-delivery-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: build/reports/final-play-delivery/
