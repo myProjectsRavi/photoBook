@@ -1,0 +1,43 @@
+name: Probe 16K Emulator Image (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-16k-emulator-image-probe
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+      - name: Probe Android SDK catalog for 16K system images
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$(find "${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}" -type f -path '*/cmdline-tools/*/bin/sdkmanager' -print | sort -V | tail -n1)"
+          test -x "$SDKMANAGER"
+          "$SDKMANAGER" --list > sdkmanager-list.txt
+          {
+            echo "sdkmanager=$SDKMANAGER"
+            echo "--- 16K/page-size matches ---"
+            grep -Ei '16.?k|page.?size|ps16k' sdkmanager-list.txt || true
+          } | tee 16k-image-probe.txt
+          if grep -Eqi 'system-images;android-(35|36);[^;]*(16.?k|ps16k)[^;]*;x86_64|system-images;android-(35|36);[^;]*;x86_64.*(16.?k|ps16k)' sdkmanager-list.txt; then
+            echo 'x86_64_16k_image=AVAILABLE' | tee -a 16k-image-probe.txt
+          else
+            echo 'x86_64_16k_image=NOT_MATCHED_AUTOMATICALLY' | tee -a 16k-image-probe.txt
+          fi
+      - name: Upload probe evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: 16k-emulator-image-probe-${{ github.run_id }}
+          path: |
+            16k-image-probe.txt
+            sdkmanager-list.txt
+          retention-days: 7
+          if-no-files-found: error
