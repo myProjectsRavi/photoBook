@@ -90,27 +90,24 @@ jobs:
               --apks="$report/$spec.apks" \
               --device-spec="$report/$spec.json" > "$size_csv"
             cat "$size_csv" | tee -a "$report/play-delivery.txt"
-            python3 - "$spec" "$size_csv" "$report/play-delivery.txt" <<'PY'
-import csv, pathlib, sys
-spec = sys.argv[1]
-size_csv = pathlib.Path(sys.argv[2])
-result = pathlib.Path(sys.argv[3])
-rows = list(csv.reader(size_csv.read_text().splitlines()))
-if rows != [['MIN', 'MAX']] and len(rows) < 2:
-    raise SystemExit(f'unexpected bundletool size output for {spec}: {rows}')
-if len(rows) != 2 or rows[0] != ['MIN', 'MAX']:
-    raise SystemExit(f'unexpected bundletool size output for {spec}: {rows}')
-minimum, maximum = map(int, rows[1])
-limit = 15 * 1024 * 1024
-with result.open('a') as f:
-    f.write(f'device={spec}\n')
-    f.write(f'delivered_min_bytes={minimum}\n')
-    f.write(f'delivered_max_bytes={maximum}\n')
-    f.write(f'delivered_max_mib={maximum/1024/1024:.3f}\n')
-    f.write(f'delivered_margin_to_15mib={limit-maximum}\n')
-if maximum >= limit:
-    raise SystemExit(f'{spec} Play delivery is not under 15 MiB: {maximum}')
-PY
+            header="$(head -n 1 "$size_csv" | tr -d '\r')"
+            values="$(tail -n 1 "$size_csv" | tr -d '\r')"
+            test "$header" = 'MIN,MAX'
+            minimum="${values%%,*}"
+            maximum="${values##*,}"
+            [[ "$minimum" =~ ^[0-9]+$ ]]
+            [[ "$maximum" =~ ^[0-9]+$ ]]
+            limit=$((15 * 1024 * 1024))
+            mib="$(awk -v b="$maximum" 'BEGIN { printf "%.3f", b/1024/1024 }')"
+            margin=$((limit - maximum))
+            {
+              echo "device=$spec"
+              echo "delivered_min_bytes=$minimum"
+              echo "delivered_max_bytes=$maximum"
+              echo "delivered_max_mib=$mib"
+              echo "delivered_margin_to_15mib=$margin"
+            } | tee -a "$report/play-delivery.txt"
+            test "$maximum" -lt "$limit"
           done
       - uses: actions/upload-artifact@v7
         if: always()
