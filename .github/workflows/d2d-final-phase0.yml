@@ -1,0 +1,51 @@
+name: PhotoBook 2.0.15 D2D Final Exact Phase-0
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-d2d-final-phase0
+
+permissions:
+  contents: read
+
+env:
+  CANDIDATE_SHA: 52b118732adb6fd6fc62d730245472b34272e90e
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact hardened candidate
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 1
+      - name: Verify exact clean source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain)"
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Run full Phase-0 verification
+        shell: bash
+        run: bash tools/benchmark/run_phase0_local.sh
+      - name: Upload exact Phase-0 evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: d2d-final-phase0-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            app/schemas/
+            app/build/reports/tests/
+            app/build/reports/lint-results-debug.html
+            build/reports/phase0/
+            build/phase0-fixtures/*.json
+            build/phase0-fixtures/*.jsonl
