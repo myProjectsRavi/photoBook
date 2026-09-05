@@ -1,0 +1,137 @@
+name: Final AAB Signing Verifier Proof (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-final-signing-verifier
+    paths:
+      - tools/release/verify_signed_aab.sh
+      - .github/workflows/final-signing-verifier-proof.yml
+
+permissions:
+  contents: read
+
+jobs:
+  prove-signer-verifier:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      METADATA_HEAD_SHA: eed395ff7f4428b283287aba5c8709b6a84ec31a
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Prove tooling-only delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "$METADATA_HEAD_SHA"...HEAD)"
+          printf '%s\n' "$changed"
+          expected=$'.github/workflows/final-signing-verifier-proof.yml\ntools/release/verify_signed_aab.sh'
+          test "$changed" = "$expected"
+          bash -n tools/release/verify_signed_aab.sh
+
+      - name: Generate throwaway CI signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          ks="$RUNNER_TEMP/photobook-disposable-upload-test.jks"
+          keytool -genkeypair \
+            -keystore "$ks" \
+            -storepass throwaway123 \
+            -keypass throwaway123 \
+            -alias photobook-disposable \
+            -keyalg RSA \
+            -keysize 3072 \
+            -validity 2 \
+            -dname 'CN=PhotoBook Disposable CI Signing Proof, OU=CI, O=PhotoBook, L=Test, ST=Test, C=IN'
+          fingerprint="$(keytool -list -v -keystore "$ks" -storepass throwaway123 -alias photobook-disposable | sed -n 's/^[[:space:]]*SHA256:[[:space:]]*//p' | head -n 1)"
+          test -n "$fingerprint"
+          echo "DISPOSABLE_KEYSTORE=$ks" >> "$GITHUB_ENV"
+          echo "EXPECTED_FINGERPRINT=$fingerprint" >> "$GITHUB_ENV"
+
+      - name: Build signed 2.0.15 dry-run AAB
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > keystore.properties <<EOF
+          storeFile=$DISPOSABLE_KEYSTORE
+          storePassword=throwaway123
+          keyAlias=photobook-disposable
+          keyPassword=throwaway123
+          EOF
+          chmod +x ./gradlew tools/release/verify_signed_aab.sh
+          ./gradlew :app:bundleRelease :app:verifyReleaseBundleSize :app:printReleaseMetadata | tee "$RUNNER_TEMP/build.txt"
+          grep -Fxq 'versionCode=22' "$RUNNER_TEMP/build.txt"
+          grep -Fxq 'versionName=2.0.15' "$RUNNER_TEMP/build.txt"
+          grep -Fxq 'targetSdk=36' "$RUNNER_TEMP/build.txt"
+
+      - name: Prove expected signer passes
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_UPLOAD_CERT_SHA256="$EXPECTED_FINGERPRINT" \
+          REPORT_DIR=build/reports/release-signing/correct \
+            bash tools/release/verify_signed_aab.sh
+
+      - name: Prove wrong signer fails closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          EXPECTED_UPLOAD_CERT_SHA256='0000000000000000000000000000000000000000000000000000000000000000' \
+          REPORT_DIR=build/reports/release-signing/wrong \
+            bash tools/release/verify_signed_aab.sh > "$RUNNER_TEMP/wrong.out" 2> "$RUNNER_TEMP/wrong.err"
+          rc=$?
+          set -e
+          cat "$RUNNER_TEMP/wrong.out" || true
+          cat "$RUNNER_TEMP/wrong.err" || true
+          test "$rc" -eq 1
+          grep -Fq 'FAIL: signer fingerprint mismatch' "$RUNNER_TEMP/wrong.err"
+          echo wrong_signer_rejection=PASS
+
+      - name: Prove unsigned candidate fails closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f keystore.properties
+          ./gradlew clean :app:bundleRelease >/dev/null
+          set +e
+          EXPECTED_UPLOAD_CERT_SHA256="$EXPECTED_FINGERPRINT" \
+          REPORT_DIR=build/reports/release-signing/unsigned \
+            bash tools/release/verify_signed_aab.sh > "$RUNNER_TEMP/unsigned.out" 2> "$RUNNER_TEMP/unsigned.err"
+          rc=$?
+          set -e
+          cat "$RUNNER_TEMP/unsigned.out" || true
+          cat "$RUNNER_TEMP/unsigned.err" || true
+          test "$rc" -eq 1
+          grep -Fq 'FAIL: AAB contains no JAR signature block' "$RUNNER_TEMP/unsigned.err"
+          echo unsigned_aab_rejection=PASS
+
+      - name: Cleanup and prove no key material is tracked
+        if: always()
+        shell: bash
+        run: |
+          rm -f keystore.properties "$DISPOSABLE_KEYSTORE"
+          if git ls-files | grep -E '(^|/)(keystore\.properties|.*\.(jks|keystore))$'; then
+            echo 'FAIL: signing key material is tracked' >&2
+            exit 1
+          fi
+          echo tracked_signing_key_material=ABSENT
+
+      - name: Upload verifier evidence only
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: final-signing-verifier-proof-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            build/reports/release-signing/
