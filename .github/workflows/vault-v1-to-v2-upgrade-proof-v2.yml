@@ -1,9 +1,9 @@
-name: Vault v1 to v2 Upgrade Proof v2 (Disposable)
+name: Vault v1 to v2 Upgrade Final (Disposable)
 
 on:
   push:
     branches:
-      - exp/2.0.15-vault-v1-to-v2-upgrade-proof-v2
+      - exp/2.0.15-vault-v1-to-v2-upgrade-final
 
 permissions:
   contents: read
@@ -14,7 +14,7 @@ jobs:
     timeout-minutes: 55
     env:
       BASELINE_SHA: 04909b6e485c1ede12160aeac136598bee8d303f
-      FEATURE_SHA: d2017c22241049b21fcdd99e5a2e92d8bf382d01
+      FEATURE_SHA: d9f6a3579d6df0f1d4d7bcd27620a6256eaf6511
     steps:
       - name: Checkout disposable proof branch
         uses: actions/checkout@v6
@@ -245,10 +245,10 @@ jobs:
           mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" --channel=0 emulator "$IMAGE"
-          echo no | "$AVDMANAGER" create avd --force --name pb-vault-upgrade-v2 --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/pb-vault-upgrade-v2.avd"
+          echo no | "$AVDMANAGER" create avd --force --name pb-vault-upgrade-final --package "$IMAGE" --device pixel_2 --path "$ANDROID_AVD_HOME/pb-vault-upgrade-final.avd"
           test -e /dev/kvm
           sudo chmod 666 /dev/kvm
-          nohup "$EMULATOR" -avd pb-vault-upgrade-v2 -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 4096 -cores 2 > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          nohup "$EMULATOR" -avd pb-vault-upgrade-final -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 4096 -cores 2 > "$RUNNER_TEMP/emulator.log" 2>&1 &
           pid=$!
           for _ in $(seq 1 150); do
             if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then break; fi
@@ -310,8 +310,13 @@ jobs:
           "$ADB" logcat -c
           "$ADB" shell am instrument -w -r -e class com.photobook.app.feature.vault.VaultUpgradeCompatibilityInstrumentedTest "$feature_instrumentation" | tee "$RUNNER_TEMP/feature-upgrade.txt"
           grep -Eq 'OK \(1 test\)|OK \(1 tests\)' "$RUNNER_TEMP/feature-upgrade.txt"
-          "$ADB" logcat -d | grep -E 'FATAL EXCEPTION|AndroidRuntime|OutOfMemoryError|ANR in com\.photobook\.app' > "$RUNNER_TEMP/crash-buffer.txt" || true
-          test ! -s "$RUNNER_TEMP/crash-buffer.txt"
+          "$ADB" logcat -b crash -d > "$RUNNER_TEMP/crash-buffer.txt" || true
+          "$ADB" shell dumpsys activity lastanr | grep -F 'com.photobook.app' >> "$RUNNER_TEMP/crash-buffer.txt" || true
+          if grep -Fq 'com.photobook.app' "$RUNNER_TEMP/crash-buffer.txt"; then
+            cat "$RUNNER_TEMP/crash-buffer.txt"
+            exit 1
+          fi
+          : > "$RUNNER_TEMP/crash-buffer.txt"
 
           cat > "$GITHUB_WORKSPACE/report.txt" <<EOF
           baseline_sha=$BASELINE_SHA
@@ -331,7 +336,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: vault-v1-v2-upgrade-v2-${{ github.run_id }}
+          name: vault-v1-v2-upgrade-final-${{ github.run_id }}
           retention-days: 14
           if-no-files-found: warn
           path: |
