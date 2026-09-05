@@ -1,0 +1,34 @@
+name: Vault v2 Fast Compile (Disposable)
+
+on:
+  push:
+    branches:
+      - exp/2.0.15-vault-v2-fast-compile
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout disposable proof branch
+        uses: actions/checkout@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Compile coherent Vault v2 head
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew \
+            :app:compileDebugKotlin \
+            :app:compileDebugAndroidTestKotlin \
+            :app:testDebugUnitTest
