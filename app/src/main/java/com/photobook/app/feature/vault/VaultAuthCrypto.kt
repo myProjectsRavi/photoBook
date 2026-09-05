@@ -51,8 +51,12 @@ internal class VaultAuthCrypto(
     }
 
     fun prepareAuthentication(): VaultAuthPreparation {
-        val wrappingKey = getOrCreateWrappingKey()
         return if (envelopeFile.exists()) {
+            // Never synthesize a replacement key for an existing envelope. If Android Keystore
+            // lost or invalidated the device-bound key, replacing it would make the persisted
+            // keyset look merely corrupt and could hide a genuine recovery boundary.
+            val wrappingKey = getExistingWrappingKey()
+                ?: throw VaultKeyUnavailableException("Vault v2 device key is unavailable")
             val envelope = readEnvelope()
             val cipher = Cipher.getInstance(WRAP_TRANSFORMATION).apply {
                 init(
@@ -63,6 +67,7 @@ internal class VaultAuthCrypto(
             }
             VaultAuthPreparation.Unlock(cipher, envelope)
         } else {
+            val wrappingKey = getOrCreateWrappingKey()
             val cipher = Cipher.getInstance(WRAP_TRANSFORMATION).apply {
                 init(Cipher.ENCRYPT_MODE, wrappingKey)
             }
@@ -179,10 +184,13 @@ internal class VaultAuthCrypto(
         return VaultCryptoSession(primitive)
     }
 
-    private fun getOrCreateWrappingKey(): SecretKey {
+    private fun getExistingWrappingKey(): SecretKey? {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        val existing = keyStore.getKey(KEY_ALIAS, null) as? SecretKey
-        if (existing != null) return existing
+        return keyStore.getKey(KEY_ALIAS, null) as? SecretKey
+    }
+
+    private fun getOrCreateWrappingKey(): SecretKey {
+        getExistingWrappingKey()?.let { return it }
 
         val builder = KeyGenParameterSpec.Builder(
             KEY_ALIAS,
@@ -300,3 +308,7 @@ internal data class WrappedKeysetEnvelope(
     val iv: ByteArray,
     val ciphertext: ByteArray,
 )
+
+internal class VaultKeyUnavailableException(
+    message: String,
+) : IllegalStateException(message)
