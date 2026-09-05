@@ -19,6 +19,9 @@ interface VaultDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertVaultItem(item: VaultEntity): Long
 
+    @Query("UPDATE vault_items SET encryptedFileName = :encryptedFileName WHERE id = :id")
+    suspend fun updateEncryptedFileName(id: String, encryptedFileName: String): Int
+
     @Query("DELETE FROM vault_items WHERE id = :id")
     suspend fun deleteVaultItemById(id: String): Int
 }
