@@ -1,0 +1,143 @@
+name: Vault Preview Cleanup Fail-Closed Review (Disposable)
+
+on:
+  push:
+    branches:
+      - fix/2.0.15-vault-preview-cleanup-failclosed
+    paths:
+      - .github/workflows/vault-preview-cleanup-failclosed.yml
+
+permissions:
+  contents: write
+
+env:
+  BASE_SHA: 8f3f0c1466684a3144fe7acb0cd5131bc133702f
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Verify isolated starting scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "$BASE_SHA"...HEAD)"
+          printf '%s\n' "$changed"
+          test "$changed" = ".github/workflows/vault-preview-cleanup-failclosed.yml"
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Apply fail-closed cleanup delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('app/src/main/java/com/photobook/app/feature/vault/VaultService.kt')
+          text = path.read_text()
+
+          old = '''                if (previewCacheNeedsCleanup.compareAndSet(true, false)) {
+                    val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)
+                    if (previewRoot.exists() && !previewRoot.deleteRecursively()) {
+                        previewCacheNeedsCleanup.set(true)
+                        throw IOException("Unable to clear stale Vault preview cache")
+                    }
+                }
+'''
+          new = '''                if (previewCacheNeedsCleanup.compareAndSet(true, false)) {
+                    if (!deletePreviewCacheFiles()) {
+                        previewCacheNeedsCleanup.set(true)
+                        throw IOException("Unable to clear stale Vault preview cache")
+                    }
+                }
+'''
+          if text.count(old) != 1:
+              raise SystemExit(f'list cleanup anchor count={text.count(old)}')
+          text = text.replace(old, new)
+
+          old2 = '''            val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)
+            val cleared = try {
+                !previewRoot.exists() || previewRoot.deleteRecursively()
+            } catch (_: SecurityException) {
+                false
+            }
+            previewCacheNeedsCleanup.set(!cleared)
+            cleared
+'''
+          new2 = '''            val cleared = deletePreviewCacheFiles()
+            previewCacheNeedsCleanup.set(!cleared)
+            cleared
+'''
+          if text.count(old2) != 1:
+              raise SystemExit(f'close cleanup anchor count={text.count(old2)}')
+          text = text.replace(old2, new2)
+
+          marker = '''    private fun buildLegacyEncryptedFile(file: File): EncryptedFile {
+'''
+          helper = '''    private fun deletePreviewCacheFiles(): Boolean {
+        val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)
+        return try {
+            !previewRoot.exists() || previewRoot.deleteRecursively()
+        } catch (_: SecurityException) {
+            false
+        }
+    }
+
+'''
+          if text.count(marker) != 1:
+              raise SystemExit(f'helper marker count={text.count(marker)}')
+          text = text.replace(marker, helper + marker)
+          path.write_text(text)
+          PY
+          git diff --check
+      - name: Prove fail-closed semantics and focused scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t changed < <(git diff --name-only | sort)
+          printf '%s\n' "${changed[@]}"
+          test "${#changed[@]}" -eq 1
+          test "${changed[0]}" = "app/src/main/java/com/photobook/app/feature/vault/VaultService.kt"
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path('app/src/main/java/com/photobook/app/feature/vault/VaultService.kt').read_text()
+          required = [
+              'if (!deletePreviewCacheFiles()) {',
+              'previewCacheNeedsCleanup.set(true)',
+              'val cleared = deletePreviewCacheFiles()',
+              'private fun deletePreviewCacheFiles(): Boolean',
+              'catch (_: SecurityException)',
+          ]
+          for token in required:
+              if token not in text:
+                  raise SystemExit(f'missing invariant: {token}')
+          if 'previewRoot.exists() && !previewRoot.deleteRecursively()' in text:
+              raise SystemExit('unguarded stale cleanup remains')
+          print('fail_closed_cleanup_semantics=PASS')
+          PY
+      - name: Compile production and test source
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew \
+            :app:compileDebugKotlin \
+            :app:compileDebugAndroidTestKotlin \
+            :app:testDebugUnitTest \
+            :app:lintDebug
+      - name: Commit only reviewed production delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git diff --check)"
+          git config user.name 'PhotoBook verification'
+          git config user.email '95069115+myProjectsRavi@users.noreply.github.com'
+          git add app/src/main/java/com/photobook/app/feature/vault/VaultService.kt
+          git commit -m 'Keep Vault preview cleanup fail-closed'
+          git push origin HEAD:fix/2.0.15-vault-preview-cleanup-failclosed
