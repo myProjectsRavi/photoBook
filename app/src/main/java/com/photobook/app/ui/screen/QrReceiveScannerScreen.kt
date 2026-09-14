@@ -1,6 +1,6 @@
 package com.photobook.app.ui.screen
 
-import android.graphics.BitmapFactory
+import android.graphics.Bitmap
 import android.widget.Toast
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ExperimentalGetImage
@@ -32,6 +32,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,18 +50,21 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
-import com.photobook.app.R
-import com.photobook.app.feature.qrshare.QrAssemblyResult
-import com.photobook.app.feature.qrshare.QrReceivedImageStore
-import com.photobook.app.feature.qrshare.QrTransferAssembler
-import java.util.concurrent.Executors
+import com.google.zxing.BarcodeFormat
 import com.google.zxing.BinaryBitmap
 import com.google.zxing.DecodeHintType
 import com.google.zxing.MultiFormatReader
 import com.google.zxing.PlanarYUVLuminanceSource
 import com.google.zxing.common.HybridBinarizer
-import com.google.zxing.BarcodeFormat
+import com.photobook.app.R
+import com.photobook.app.feature.qrshare.QrAssemblyResult
+import com.photobook.app.feature.qrshare.QrPreviewDecoder
+import com.photobook.app.feature.qrshare.QrReceivedImageStore
+import com.photobook.app.feature.qrshare.QrTransferAssembler
+import java.util.concurrent.Executors
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun QrReceiveScannerScreen(
@@ -74,11 +78,21 @@ fun QrReceiveScannerScreen(
     var scanResult by remember { mutableStateOf<QrAssemblyResult.Completed?>(null) }
     var progressText by remember { mutableStateOf(context.getString(R.string.scan_qr_hint)) }
     var isSaving by remember { mutableStateOf(false) }
+    var previewBitmap by remember(scanResult?.transferId) { mutableStateOf<Bitmap?>(null) }
+    var isPreviewLoading by remember(scanResult?.transferId) { mutableStateOf(false) }
 
-    val previewBitmap = remember(scanResult?.transferId) {
-        scanResult?.let { result ->
-            BitmapFactory.decodeByteArray(result.bytes, 0, result.bytes.size)
+    LaunchedEffect(scanResult?.transferId) {
+        val result = scanResult
+        if (result == null) {
+            previewBitmap = null
+            isPreviewLoading = false
+            return@LaunchedEffect
         }
+        isPreviewLoading = true
+        previewBitmap = withContext(Dispatchers.Default) {
+            QrPreviewDecoder.decode(result.bytes)
+        }
+        isPreviewLoading = false
     }
 
     Dialog(
@@ -176,16 +190,32 @@ fun QrReceiveScannerScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        if (previewBitmap != null) {
-                            Image(
-                                bitmap = previewBitmap.asImageBitmap(),
-                                contentDescription = stringResource(R.string.scan_qr_received_image),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(360.dp),
-                            )
-                        } else {
-                            Text(text = stringResource(R.string.scan_qr_preview_unavailable))
+                        val visiblePreview = previewBitmap
+                        when {
+                            isPreviewLoading -> {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(360.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    CircularProgressIndicator()
+                                }
+                            }
+
+                            visiblePreview != null -> {
+                                Image(
+                                    bitmap = visiblePreview.asImageBitmap(),
+                                    contentDescription = stringResource(R.string.scan_qr_received_image),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(360.dp),
+                                )
+                            }
+
+                            else -> {
+                                Text(text = stringResource(R.string.scan_qr_preview_unavailable))
+                            }
                         }
 
                         Text(

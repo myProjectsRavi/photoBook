@@ -7,14 +7,18 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 
 /**
  * Single bundled, network-independent OCR boundary for PhotoBook.
  *
  * The Latin recognizer is packaged with the app, so recognition never depends on a model download
  * or network access. Callers own bitmap lifecycle; this class never mutates or recycles inputs.
+ * Cancellation is observed only after the ML Kit task reaches a terminal state so callers cannot
+ * recycle a bitmap while the recognizer may still be reading its InputImage.
  */
 @Singleton
 class LocalOcrEngine @Inject constructor() {
@@ -29,35 +33,47 @@ class LocalOcrEngine @Inject constructor() {
         }
 
         return try {
-            Result.success(awaitText(InputImage.fromBitmap(bitmap, 0)))
+            val text = awaitText(InputImage.fromBitmap(bitmap, 0))
+            currentCoroutineContext().ensureActive()
+            Result.success(text)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
+            currentCoroutineContext().ensureActive()
             Result.failure(error)
         } catch (error: LinkageError) {
+            currentCoroutineContext().ensureActive()
             Result.failure(error)
         }
     }
 
-    private suspend fun awaitText(image: InputImage): String = suspendCancellableCoroutine { continuation ->
+    /**
+     * ML Kit's TextRecognizer task does not expose a cancellation token for process(InputImage).
+     * Suspending non-cancellably here is deliberate: the caller's bitmap remains owned until one
+     * terminal task callback fires. recognize() then re-checks coroutine cancellation before the
+     * caller can leave its try/finally and recycle the bitmap.
+     */
+    private suspend fun awaitText(image: InputImage): String = suspendCoroutine { continuation ->
         val task = try {
             recognizer.process(image)
         } catch (error: Exception) {
-            if (continuation.isActive) continuation.resumeWith(Result.failure(error))
-            return@suspendCancellableCoroutine
+            continuation.resumeWith(Result.failure(error))
+            return@suspendCoroutine
         } catch (error: LinkageError) {
-            if (continuation.isActive) continuation.resumeWith(Result.failure(error))
-            return@suspendCancellableCoroutine
+            continuation.resumeWith(Result.failure(error))
+            return@suspendCoroutine
         }
 
         task.addOnSuccessListener { result ->
-            if (continuation.isActive) continuation.resume(result.text)
+            continuation.resume(result.text)
         }
         task.addOnFailureListener { error ->
-            if (continuation.isActive) continuation.resumeWith(Result.failure(error))
+            continuation.resumeWith(Result.failure(error))
         }
         task.addOnCanceledListener {
-            if (continuation.isActive) continuation.cancel(CancellationException("OCR task cancelled"))
+            continuation.resumeWith(
+                Result.failure(CancellationException("OCR task cancelled")),
+            )
         }
     }
 }
