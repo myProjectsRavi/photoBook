@@ -167,7 +167,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          PACKAGE="com.photobook.app.debug"
+          PACKAGE="com.photobook.app"
           for iteration in $(seq 1 20); do
             adb shell am force-stop "$PACKAGE" || true
             adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1 >/dev/null
@@ -181,7 +181,7 @@ jobs:
           set -euo pipefail
           mkdir -p build/reports/reliability-emulator
           adb logcat -d > build/reports/reliability-emulator/logcat.txt
-          adb shell dumpsys meminfo com.photobook.app.debug > build/reports/reliability-emulator/meminfo.txt 2>/dev/null || true
+          adb shell dumpsys meminfo com.photobook.app > build/reports/reliability-emulator/meminfo.txt 2>/dev/null || true
           PATTERN='ANR in com\.photobook\.app|FATAL EXCEPTION.*photobook|OutOfMemoryError|Application Not Responding'
           if grep -E -i "$PATTERN" build/reports/reliability-emulator/logcat.txt; then
             echo "PhotoBook crash/ANR/OOM signature detected in hosted emulator evidence."
