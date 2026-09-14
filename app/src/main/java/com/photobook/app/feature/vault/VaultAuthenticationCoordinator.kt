@@ -13,11 +13,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.photobook.app.R
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private enum class VaultCredentialAction {
     SETUP,
@@ -28,6 +33,9 @@ private enum class VaultCredentialAction {
  * Owns the complete Vault authentication UX while keeping the decrypt-capable key behind
  * Android Keystore authentication. Android 11+ uses the CryptoObject prompt directly;
  * Android 8-10 adds secure-lock-screen confirmation only for dual-wrap setup/recovery.
+ *
+ * Keystore/envelope work is dispatched off Main. Biometric prompt creation, Toasts and completion
+ * callbacks return to the composition scope on Main so no UI contract changes are introduced.
  */
 @Composable
 internal fun rememberVaultAuthenticator(
@@ -35,6 +43,7 @@ internal fun rememberVaultAuthenticator(
 ): ((VaultCryptoSession) -> Unit) -> Unit {
     val context = LocalContext.current
     val activity = context as? FragmentActivity
+    val coroutineScope = rememberCoroutineScope()
     var pendingCredentialAction by remember { mutableStateOf<VaultCredentialAction?>(null) }
     var pendingCompletion by remember {
         mutableStateOf<((VaultCryptoSession) -> Unit)?>(null)
@@ -80,14 +89,21 @@ internal fun rememberVaultAuthenticator(
                         showFailure()
                         return
                     }
-                    val session = try {
-                        vaultService.completeAuthentication(preparation, authenticatedCipher)
-                    } catch (_: Throwable) {
-                        vaultService.cancelAuthentication(preparation)
-                        showFailure()
-                        return
+                    coroutineScope.launch {
+                        val session = try {
+                            withContext(Dispatchers.IO) {
+                                vaultService.completeAuthentication(preparation, authenticatedCipher)
+                            }
+                        } catch (error: CancellationException) {
+                            vaultService.cancelAuthentication(preparation)
+                            throw error
+                        } catch (_: Throwable) {
+                            vaultService.cancelAuthentication(preparation)
+                            showFailure()
+                            return@launch
+                        }
+                        onAuthenticated(session)
                     }
-                    onAuthenticated(session)
                 }
 
                 override fun onAuthenticationError(
@@ -136,22 +152,28 @@ internal fun rememberVaultAuthenticator(
         if (result.resultCode != Activity.RESULT_OK || action == null || completion == null) {
             return@rememberLauncherForActivityResult
         }
-        val credentialResult = try {
-            when (action) {
-                VaultCredentialAction.SETUP ->
-                    vaultService.preparePreREnrollmentAfterCredential()
-                VaultCredentialAction.RECOVER ->
-                    vaultService.preparePreRRecoveryAfterCredential()
+        coroutineScope.launch {
+            val credentialResult = try {
+                withContext(Dispatchers.IO) {
+                    when (action) {
+                        VaultCredentialAction.SETUP ->
+                            vaultService.preparePreREnrollmentAfterCredential()
+                        VaultCredentialAction.RECOVER ->
+                            vaultService.preparePreRRecoveryAfterCredential()
+                    }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                showFailure()
+                return@launch
             }
-        } catch (_: Throwable) {
-            showFailure()
-            return@rememberLauncherForActivityResult
-        }
-        when (credentialResult) {
-            is VaultPreRCredentialResult.CredentialOnly ->
-                completion(credentialResult.session)
-            is VaultPreRCredentialResult.RequiresBiometric ->
-                launchBiometric(credentialResult.preparation, completion)
+            when (credentialResult) {
+                is VaultPreRCredentialResult.CredentialOnly ->
+                    completion(credentialResult.session)
+                is VaultPreRCredentialResult.RequiresBiometric ->
+                    launchBiometric(credentialResult.preparation, completion)
+            }
         }
     }
 
@@ -192,14 +214,21 @@ internal fun rememberVaultAuthenticator(
         if (activity == null) {
             showFailure()
         } else {
-            try {
-                launchBiometric(vaultService.prepareAuthentication(), onAuthenticated)
-            } catch (_: VaultCredentialSetupRequiredException) {
-                launchCredentialConfirmation(VaultCredentialAction.SETUP, onAuthenticated)
-            } catch (_: VaultCredentialRecoveryRequiredException) {
-                launchCredentialConfirmation(VaultCredentialAction.RECOVER, onAuthenticated)
-            } catch (_: Throwable) {
-                showFailure()
+            coroutineScope.launch {
+                try {
+                    val preparation = withContext(Dispatchers.IO) {
+                        vaultService.prepareAuthentication()
+                    }
+                    launchBiometric(preparation, onAuthenticated)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: VaultCredentialSetupRequiredException) {
+                    launchCredentialConfirmation(VaultCredentialAction.SETUP, onAuthenticated)
+                } catch (_: VaultCredentialRecoveryRequiredException) {
+                    launchCredentialConfirmation(VaultCredentialAction.RECOVER, onAuthenticated)
+                } catch (_: Throwable) {
+                    showFailure()
+                }
             }
         }
     }
