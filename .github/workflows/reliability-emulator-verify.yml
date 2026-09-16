@@ -161,23 +161,38 @@ jobs:
           adb shell am broadcast -a android.intent.action.AIRPLANE_MODE --ez state true >/dev/null 2>&1 || true
           adb logcat -c
 
-      - name: Verify installed app has no INTERNET permission
+      - name: Verify built APK offline contract
         shell: bash
         run: |
           set -euo pipefail
-          PACKAGE="com.photobook.app"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          APKANALYZER="$(find "$SDK_ROOT/cmdline-tools" -type f -name apkanalyzer 2>/dev/null | sort | tail -n 1)"
           APK="app/build/outputs/apk/debug/app-debug.apk"
+          PACKAGE="com.photobook.app"
+
+          test -x "$APKANALYZER"
           test -f "$APK"
-          adb install -r "$APK" >/dev/null
-          if adb shell dumpsys package "$PACKAGE" | grep -Fq "android.permission.INTERNET"; then
-            echo "PhotoBook unexpectedly requests android.permission.INTERNET"
+
+          PERMISSIONS="$("$APKANALYZER" manifest permissions "$APK")"
+          printf '%s\n' "$PERMISSIONS" | tee "$RUNNER_TEMP/photobook-apk-permissions.txt"
+          if grep -Fxq "android.permission.INTERNET" <<< "$PERMISSIONS"; then
+            echo "PhotoBook built APK unexpectedly requests android.permission.INTERNET"
             exit 1
           fi
 
+          AIRPLANE_MODE="$(adb shell settings get global airplane_mode_on | tr -d '\r')"
+          if [[ "$AIRPLANE_MODE" != "1" ]]; then
+            echo "Hosted emulator is not in airplane mode"
+            exit 1
+          fi
+
+          adb install -r "$APK" >/dev/null
+          adb shell pm path "$PACKAGE" >/dev/null
+
       - name: Run Android instrumentation with emulator offline
-        # Keep the GitHub host online so Gradle can resolve runner-only UTP tooling. The emulator
-        # itself has Wi-Fi/data disabled and airplane mode enabled before this step, and the app's
-        # installed package is checked above to ensure it does not request INTERNET permission.
+        # The GitHub host stays online only for Gradle/UTP runner tooling. The emulator has
+        # Wi-Fi/data disabled and airplane mode enabled, and the built APK is proven above to omit
+        # android.permission.INTERNET before any PhotoBook runtime evidence is accepted.
         run: ./gradlew :app:connectedDebugAndroidTest --stacktrace
 
       - name: Exercise repeated cold starts
@@ -217,6 +232,7 @@ jobs:
           adb logcat -d > build/reports/reliability-emulator/logcat-final.txt 2>/dev/null || true
           cp "$RUNNER_TEMP/reliability-emulator.log" build/reports/reliability-emulator/emulator.log 2>/dev/null || true
           cp "$RUNNER_TEMP/reliability-avd-list.txt" build/reports/reliability-emulator/avd-list.txt 2>/dev/null || true
+          cp "$RUNNER_TEMP/photobook-apk-permissions.txt" build/reports/reliability-emulator/apk-permissions.txt 2>/dev/null || true
 
       - name: Upload hosted emulator evidence
         if: always()
