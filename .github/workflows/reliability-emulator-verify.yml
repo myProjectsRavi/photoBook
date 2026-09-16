@@ -145,7 +145,8 @@ jobs:
           "$ADB" shell input keyevent 82 || true
           echo "SDK=$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"
           echo "ABI=$("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r')"
-          echo "RAM=$("$ADB" shell awk '/MemTotal/ {print $2 " kB"; exit}' /proc/meminfo | tr -d '\r')"
+          RAM_KB="$("$ADB" shell cat /proc/meminfo | tr -d '\r' | awk '/MemTotal/ {print $2; exit}')"
+          echo "RAM=${RAM_KB} kB"
 
       - name: Warm Gradle dependencies and build test APKs
         run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace
@@ -160,8 +161,24 @@ jobs:
           adb shell am broadcast -a android.intent.action.AIRPLANE_MODE --ez state true >/dev/null 2>&1 || true
           adb logcat -c
 
-      - name: Run offline Android instrumentation
-        run: ./gradlew --offline :app:connectedDebugAndroidTest --stacktrace
+      - name: Verify installed app has no INTERNET permission
+        shell: bash
+        run: |
+          set -euo pipefail
+          PACKAGE="com.photobook.app"
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK"
+          adb install -r "$APK" >/dev/null
+          if adb shell dumpsys package "$PACKAGE" | grep -Fq "android.permission.INTERNET"; then
+            echo "PhotoBook unexpectedly requests android.permission.INTERNET"
+            exit 1
+          fi
+
+      - name: Run Android instrumentation with emulator offline
+        # Keep the GitHub host online so Gradle can resolve runner-only UTP tooling. The emulator
+        # itself has Wi-Fi/data disabled and airplane mode enabled before this step, and the app's
+        # installed package is checked above to ensure it does not request INTERNET permission.
+        run: ./gradlew :app:connectedDebugAndroidTest --stacktrace
 
       - name: Exercise repeated cold starts
         shell: bash
