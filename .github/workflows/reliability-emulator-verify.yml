@@ -166,16 +166,16 @@ jobs:
         run: |
           set -euo pipefail
           SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-          APKANALYZER="$(find "$SDK_ROOT/cmdline-tools" -type f -name apkanalyzer 2>/dev/null | sort | tail -n 1)"
+          AAPT="$(find "$SDK_ROOT/build-tools" -maxdepth 2 -type f -name aapt -print | sort -V | tail -n 1)"
           APK="app/build/outputs/apk/debug/app-debug.apk"
           PACKAGE="com.photobook.app"
 
-          test -x "$APKANALYZER"
+          test -x "$AAPT"
           test -f "$APK"
 
-          PERMISSIONS="$("$APKANALYZER" manifest permissions "$APK")"
+          PERMISSIONS="$("$AAPT" dump permissions "$APK")"
           printf '%s\n' "$PERMISSIONS" | tee "$RUNNER_TEMP/photobook-apk-permissions.txt"
-          if grep -Fxq "android.permission.INTERNET" <<< "$PERMISSIONS"; then
+          if grep -Fq "android.permission.INTERNET" <<< "$PERMISSIONS"; then
             echo "PhotoBook built APK unexpectedly requests android.permission.INTERNET"
             exit 1
           fi
