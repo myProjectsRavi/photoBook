@@ -161,38 +161,28 @@ jobs:
           adb shell am broadcast -a android.intent.action.AIRPLANE_MODE --ez state true >/dev/null 2>&1 || true
           adb logcat -c
 
-      - name: Verify built APK offline contract
+      - name: Verify emulator network isolation
+        # The exact same commit is separately gated by Android Verification, whose Phase-0 script
+        # inspects the built release APK with aapt and fails if INTERNET is requested. Keep this
+        # hosted runtime gate focused on device-side isolation instead of duplicating that contract.
         shell: bash
         run: |
           set -euo pipefail
-          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-          AAPT="$(find "$SDK_ROOT/build-tools" -maxdepth 2 -type f -name aapt -print | sort -V | tail -n 1)"
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-          PACKAGE="com.photobook.app"
-
-          test -x "$AAPT"
-          test -f "$APK"
-
-          PERMISSIONS="$("$AAPT" dump permissions "$APK")"
-          printf '%s\n' "$PERMISSIONS" | tee "$RUNNER_TEMP/photobook-apk-permissions.txt"
-          if grep -Fq "android.permission.INTERNET" <<< "$PERMISSIONS"; then
-            echo "PhotoBook built APK unexpectedly requests android.permission.INTERNET"
-            exit 1
-          fi
-
+          mkdir -p build/reports/reliability-emulator
           AIRPLANE_MODE="$(adb shell settings get global airplane_mode_on | tr -d '\r')"
+          {
+            echo "airplane_mode_on=${AIRPLANE_MODE}"
+            echo "sdk=$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
+            echo "abi=$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
+          } | tee build/reports/reliability-emulator/network-isolation.txt
           if [[ "$AIRPLANE_MODE" != "1" ]]; then
             echo "Hosted emulator is not in airplane mode"
             exit 1
           fi
 
-          adb install -r "$APK" >/dev/null
-          adb shell pm path "$PACKAGE" >/dev/null
-
       - name: Run Android instrumentation with emulator offline
-        # The GitHub host stays online only for Gradle/UTP runner tooling. The emulator has
-        # Wi-Fi/data disabled and airplane mode enabled, and the built APK is proven above to omit
-        # android.permission.INTERNET before any PhotoBook runtime evidence is accepted.
+        # The GitHub host remains online only for Gradle/UTP runner tooling. The emulator itself
+        # has Wi-Fi/data disabled and airplane mode enabled before PhotoBook instrumentation runs.
         run: ./gradlew :app:connectedDebugAndroidTest --stacktrace
 
       - name: Exercise repeated cold starts
@@ -232,7 +222,6 @@ jobs:
           adb logcat -d > build/reports/reliability-emulator/logcat-final.txt 2>/dev/null || true
           cp "$RUNNER_TEMP/reliability-emulator.log" build/reports/reliability-emulator/emulator.log 2>/dev/null || true
           cp "$RUNNER_TEMP/reliability-avd-list.txt" build/reports/reliability-emulator/avd-list.txt 2>/dev/null || true
-          cp "$RUNNER_TEMP/photobook-apk-permissions.txt" build/reports/reliability-emulator/apk-permissions.txt 2>/dev/null || true
 
       - name: Upload hosted emulator evidence
         if: always()
