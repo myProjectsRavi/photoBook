@@ -190,12 +190,26 @@ jobs:
         run: |
           set -euo pipefail
           PACKAGE="com.photobook.app"
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK"
+
+          # connectedDebugAndroidTest removes the target package during its cleanup on this runner.
+          # Reinstall the already-built APK before cold-start stress so this step tests PhotoBook,
+          # not the instrumentation harness lifecycle.
+          adb install -r "$APK" >/dev/null
+          adb shell pm path "$PACKAGE" | tee "$RUNNER_TEMP/photobook-installed-package.txt"
+          grep -Fq "package:" "$RUNNER_TEMP/photobook-installed-package.txt"
+
           for iteration in $(seq 1 20); do
-            adb shell am force-stop "$PACKAGE" || true
-            adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1 >/dev/null
+            adb shell am force-stop "$PACKAGE"
+            adb shell am start -W \
+              -a android.intent.action.MAIN \
+              -c android.intent.category.LAUNCHER \
+              -n "$PACKAGE/.MainActivity" \
+              >/dev/null
             sleep 1
           done
-          adb shell am force-stop "$PACKAGE" || true
+          adb shell am force-stop "$PACKAGE"
 
       - name: Fail on crash ANR or OOM signatures
         shell: bash
@@ -222,6 +236,7 @@ jobs:
           adb logcat -d > build/reports/reliability-emulator/logcat-final.txt 2>/dev/null || true
           cp "$RUNNER_TEMP/reliability-emulator.log" build/reports/reliability-emulator/emulator.log 2>/dev/null || true
           cp "$RUNNER_TEMP/reliability-avd-list.txt" build/reports/reliability-emulator/avd-list.txt 2>/dev/null || true
+          cp "$RUNNER_TEMP/photobook-installed-package.txt" build/reports/reliability-emulator/installed-package.txt 2>/dev/null || true
 
       - name: Upload hosted emulator evidence
         if: always()
