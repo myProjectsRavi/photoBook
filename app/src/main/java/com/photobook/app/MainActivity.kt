@@ -573,6 +573,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         query = uiState.query,
         results = pagedResults,
         resultCount = uiState.resultCount,
+        resultQuery = uiState.resultQuery,
         searchReady = uiState.searchReady,
         favoritesOnly = uiState.favoritesOnly,
         reelsEnabled = uiState.reelsEnabled,
