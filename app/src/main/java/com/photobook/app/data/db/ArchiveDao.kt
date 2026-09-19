@@ -20,6 +20,20 @@ interface ArchiveDao {
     )
     suspend fun getCandidates(limit: Int): List<ArchiveDecisionEntity>
 
+    @Query(
+        """
+        SELECT * FROM archive_decisions
+        WHERE state = 'candidate'
+            AND photoId IN (:photoIds)
+        ORDER BY lastDetectedAtMs DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getCandidatesForPhotoIds(
+        photoIds: List<Long>,
+        limit: Int,
+    ): List<ArchiveDecisionEntity>
+
     @Query("SELECT COUNT(*) FROM archive_decisions WHERE state = 'candidate'")
     suspend fun getCandidateCount(): Int
 
@@ -35,6 +49,20 @@ interface ArchiveDao {
 
     @Query(
         """
+        SELECT COUNT(*) FROM archive_decisions
+        WHERE state IN ('trashed', 'delete_due')
+            AND trashedAtMs IS NOT NULL
+            AND (trashedAtMs + (retentionDays * 86400000)) <= :nowMs
+            AND photoId IN (:photoIds)
+        """,
+    )
+    suspend fun getDueDeleteCountForPhotoIds(
+        nowMs: Long,
+        photoIds: List<Long>,
+    ): Int
+
+    @Query(
+        """
         SELECT * FROM archive_decisions
         WHERE state IN ('trashed', 'delete_due')
             AND trashedAtMs IS NOT NULL
@@ -44,6 +72,21 @@ interface ArchiveDao {
         """,
     )
     suspend fun getDueDeleteItems(nowMs: Long, limit: Int): List<ArchiveDecisionEntity>
+
+    @Query(
+        """
+        SELECT * FROM archive_decisions
+        WHERE state IN ('trashed', 'delete_due')
+            AND trashedAtMs IS NOT NULL
+            AND (trashedAtMs + (retentionDays * 86400000)) <= :nowMs
+            AND photoId IN (:photoIds)
+        ORDER BY trashedAtMs ASC, photoId ASC
+        """,
+    )
+    suspend fun getDueDeleteItemsForPhotoIds(
+        nowMs: Long,
+        photoIds: List<Long>,
+    ): List<ArchiveDecisionEntity>
 
     @Query(
         """

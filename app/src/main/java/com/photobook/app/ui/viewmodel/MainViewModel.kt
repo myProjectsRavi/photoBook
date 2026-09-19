@@ -296,6 +296,7 @@ class MainViewModel @Inject constructor(
                 }
                 latestSearchResultIds = emptyList()
                 latestVisibleResultIds = emptyList()
+                loadArchiveSummary(refreshCandidates = false)
             }
             return
         }
@@ -312,6 +313,10 @@ class MainViewModel @Inject constructor(
                 uiState.update { it.copy(isIndexing = true, searchReady = false) }
                 try {
                     syncMediaStoreIncremental(forceFullSync = true)
+                    // Archive candidate count is visible from the home surface even when the
+                    // Archive sheet is closed, so permission reselection must clamp Archive state
+                    // on every reconciliation, not only while the sheet is open.
+                    loadArchiveSummary(refreshCandidates = false)
                 } finally {
                     uiState.update {
                         it.copy(
@@ -721,7 +726,10 @@ class MainViewModel @Inject constructor(
                     archiveDueDeleteCount = if (enabled) state.archiveDueDeleteCount else 0,
                 )
             }
-            val summary = archiveService.setEnabled(enabled)
+            val summary = archiveService.setEnabled(
+                enabled = enabled,
+                accessiblePhotoIds = currentArchiveAccessiblePhotoIds(),
+            )
             if (enabled) {
                 ArchiveScanWorker.enqueueDaily(context)
                 ArchiveRetentionWorker.enqueueDaily(context)
@@ -745,7 +753,10 @@ class MainViewModel @Inject constructor(
                     archiveSelectedPhotoIds = emptySet(),
                 )
             }
-            val summary = archiveService.setPaymentsEnabled(enabled)
+            val summary = archiveService.setPaymentsEnabled(
+                enabled = enabled,
+                accessiblePhotoIds = currentArchiveAccessiblePhotoIds(),
+            )
             applyArchiveSummary(
                 summary = summary,
                 preselectCandidates = summary.enabled,
@@ -762,7 +773,10 @@ class MainViewModel @Inject constructor(
                     archiveSelectedPhotoIds = emptySet(),
                 )
             }
-            val summary = archiveService.setFoodEnabled(enabled)
+            val summary = archiveService.setFoodEnabled(
+                enabled = enabled,
+                accessiblePhotoIds = currentArchiveAccessiblePhotoIds(),
+            )
             applyArchiveSummary(
                 summary = summary,
                 preselectCandidates = summary.enabled,
@@ -816,7 +830,9 @@ class MainViewModel @Inject constructor(
     }
 
     suspend fun resolveArchiveDueDeleteItems(): List<ArchiveDueDeleteItem> {
-        return archiveService.dueDeleteItems()
+        return archiveService.dueDeleteItems(
+            accessiblePhotoIds = currentArchiveAccessiblePhotoIds(),
+        )
     }
 
     fun onArchiveDueItemsDeleted(photoIds: Set<Long>) {
@@ -1019,9 +1035,12 @@ class MainViewModel @Inject constructor(
         preselectCandidates: Boolean = false,
         fullLibraryScan: Boolean = false,
     ) {
+        val accessiblePhotoIds = currentArchiveAccessiblePhotoIds()
         val summary = if (refreshCandidates) {
             if (fullLibraryScan) {
-                val finalSummary = archiveService.refreshAllCandidates { partialSummary ->
+                val finalSummary = archiveService.refreshAllCandidates(
+                    accessiblePhotoIds = accessiblePhotoIds,
+                ) { partialSummary ->
                     applyArchiveSummary(
                         summary = partialSummary,
                         preselectCandidates = preselectCandidates,
@@ -1035,16 +1054,27 @@ class MainViewModel @Inject constructor(
                 )
                 return
             } else {
-                archiveService.refreshCandidates()
+                archiveService.refreshCandidates(accessiblePhotoIds = accessiblePhotoIds)
             }
         } else {
-            archiveService.loadSummary()
+            archiveService.loadSummary(accessiblePhotoIds = accessiblePhotoIds)
         }
         applyArchiveSummary(
             summary = summary,
             preselectCandidates = preselectCandidates,
             isLoading = false,
         )
+    }
+
+    private fun currentArchiveAccessiblePhotoIds(): Set<Long>? {
+        return when (uiState.value.photoAccessMode) {
+            PermissionUtils.PhotoAccessMode.Full -> null
+            PermissionUtils.PhotoAccessMode.Limited -> photoIndex.snapshot()
+                .asSequence()
+                .map { photo -> photo.id }
+                .toHashSet()
+            PermissionUtils.PhotoAccessMode.None -> emptySet()
+        }
     }
 
     private fun applyArchiveSummary(

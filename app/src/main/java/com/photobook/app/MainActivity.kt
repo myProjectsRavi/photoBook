@@ -138,6 +138,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     var vaultItems by remember { mutableStateOf<List<VaultItem>>(emptyList()) }
     var vaultSession by remember { mutableStateOf<VaultCryptoSession?>(null) }
     var vaultPreviewGeneration by remember { mutableStateOf<Long?>(null) }
+    var vaultPreviewRequests by remember { mutableStateOf<Set<String>>(emptySet()) }
     var isVaultLoading by remember { mutableStateOf(false) }
     var isVaultBusy by remember { mutableStateOf(false) }
 
@@ -226,6 +227,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         vaultItems = emptyList()
         vaultSession = null
         vaultPreviewGeneration = null
+        vaultPreviewRequests = emptySet()
         isVaultLoading = false
         isVaultBusy = false
         coroutineScope.launch {
@@ -250,23 +252,39 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     }
 
     fun requestVaultPreview(item: VaultItem) {
-        if (item.previewUri != null || !showVault) return
+        if (!showVault) return
         val session = vaultSession ?: return
         val previewGeneration = vaultPreviewGeneration ?: return
-        coroutineScope.launch {
-            val previewUri = runCatching {
-                vaultService.loadPreview(
-                    itemId = item.id,
-                    session = session,
-                    previewGeneration = previewGeneration,
-                )
-            }.getOrNull() ?: return@launch
+        if (item.id in vaultPreviewRequests) return
+        vaultPreviewRequests = vaultPreviewRequests + item.id
 
-            if (!showVault || !vaultService.isPreviewLoadCurrent(previewGeneration)) {
-                return@launch
-            }
+        // A bounded preview cache may evict a file while this UI item still holds its old file URI.
+        // When Coil reports that stale URI, force a null -> regenerated URI state transition so the
+        // image is retried even though the regenerated preview uses the same deterministic path.
+        if (item.previewUri != null) {
             vaultItems = vaultItems.map { current ->
-                if (current.id == item.id) current.copy(previewUri = previewUri) else current
+                if (current.id == item.id) current.copy(previewUri = null) else current
+            }
+        }
+
+        coroutineScope.launch {
+            try {
+                val previewUri = runCatching {
+                    vaultService.loadPreview(
+                        itemId = item.id,
+                        session = session,
+                        previewGeneration = previewGeneration,
+                    )
+                }.getOrNull() ?: return@launch
+
+                if (!showVault || !vaultService.isPreviewLoadCurrent(previewGeneration)) {
+                    return@launch
+                }
+                vaultItems = vaultItems.map { current ->
+                    if (current.id == item.id) current.copy(previewUri = previewUri) else current
+                }
+            } finally {
+                vaultPreviewRequests = vaultPreviewRequests - item.id
             }
         }
     }

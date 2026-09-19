@@ -71,6 +71,37 @@ class IndexPersistenceInstrumentedTest {
         }
     }
 
+    @Test
+    fun getByIdsOrdered_aboveAndroidSqliteBindLimit_batchesAndPreservesOrder() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val database = Room.inMemoryDatabaseBuilder(
+            context,
+            PhotoBookDatabase::class.java,
+        )
+            .allowMainThreadQueries()
+            .build()
+
+        try {
+            val photoDao = database.photoDao()
+            val persistence = IndexPersistence(
+                context = context,
+                database = database,
+                photoDao = photoDao,
+            )
+            val records = (1L..1_205L).map { id ->
+                fixtureRecord(id = id, fileName = "selected_$id.jpg")
+            }
+            persistence.upsertAll(records)
+
+            val requestedIds = (1_205L downTo 1L).toList()
+            val resolved = persistence.getByIdsOrdered(requestedIds)
+
+            assertEquals(requestedIds, resolved.map { record -> record.id })
+        } finally {
+            database.close()
+        }
+    }
+
     private fun fixtureRecord(id: Long, fileName: String): PhotoRecord {
         return PhotoRecord(
             id = id,
