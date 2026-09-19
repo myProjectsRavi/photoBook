@@ -14,6 +14,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.photobook.app.data.model.IntelligenceStatus
+import com.photobook.app.data.index.IndexCommitCoordinator
 import com.photobook.app.data.index.IndexPersistence
 import com.photobook.app.data.index.PhotoIndex
 import com.photobook.app.feature.duplicates.BlurScoreComputer
@@ -31,6 +32,7 @@ class TaggingWorker @AssistedInject constructor(
     @Assisted params: WorkerParameters,
     private val photoIndex: PhotoIndex,
     private val indexPersistence: IndexPersistence,
+    private val indexCommitCoordinator: IndexCommitCoordinator,
     private val mlTagger: MLTagger,
     private val perceptualHashComputer: PerceptualHashComputer,
     private val blurScoreComputer: BlurScoreComputer,
@@ -164,11 +166,7 @@ class TaggingWorker @AssistedInject constructor(
             }
 
             if (pendingIndexUpdates.size >= Constants.BATCH_SIZE) {
-                val updatedRecords = photoIndex.updatePhotosIntelligence(pendingIndexUpdates)
-                if (updatedRecords.isNotEmpty()) {
-                    indexPersistence.upsertAll(updatedRecords)
-                }
-                pendingIndexUpdates.clear()
+                flushPendingUpdates(pendingIndexUpdates)
 
                 if (isBatteryTooLow()) return Result.retry()
                 delay(Constants.BATCH_DELAY_MS)
@@ -180,13 +178,26 @@ class TaggingWorker @AssistedInject constructor(
         }
 
         if (pendingIndexUpdates.isNotEmpty()) {
-            val updatedRecords = photoIndex.updatePhotosIntelligence(pendingIndexUpdates)
-            if (updatedRecords.isNotEmpty()) {
-                indexPersistence.upsertAll(updatedRecords)
-            }
-            pendingIndexUpdates.clear()
+            flushPendingUpdates(pendingIndexUpdates)
         }
         return Result.success()
+    }
+
+    private suspend fun flushPendingUpdates(
+        pendingIndexUpdates: MutableList<PhotoIndex.PhotoIntelligenceUpdate>,
+    ) {
+        if (pendingIndexUpdates.isEmpty()) return
+        val updates = pendingIndexUpdates.toList()
+        indexCommitCoordinator.withCommit {
+            val committed = indexPersistence.applyIntelligenceUpdates(updates)
+            if (committed.isNotEmpty()) {
+                val committedIds = committed.asSequence().map { record -> record.id }.toHashSet()
+                photoIndex.updatePhotosIntelligence(
+                    updates.filter { update -> update.id in committedIds },
+                )
+            }
+        }
+        pendingIndexUpdates.clear()
     }
 
     private fun isBatteryTooLow(): Boolean {
