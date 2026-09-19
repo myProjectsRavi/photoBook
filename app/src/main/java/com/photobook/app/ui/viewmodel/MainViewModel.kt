@@ -830,7 +830,9 @@ class MainViewModel @Inject constructor(
     }
 
     suspend fun resolveArchiveDueDeleteItems(): List<ArchiveDueDeleteItem> {
-        return archiveService.dueDeleteItems()
+        return archiveService.dueDeleteItems(
+            accessiblePhotoIds = currentArchiveAccessiblePhotoIds(),
+        )
     }
 
     fun onArchiveDueItemsDeleted(photoIds: Set<Long>) {
