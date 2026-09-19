@@ -34,7 +34,9 @@ class FilterEngine @Inject constructor(
         query: String,
         records: List<PhotoRecord>,
         context: SearchContext = SearchContext(),
+        cancellationCheck: (() -> Unit)? = null,
     ): SearchResult {
+        cancellationCheck?.invoke()
         val normalized = queryParser.normalize(query)
         val key = "$normalized|${index.version()}|${records.size}"
         cache[key]?.let { cached -> return cached }
@@ -49,12 +51,17 @@ class FilterEngine @Inject constructor(
         val tokens = queryParser.tokenize(normalized).map(tokenClassifier::classify)
         val filters = tokens.mapNotNull { token -> filterFactory.create(token, context) }
 
-        val filtered = records.asSequence().filter { photo ->
+        val filtered = ArrayList<PhotoRecord>()
+        records.forEachIndexed { index, photo ->
+            if (index % CANCELLATION_CHECK_INTERVAL == 0) cancellationCheck?.invoke()
             val smartMatch = filters.isNotEmpty() && filters.all { filter -> filter(photo) }
             val literalOcrMatch = OcrQueryMatcher.matches(photo.ocrText, query)
-            smartMatch || literalOcrMatch
-        }.toList()
+            if (smartMatch || literalOcrMatch) {
+                filtered += photo
+            }
+        }
 
+        cancellationCheck?.invoke()
         val sorted = searchRanker.rank(
             records = filtered,
             tokens = tokens,
@@ -62,14 +69,20 @@ class FilterEngine @Inject constructor(
             context = context,
         )
 
+        cancellationCheck?.invoke()
         val finalResults = if (tokens.any { it is TemporalToken && it.keyword == "recent" }) {
             sorted.take(50)
         } else {
             sorted
         }
 
+        cancellationCheck?.invoke()
         return SearchResult(finalResults, tokens).also {
             cache[key] = it
         }
+    }
+
+    private companion object {
+        private const val CANCELLATION_CHECK_INTERVAL = 64
     }
 }
