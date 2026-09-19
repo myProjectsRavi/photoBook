@@ -234,7 +234,12 @@ class ArchiveService @Inject constructor(
             if (paymentsComplete && foodComplete) break
         }
 
-        archiveDao.markCandidatesStaleBefore(scanStartedAtMs, System.currentTimeMillis())
+        // Only a full MediaStore grant proves that an unobserved candidate is structurally gone
+        // or no longer qualifies. Under Android's selected-photo access, an unobserved durable row
+        // may simply be outside the current grant and must remain recoverable after regrant.
+        if (accessiblePhotoIds == null) {
+            archiveDao.markCandidatesStaleBefore(scanStartedAtMs, System.currentTimeMillis())
+        }
         archiveDao.markDueDeleteItems(System.currentTimeMillis())
         return loadSummaryInternal(accessiblePhotoIds = accessiblePhotoIds)
     }
