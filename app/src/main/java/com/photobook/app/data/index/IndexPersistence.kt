@@ -96,7 +96,9 @@ class IndexPersistence @Inject constructor(
         return withContext(Dispatchers.IO) {
             database.withTransaction {
                 val updatesById = updates.associateBy { update -> update.id }
-                val currentRecords = photoDao.getByIds(updatesById.keys.toList())
+                val currentRecords = updatesById.keys.toList()
+                    .chunked(DB_BATCH_SIZE)
+                    .flatMap { batch -> photoDao.getByIds(batch) }
                     .map { entity -> entity.toPhotoRecord() }
 
                 val committed = currentRecords.mapNotNull { record ->
