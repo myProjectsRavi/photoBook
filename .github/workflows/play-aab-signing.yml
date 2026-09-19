@@ -65,7 +65,7 @@ jobs:
           echo "keystore=$KEYSTORE" >> "$GITHUB_OUTPUT"
 
           ACTUAL_KEYSTORE_CERT="$(
-            keytool -list -v               -keystore "$KEYSTORE"               -storepass "$PHOTOBOOK_UPLOAD_STORE_PASSWORD"               -alias "$PHOTOBOOK_UPLOAD_KEY_ALIAS" 2>/dev/null               | awk -F'SHA256:' '/SHA256:/{gsub(/[:[:space:]]/,"",$2); print toupper($2); exit}'
+            keytool -list -v               -keystore "$KEYSTORE"               -storepass "$PHOTOBOOK_UPLOAD_STORE_PASSWORD"               -alias "$PHOTOBOOK_UPLOAD_KEY_ALIAS" 2>/dev/null               | awk -F'SHA256:' '/SHA256:/{gsub(/[:[:space:]]/,"",$2); value=toupper($2)} END{print value}'
           )"
           EXPECTED_CERT="$(printf '%s' "$PHOTOBOOK_UPLOAD_CERT_SHA256" | tr -d ':[:space:]' | tr '[:lower:]' '[:upper:]')"
           [[ -n "$ACTUAL_KEYSTORE_CERT" ]]
@@ -112,10 +112,13 @@ jobs:
             exit 1
           fi
 
-          jarsigner -verify -strict -verbose -certs "$AAB" >/dev/null
+          unzip -tqq "$AAB"
+          # Android upload/app signing certificates are normally self-signed. Verify the JAR
+          # signature itself here; certificate identity is enforced separately by SHA-256 below.
+          jarsigner -verify -verbose -certs "$AAB" >/dev/null
 
           AAB_CERT="$(
-            keytool -printcert -jarfile "$AAB" 2>/dev/null               | awk -F'SHA256:' '/SHA256:/{gsub(/[:[:space:]]/,"",$2); print toupper($2); exit}'
+            keytool -printcert -jarfile "$AAB" 2>/dev/null               | awk -F'SHA256:' '/SHA256:/{gsub(/[:[:space:]]/,"",$2); value=toupper($2)} END{print value}'
           )"
           EXPECTED_CERT="$(printf '%s' "$PHOTOBOOK_UPLOAD_CERT_SHA256" | tr -d ':[:space:]' | tr '[:lower:]' '[:upper:]')"
           [[ -n "$AAB_CERT" ]]
@@ -136,7 +139,8 @@ jobs:
             fi
           done
 
-          unzip -l "$AAB" | grep -Fq 'base/assets/photobook/food_live_label_model.tflite'
+          AAB_ENTRIES="$(unzip -Z1 "$AAB")"
+          grep -Fxq 'base/assets/photobook/food_live_label_model.tflite' <<< "$AAB_ENTRIES"
 
           SHA256="$(sha256sum "$AAB" | awk '{print $1}')"
           {
