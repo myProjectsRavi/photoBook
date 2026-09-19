@@ -99,12 +99,33 @@ done
 output_dir="outputs/release"
 mkdir -p "$output_dir"
 release_stem="PhotoBook-v${version_name}-vc${version_code}-production"
-cp "$aab" "$output_dir/${release_stem}.aab"
+final_aab="$output_dir/${release_stem}.aab"
+cp "$aab" "$final_aab"
 for apk in "${apks[@]}"; do
   cp "$apk" "$output_dir/${release_stem}-$(basename "$apk")"
 done
 
+if command -v sha256sum >/dev/null 2>&1; then
+  aab_sha256="$(sha256sum "$final_aab" | awk '{print $1}')"
+else
+  aab_sha256="$(shasum -a 256 "$final_aab" | awk '{print $1}')"
+fi
+
+report="$output_dir/${release_stem}-verification.txt"
+{
+  echo "sourceCommit=$source_commit"
+  echo "versionCode=$version_code"
+  echo "versionName=$version_name"
+  echo "signedAabBytes=$aab_bytes"
+  echo "signedAabSha256=$aab_sha256"
+  echo "signerCertSha256=$signer_sha256"
+  echo "internetPermission=ABSENT"
+  echo "bundledSemanticModel=PRESENT"
+  echo "jarSignature=VERIFIED"
+} | tee "$report"
+
 echo "Release artifacts verified and copied to $output_dir"
-echo "AAB: $output_dir/${release_stem}.aab"
+echo "AAB: $final_aab"
+echo "Verification report: $report"
 echo "APK count: ${#apks[@]}"
-echo "Next steps are intentionally manual: inspect/signature-verify the copied artifacts, test the exact AAB/APKs on physical devices in airplane mode, then upload through Play Console."
+echo "Final manual preflight: compare signerCertSha256 with the Play Console upload certificate, then upload this exact AAB."
