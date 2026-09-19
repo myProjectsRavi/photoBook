@@ -190,12 +190,21 @@ jobs:
         run: |
           set -euo pipefail
           PACKAGE="com.photobook.app"
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-          test -f "$APK"
+          mapfile -t DEBUG_APKS < <(
+            find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*arm64-v8a*.apk' -print | sort
+          )
+          if [[ "${#DEBUG_APKS[@]}" -ne 1 ]]; then
+            echo "Expected exactly one ARM64 debug APK, found ${#DEBUG_APKS[@]}." >&2
+            find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' -print | sort >&2 || true
+            exit 1
+          fi
+          APK="${DEBUG_APKS[0]}"
+          echo "cold_start_apk=$APK"
 
-          # connectedDebugAndroidTest removes the target package during its cleanup on this runner.
-          # Reinstall the already-built APK before cold-start stress so this step tests PhotoBook,
-          # not the instrumentation harness lifecycle.
+          # PhotoBook intentionally builds per-ABI APKs with no universal APK. The hosted x86_64
+          # image has already executed the ARM64 target under translation during instrumentation.
+          # connectedDebugAndroidTest removes the target package during cleanup, so reinstall the
+          # exact ARM64 debug split before cold-start stress.
           adb install -r "$APK" >/dev/null
           adb shell pm path "$PACKAGE" | tee "$RUNNER_TEMP/photobook-installed-package.txt"
           grep -Fq "package:" "$RUNNER_TEMP/photobook-installed-package.txt"
