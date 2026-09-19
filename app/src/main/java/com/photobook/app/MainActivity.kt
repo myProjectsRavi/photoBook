@@ -147,7 +147,12 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
-        viewModel.refreshPermissionStatus(PermissionUtils.photoAccessMode(context))
+        // A limited-to-limited reselection can keep the same coarse permission mode while changing
+        // the actual visible MediaStore set, so permission results always force reconciliation.
+        viewModel.refreshPermissionStatus(
+            accessMode = PermissionUtils.photoAccessMode(context),
+            forceReconcile = true,
+        )
     }
     val trashRequestLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult(),
@@ -406,8 +411,22 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
 
     DisposableEffect(lifecycleOwner, showVault) {
         val observer = LifecycleEventObserver { _, event ->
-            if (showVault && event == Lifecycle.Event.ON_STOP) {
-                closeVault()
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    val mode = PermissionUtils.photoAccessMode(context)
+                    viewModel.refreshPermissionStatus(
+                        accessMode = mode,
+                        // Android 14 selected-photo membership can change without changing the
+                        // permission mode or MediaStore generation/version.
+                        forceReconcile = mode == PermissionUtils.PhotoAccessMode.Limited,
+                    )
+                }
+
+                Lifecycle.Event.ON_STOP -> {
+                    if (showVault) closeVault()
+                }
+
+                else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
