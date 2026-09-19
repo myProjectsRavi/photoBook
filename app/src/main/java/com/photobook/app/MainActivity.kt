@@ -250,9 +250,19 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     }
 
     fun requestVaultPreview(item: VaultItem) {
-        if (item.previewUri != null || !showVault) return
+        if (!showVault) return
         val session = vaultSession ?: return
         val previewGeneration = vaultPreviewGeneration ?: return
+
+        // A bounded preview cache may evict a file while this UI item still holds its old file URI.
+        // When Coil reports that stale URI, force a null -> regenerated URI state transition so the
+        // image is retried even though the regenerated preview uses the same deterministic path.
+        if (item.previewUri != null) {
+            vaultItems = vaultItems.map { current ->
+                if (current.id == item.id) current.copy(previewUri = null) else current
+            }
+        }
+
         coroutineScope.launch {
             val previewUri = runCatching {
                 vaultService.loadPreview(
