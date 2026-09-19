@@ -314,21 +314,31 @@ class ArchiveService @Inject constructor(
 
     suspend fun markKept(photoIds: Set<Long>) = withContext(Dispatchers.IO) {
         if (photoIds.isEmpty()) return@withContext
-        archiveDao.markKept(photoIds.toList(), System.currentTimeMillis())
+        val nowMs = System.currentTimeMillis()
+        photoIds.toList().chunked(ARCHIVE_DB_BATCH_SIZE).forEach { batch ->
+            archiveDao.markKept(batch, nowMs)
+        }
     }
 
     suspend fun markTrashed(photoIds: Set<Long>, retentionDays: Int) = withContext(Dispatchers.IO) {
         if (photoIds.isEmpty()) return@withContext
-        archiveDao.markTrashed(
-            photoIds = photoIds.toList(),
-            trashedAtMs = System.currentTimeMillis(),
-            retentionDays = normalizeRetentionDays(retentionDays),
-        )
+        val trashedAtMs = System.currentTimeMillis()
+        val normalizedRetentionDays = normalizeRetentionDays(retentionDays)
+        photoIds.toList().chunked(ARCHIVE_DB_BATCH_SIZE).forEach { batch ->
+            archiveDao.markTrashed(
+                photoIds = batch,
+                trashedAtMs = trashedAtMs,
+                retentionDays = normalizedRetentionDays,
+            )
+        }
     }
 
     suspend fun markDueDeleted(photoIds: Set<Long>) = withContext(Dispatchers.IO) {
         if (photoIds.isEmpty()) return@withContext
-        archiveDao.markStale(photoIds.toList(), System.currentTimeMillis())
+        val nowMs = System.currentTimeMillis()
+        photoIds.toList().chunked(ARCHIVE_DB_BATCH_SIZE).forEach { batch ->
+            archiveDao.markStale(batch, nowMs)
+        }
     }
 
     suspend fun dueDeleteItems(limit: Int = MAX_DUE_DELETE_ITEMS): List<ArchiveDueDeleteItem> =
@@ -387,7 +397,10 @@ class ArchiveService @Inject constructor(
             .associate { entity -> entity.id to entity.toPhotoRecord() }
         val missingIds = photoIds.filterNot { id -> id in photosById }
         if (missingIds.isNotEmpty()) {
-            archiveDao.markStale(missingIds, System.currentTimeMillis())
+            val nowMs = System.currentTimeMillis()
+            missingIds.chunked(ARCHIVE_DB_BATCH_SIZE).forEach { batch ->
+                archiveDao.markStale(batch, nowMs)
+            }
         }
 
         val protectedIds = getProtectedIds(photoIds)
