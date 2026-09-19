@@ -53,6 +53,17 @@ interface PhotoDao {
 
     @Query(
         """
+        UPDATE photos
+        SET mlTagsPayload = '[]',
+            isMlProcessed = 0,
+            mlStatus = 'PENDING',
+            isArchiveFoodCandidate = 0
+        """,
+    )
+    suspend fun reopenDerivedSemanticIntelligence(): Int
+
+    @Query(
+        """
         SELECT * FROM photos
         WHERE isFavorite = 0
             AND mimeType LIKE 'image/%'
