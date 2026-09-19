@@ -74,15 +74,43 @@ class IndexPersistence @Inject constructor(
         if (records.isEmpty()) return
         withContext(Dispatchers.IO) {
             database.withTransaction {
-                val entities = records.map { it.toPhotoEntity() }
-                entities.chunked(DB_BATCH_SIZE).forEach { batch ->
-                    photoDao.upsertPhotos(batch)
-                }
-                entities.map { it.toFtsEntity() }
-                    .chunked(DB_BATCH_SIZE)
-                    .forEach { batch ->
-                        photoDao.upsertFtsRows(batch)
+                records.chunked(DB_BATCH_SIZE).forEach { batch ->
+                    val currentById = photoDao.getByIds(batch.map { record -> record.id })
+                        .associateBy { entity -> entity.id }
+                    val entities = batch.map { record ->
+                        val current = currentById[record.id]?.toPhotoRecord()
+                        record.preserveCommittedMutableFields(current).toPhotoEntity()
                     }
+                    photoDao.upsertPhotos(entities)
+                    photoDao.upsertFtsRows(entities.map { it.toFtsEntity() })
+                }
+            }
+        }
+    }
+
+    suspend fun applyIntelligenceUpdates(
+        updates: List<PhotoIndex.PhotoIntelligenceUpdate>,
+    ): List<PhotoRecord> {
+        if (updates.isEmpty()) return emptyList()
+        return withContext(Dispatchers.IO) {
+            database.withTransaction {
+                val updatesById = updates.associateBy { update -> update.id }
+                val currentRecords = photoDao.getByIds(updatesById.keys.toList())
+                    .map { entity -> entity.toPhotoRecord() }
+
+                val committed = currentRecords.mapNotNull { record ->
+                    val update = updatesById[record.id] ?: return@mapNotNull null
+                    val nextTags = update.tags?.let { incoming ->
+                        mergeTags(record.mlTags, incoming)
+                    } ?: record.mlTags
+                    applyIntelligenceUpdate(record, update, nextTags)
+                }
+                if (committed.isNotEmpty()) {
+                    val entities = committed.map { record -> record.toPhotoEntity() }
+                    photoDao.upsertPhotos(entities)
+                    photoDao.upsertFtsRows(entities.map { entity -> entity.toFtsEntity() })
+                }
+                committed
             }
         }
     }
@@ -172,7 +200,13 @@ class IndexPersistence @Inject constructor(
             var startIndex = 0
             while (startIndex < records.size) {
                 val endIndex = (startIndex + DB_BATCH_SIZE).coerceAtMost(records.size)
-                val entities = records.subList(startIndex, endIndex).map { it.toPhotoEntity() }
+                val batch = records.subList(startIndex, endIndex)
+                val currentById = photoDao.getByIds(batch.map { record -> record.id })
+                    .associateBy { entity -> entity.id }
+                val entities = batch.map { record ->
+                    val current = currentById[record.id]?.toPhotoRecord()
+                    record.preserveCommittedMutableFields(current).toPhotoEntity()
+                }
                 photoDao.upsertPhotos(entities)
                 photoDao.upsertFtsRows(entities.map { it.toFtsEntity() })
                 entities.forEach { entity -> staleIds.remove(entity.id) }
@@ -181,6 +215,22 @@ class IndexPersistence @Inject constructor(
 
             deleteByIdsInternal(staleIds.toList())
         }
+    }
+
+    private fun PhotoRecord.preserveCommittedMutableFields(current: PhotoRecord?): PhotoRecord {
+        if (current == null) return this
+        return copy(
+            isFavorite = current.isFavorite,
+            perceptualHash = current.perceptualHash,
+            blurScore = current.blurScore,
+            mlTags = current.mlTags,
+            isArchiveFoodCandidate = current.isArchiveFoodCandidate,
+            isMlProcessed = current.isMlProcessed,
+            mlStatus = current.mlStatus,
+            ocrText = current.ocrText,
+            isOcrProcessed = current.isOcrProcessed,
+            ocrStatus = current.ocrStatus,
+        )
     }
 
     private suspend fun deleteByIdsInternal(ids: List<Long>) {
