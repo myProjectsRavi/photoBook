@@ -296,6 +296,7 @@ class MainViewModel @Inject constructor(
                 }
                 latestSearchResultIds = emptyList()
                 latestVisibleResultIds = emptyList()
+                loadArchiveSummary(refreshCandidates = false)
             }
             return
         }
