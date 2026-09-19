@@ -3,6 +3,7 @@ package com.photobook.app.verification
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.photobook.app.data.db.ArchiveDecisionEntity
 import com.photobook.app.data.db.ArchiveDecisionStates
 import com.photobook.app.data.db.PhotoBookDatabase
 import com.photobook.app.data.db.toPhotoEntity
@@ -80,6 +81,32 @@ class ArchiveAccessBoundaryInstrumentedTest {
             val regranted = service.loadSummary(accessiblePhotoIds = setOf(1L))
             assertEquals(listOf(1L), regranted.candidates.map { candidate -> candidate.photo.id })
 
+            // Retention state must obey the same access boundary. Keep both durable
+            // decisions, but a limited grant may only represent or act on the accessible one.
+            val dueNowMs = System.currentTimeMillis()
+            val overdueMs = dueNowMs - 8L * 24L * 60L * 60L * 1000L
+            archiveDao.upsertDecisions(
+                listOf(
+                    overdueDecision(photoId = 1L, trashedAtMs = overdueMs),
+                    overdueDecision(photoId = 2L, trashedAtMs = overdueMs),
+                ),
+            )
+
+            val limitedDueSummary = service.loadSummary(accessiblePhotoIds = setOf(1L))
+            assertEquals(1, limitedDueSummary.dueDeleteCount)
+            assertEquals(
+                listOf(1L),
+                service.dueDeleteItems(accessiblePhotoIds = setOf(1L))
+                    .map { item -> item.photoId },
+            )
+
+            val fullDueSummary = service.loadSummary()
+            assertEquals(2, fullDueSummary.dueDeleteCount)
+            assertEquals(
+                setOf(1L, 2L),
+                service.dueDeleteItems().map { item -> item.photoId }.toSet(),
+            )
+
             // Revoking access must not delete durable user/intelligence rows.
             assertNotNull(photoDao.getById(1L))
             assertNotNull(photoDao.getById(2L))
@@ -87,6 +114,23 @@ class ArchiveAccessBoundaryInstrumentedTest {
             preferences.edit().clear().commit()
             database.close()
         }
+    }
+
+    private fun overdueDecision(
+        photoId: Long,
+        trashedAtMs: Long,
+    ): ArchiveDecisionEntity {
+        return ArchiveDecisionEntity(
+            photoId = photoId,
+            uriString = "content://media/external/images/media/$photoId",
+            state = ArchiveDecisionStates.TRASHED,
+            confidence = 1.0,
+            reasons = "test",
+            firstDetectedAtMs = trashedAtMs,
+            lastDetectedAtMs = trashedAtMs,
+            trashedAtMs = trashedAtMs,
+            retentionDays = 7,
+        )
     }
 
     private fun paymentScreenshot(id: Long): PhotoRecord {
