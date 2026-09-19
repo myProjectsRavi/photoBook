@@ -33,6 +33,7 @@ class IndexPersistence @Inject constructor(
         return withContext(Dispatchers.IO) {
             val loadStartMs = SystemClock.elapsedRealtime()
             reopenLegacyOcrFailuresIfNeeded()
+            reopenDerivedSemanticIntelligenceIfNeeded()
             val existing = photoDao.getAll().map { it.toPhotoRecord() }
             if (existing.isNotEmpty()) {
                 Log.i(
@@ -193,6 +194,21 @@ class IndexPersistence @Inject constructor(
         )
         // If the preference commit ever fails, the SQL repair is idempotent and safely retries on
         // the next process start. No schema migration or user database reset is required.
+    }
+
+    private suspend fun reopenDerivedSemanticIntelligenceIfNeeded() {
+        if (dataRepairPreferences.getBoolean(KEY_SEMANTIC_INTELLIGENCE_V2_REPAIR_COMPLETE, false)) return
+
+        val reopenedCount = photoDao.reopenDerivedSemanticIntelligence()
+        val committed = dataRepairPreferences.edit()
+            .putBoolean(KEY_SEMANTIC_INTELLIGENCE_V2_REPAIR_COMPLETE, true)
+            .commit()
+        Log.i(
+            PHASE4_TAG,
+            "stage=semantic_intelligence_v2_repair reopened=$reopenedCount preferenceCommitted=$committed",
+        )
+        // Search no longer consumes the legacy FTS candidate table as an exclusive source. FTS rows
+        // are refreshed atomically as the durable maintenance worker reprocesses each affected row.
     }
 
     private suspend fun replaceAll(records: List<PhotoRecord>) {
@@ -367,5 +383,7 @@ class IndexPersistence @Inject constructor(
         private const val PHASE4_TAG = "PhotoBookPhase4"
         private const val DATA_REPAIR_PREFS = "photobook_data_repairs"
         private const val KEY_OCR_ENGINE_REPAIR_COMPLETE = "ocr_engine_v1_repair_complete"
+        private const val KEY_SEMANTIC_INTELLIGENCE_V2_REPAIR_COMPLETE =
+            "semantic_intelligence_v2_repair_complete"
     }
 }
