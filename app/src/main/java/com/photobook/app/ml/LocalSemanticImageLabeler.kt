@@ -25,7 +25,27 @@ data class LocalSemanticLabel(
     val label: String,
     val confidence: Float,
     val isPreparedFood: Boolean = false,
+    val preparedFoodConfidence: Float? = null,
 )
+
+internal fun mergeSemanticScore(
+    current: LocalSemanticLabel?,
+    canonical: String,
+    confidence: Float,
+    isPreparedFood: Boolean,
+): LocalSemanticLabel {
+    val canonicalConfidence = maxOf(current?.confidence ?: 0f, confidence)
+    val preparedConfidence = when {
+        isPreparedFood -> maxOf(current?.preparedFoodConfidence ?: 0f, confidence)
+        else -> current?.preparedFoodConfidence
+    }
+    return LocalSemanticLabel(
+        label = canonical,
+        confidence = canonicalConfidence,
+        isPreparedFood = preparedConfidence != null,
+        preparedFoodConfidence = preparedConfidence,
+    )
+}
 
 /**
  * Runs the pinned image-label model locally without packaging ML Kit's larger native pipeline.
@@ -159,28 +179,19 @@ class LocalSemanticImageLabeler @Inject constructor(
         val outputZeroPoint: Int,
     ) {
         fun decode(output: ByteArray): List<LocalSemanticLabel> {
-            val labels = mutableMapOf<String, ScoredLabel>()
+            val labels = mutableMapOf<String, LocalSemanticLabel>()
             output.forEachIndexed { index, value ->
                 val modelLabel = labelIndexes[index] ?: return@forEachIndexed
                 val rawScore = ((value.toInt() and 0xff) - outputZeroPoint) * outputScale
                 val calibrated = calibrate(index, rawScore)
-                val current = labels[modelLabel.canonical]
-                if (current == null || current.confidence < calibrated) {
-                    labels[modelLabel.canonical] = ScoredLabel(
-                        confidence = calibrated,
-                        isPreparedFood = modelLabel.isPreparedFood || current?.isPreparedFood == true,
-                    )
-                } else if (modelLabel.isPreparedFood && !current.isPreparedFood) {
-                    labels[modelLabel.canonical] = current.copy(isPreparedFood = true)
-                }
-            }
-            return labels.map { (label, confidence) ->
-                LocalSemanticLabel(
-                    label = label,
-                    confidence = confidence.confidence,
-                    isPreparedFood = confidence.isPreparedFood,
+                labels[modelLabel.canonical] = mergeSemanticScore(
+                    current = labels[modelLabel.canonical],
+                    canonical = modelLabel.canonical,
+                    confidence = calibrated,
+                    isPreparedFood = modelLabel.isPreparedFood,
                 )
             }
+            return labels.values.toList()
         }
 
         private fun calibrate(index: Int, rawScore: Float): Float {
@@ -311,10 +322,6 @@ class LocalSemanticImageLabeler @Inject constructor(
                 val isPreparedFood: Boolean,
             )
 
-            private data class ScoredLabel(
-                val confidence: Float,
-                val isPreparedFood: Boolean,
-            )
         }
     }
 

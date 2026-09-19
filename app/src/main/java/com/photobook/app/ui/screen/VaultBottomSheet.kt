@@ -29,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,11 +58,13 @@ fun VaultBottomSheet(
     isBusy: Boolean,
     onDismiss: () -> Unit,
     onRefresh: () -> Unit,
+    onPreviewNeeded: (VaultItem) -> Unit,
     onMoveOut: (VaultItem) -> Unit,
     onDelete: (VaultItem) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var previewItem by remember(items) { mutableStateOf<VaultItem?>(null) }
+    var previewItemId by remember { mutableStateOf<String?>(null) }
+    val previewItem = items.firstOrNull { item -> item.id == previewItemId }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -124,7 +127,8 @@ fun VaultBottomSheet(
                             VaultItemCard(
                                 item = item,
                                 isBusy = isBusy,
-                                onPreview = { previewItem = item },
+                                onPreviewNeeded = { onPreviewNeeded(item) },
+                                onPreview = { previewItemId = item.id },
                                 onMoveOut = { onMoveOut(item) },
                                 onDelete = { onDelete(item) },
                             )
@@ -139,13 +143,13 @@ fun VaultBottomSheet(
         VaultItemPreviewDialog(
             item = item,
             isBusy = isBusy,
-            onDismiss = { previewItem = null },
+            onDismiss = { previewItemId = null },
             onMoveOut = {
-                previewItem = null
+                previewItemId = null
                 onMoveOut(item)
             },
             onDelete = {
-                previewItem = null
+                previewItemId = null
                 onDelete(item)
             },
         )
@@ -156,10 +160,17 @@ fun VaultBottomSheet(
 private fun VaultItemCard(
     item: VaultItem,
     isBusy: Boolean,
+    onPreviewNeeded: () -> Unit,
     onPreview: () -> Unit,
     onMoveOut: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    LaunchedEffect(item.id, item.previewUri) {
+        if (item.previewUri == null) {
+            onPreviewNeeded()
+        }
+    }
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
         tonalElevation = 1.dp,

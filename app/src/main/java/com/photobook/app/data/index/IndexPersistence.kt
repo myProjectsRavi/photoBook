@@ -33,6 +33,7 @@ class IndexPersistence @Inject constructor(
         return withContext(Dispatchers.IO) {
             val loadStartMs = SystemClock.elapsedRealtime()
             reopenLegacyOcrFailuresIfNeeded()
+            reopenDerivedSemanticIntelligenceIfNeeded()
             val existing = photoDao.getAll().map { it.toPhotoRecord() }
             if (existing.isNotEmpty()) {
                 Log.i(
@@ -74,15 +75,43 @@ class IndexPersistence @Inject constructor(
         if (records.isEmpty()) return
         withContext(Dispatchers.IO) {
             database.withTransaction {
-                val entities = records.map { it.toPhotoEntity() }
-                entities.chunked(DB_BATCH_SIZE).forEach { batch ->
-                    photoDao.upsertPhotos(batch)
-                }
-                entities.map { it.toFtsEntity() }
-                    .chunked(DB_BATCH_SIZE)
-                    .forEach { batch ->
-                        photoDao.upsertFtsRows(batch)
+                records.chunked(DB_BATCH_SIZE).forEach { batch ->
+                    val currentById = photoDao.getByIds(batch.map { record -> record.id })
+                        .associateBy { entity -> entity.id }
+                    val entities = batch.map { record ->
+                        val current = currentById[record.id]?.toPhotoRecord()
+                        record.preserveCommittedMutableFields(current).toPhotoEntity()
                     }
+                    photoDao.upsertPhotos(entities)
+                    photoDao.upsertFtsRows(entities.map { it.toFtsEntity() })
+                }
+            }
+        }
+    }
+
+    suspend fun applyIntelligenceUpdates(
+        updates: List<PhotoIndex.PhotoIntelligenceUpdate>,
+    ): List<PhotoRecord> {
+        if (updates.isEmpty()) return emptyList()
+        return withContext(Dispatchers.IO) {
+            database.withTransaction {
+                val updatesById = updates.associateBy { update -> update.id }
+                val currentRecords = photoDao.getByIds(updatesById.keys.toList())
+                    .map { entity -> entity.toPhotoRecord() }
+
+                val committed = currentRecords.mapNotNull { record ->
+                    val update = updatesById[record.id] ?: return@mapNotNull null
+                    val nextTags = update.tags?.let { incoming ->
+                        mergeTags(record.mlTags, incoming)
+                    } ?: record.mlTags
+                    applyIntelligenceUpdate(record, update, nextTags)
+                }
+                if (committed.isNotEmpty()) {
+                    val entities = committed.map { record -> record.toPhotoEntity() }
+                    photoDao.upsertPhotos(entities)
+                    photoDao.upsertFtsRows(entities.map { entity -> entity.toFtsEntity() })
+                }
+                committed
             }
         }
     }
@@ -111,6 +140,17 @@ class IndexPersistence @Inject constructor(
             }
             val byId = entities.associateBy { entity -> entity.id }
             ids.mapNotNull { id -> byId[id]?.toPhotoRecord() }
+        }
+    }
+
+    suspend fun getPendingIntelligenceBatch(
+        afterId: Long,
+        limit: Int,
+    ): List<PhotoRecord> {
+        if (limit <= 0) return emptyList()
+        return withContext(Dispatchers.IO) {
+            photoDao.getPendingIntelligenceAfter(afterId, limit)
+                .map { entity -> entity.toPhotoRecord() }
         }
     }
 
@@ -156,6 +196,21 @@ class IndexPersistence @Inject constructor(
         // the next process start. No schema migration or user database reset is required.
     }
 
+    private suspend fun reopenDerivedSemanticIntelligenceIfNeeded() {
+        if (dataRepairPreferences.getBoolean(KEY_SEMANTIC_INTELLIGENCE_V2_REPAIR_COMPLETE, false)) return
+
+        val reopenedCount = photoDao.reopenDerivedSemanticIntelligence()
+        val committed = dataRepairPreferences.edit()
+            .putBoolean(KEY_SEMANTIC_INTELLIGENCE_V2_REPAIR_COMPLETE, true)
+            .commit()
+        Log.i(
+            PHASE4_TAG,
+            "stage=semantic_intelligence_v2_repair reopened=$reopenedCount preferenceCommitted=$committed",
+        )
+        // Search no longer consumes the legacy FTS candidate table as an exclusive source. FTS rows
+        // are refreshed atomically as the durable maintenance worker reprocesses each affected row.
+    }
+
     private suspend fun replaceAll(records: List<PhotoRecord>) {
         database.withTransaction {
             if (records.isEmpty()) {
@@ -172,7 +227,13 @@ class IndexPersistence @Inject constructor(
             var startIndex = 0
             while (startIndex < records.size) {
                 val endIndex = (startIndex + DB_BATCH_SIZE).coerceAtMost(records.size)
-                val entities = records.subList(startIndex, endIndex).map { it.toPhotoEntity() }
+                val batch = records.subList(startIndex, endIndex)
+                val currentById = photoDao.getByIds(batch.map { record -> record.id })
+                    .associateBy { entity -> entity.id }
+                val entities = batch.map { record ->
+                    val current = currentById[record.id]?.toPhotoRecord()
+                    record.preserveCommittedMutableFields(current).toPhotoEntity()
+                }
                 photoDao.upsertPhotos(entities)
                 photoDao.upsertFtsRows(entities.map { it.toFtsEntity() })
                 entities.forEach { entity -> staleIds.remove(entity.id) }
@@ -181,6 +242,22 @@ class IndexPersistence @Inject constructor(
 
             deleteByIdsInternal(staleIds.toList())
         }
+    }
+
+    private fun PhotoRecord.preserveCommittedMutableFields(current: PhotoRecord?): PhotoRecord {
+        if (current == null) return this
+        return copy(
+            isFavorite = current.isFavorite,
+            perceptualHash = current.perceptualHash,
+            blurScore = current.blurScore,
+            mlTags = current.mlTags,
+            isArchiveFoodCandidate = current.isArchiveFoodCandidate,
+            isMlProcessed = current.isMlProcessed,
+            mlStatus = current.mlStatus,
+            ocrText = current.ocrText,
+            isOcrProcessed = current.isOcrProcessed,
+            ocrStatus = current.ocrStatus,
+        )
     }
 
     private suspend fun deleteByIdsInternal(ids: List<Long>) {
@@ -306,5 +383,7 @@ class IndexPersistence @Inject constructor(
         private const val PHASE4_TAG = "PhotoBookPhase4"
         private const val DATA_REPAIR_PREFS = "photobook_data_repairs"
         private const val KEY_OCR_ENGINE_REPAIR_COMPLETE = "ocr_engine_v1_repair_complete"
+        private const val KEY_SEMANTIC_INTELLIGENCE_V2_REPAIR_COMPLETE =
+            "semantic_intelligence_v2_repair_complete"
     }
 }

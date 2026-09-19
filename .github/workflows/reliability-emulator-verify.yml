@@ -1,0 +1,266 @@
+name: Reliability Emulator Verification
+
+on:
+  push:
+    branches:
+      - "feature/reliability-search-audit-repair"
+    paths:
+      - "app/src/**"
+      - "app/build.gradle.kts"
+      - "gradle/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "tools/benchmark/**"
+      - ".github/workflows/reliability-emulator-verify.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reliability-emulator-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api35-offline:
+    name: api35-offline-2gb
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Install emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+
+      - name: Provision Android 15 emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n 1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager 2>/dev/null | sort | tail -n 1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          SYSTEM_IMAGE="system-images;android-35;google_apis;x86_64"
+          AVD_NAME="photobook-reliability-api35"
+
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+
+          test -x "$SDKMANAGER"
+          test -x "$AVDMANAGER"
+          test -x "$ADB"
+          # Hosted runner images carry NDK/CMake toolchains that PhotoBook does not use.
+          # Reclaim them before provisioning because the current API-35 Google APIs userdata
+          # image requires slightly more free disk than the stock runner leaves available.
+          sudo rm -rf "$SDK_ROOT/ndk" "$SDK_ROOT/cmake"
+          df -h "$SDK_ROOT" "$RUNNER_TEMP" || true
+
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 "emulator" "$SYSTEM_IMAGE"
+          test -x "$EMULATOR"
+
+          echo "no" | "$AVDMANAGER" create avd \
+            --force \
+            --name "$AVD_NAME" \
+            --package "$SYSTEM_IMAGE" \
+            --device "pixel_2" \
+            --path "$ANDROID_AVD_HOME/$AVD_NAME.avd"
+
+          test -f "$ANDROID_AVD_HOME/$AVD_NAME.ini"
+          test -d "$ANDROID_AVD_HOME/$AVD_NAME.avd"
+          "$EMULATOR" -list-avds | tee "$RUNNER_TEMP/reliability-avd-list.txt"
+          grep -Fxq "$AVD_NAME" "$RUNNER_TEMP/reliability-avd-list.txt"
+
+          if [[ ! -e /dev/kvm ]]; then
+            echo "GitHub runner has no /dev/kvm; refusing software-emulated reliability evidence."
+            exit 1
+          fi
+          sudo chmod 666 /dev/kvm
+          "$EMULATOR" -accel-check
+
+          nohup "$EMULATOR" \
+            -avd "$AVD_NAME" \
+            -no-window \
+            -no-audio \
+            -no-boot-anim \
+            -no-snapshot \
+            -no-metrics \
+            -gpu swiftshader_indirect \
+            -memory 2048 \
+            -cores 2 \
+            > "$RUNNER_TEMP/reliability-emulator.log" 2>&1 &
+          EMULATOR_PID=$!
+
+          device_ready=false
+          for attempt in $(seq 1 120); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then
+              device_ready=true
+              break
+            fi
+            if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then
+              echo "Android emulator exited before ADB became ready"
+              cat "$RUNNER_TEMP/reliability-emulator.log" || true
+              exit 1
+            fi
+            sleep 2
+          done
+          [[ "$device_ready" == "true" ]] || {
+            cat "$RUNNER_TEMP/reliability-emulator.log" || true
+            exit 1
+          }
+
+          boot_complete=false
+          for attempt in $(seq 1 120); do
+            if [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
+              boot_complete=true
+              break
+            fi
+            if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then
+              echo "Android emulator exited before boot completed"
+              cat "$RUNNER_TEMP/reliability-emulator.log" || true
+              exit 1
+            fi
+            sleep 2
+          done
+          [[ "$boot_complete" == "true" ]] || {
+            cat "$RUNNER_TEMP/reliability-emulator.log" || true
+            exit 1
+          }
+
+          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          echo "$SDK_ROOT/emulator" >> "$GITHUB_PATH"
+          "$ADB" shell settings put global window_animation_scale 0
+          "$ADB" shell settings put global transition_animation_scale 0
+          "$ADB" shell settings put global animator_duration_scale 0
+          "$ADB" shell input keyevent 82 || true
+          echo "SDK=$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"
+          echo "ABI=$("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r')"
+          RAM_KB="$("$ADB" shell cat /proc/meminfo | tr -d '\r' | awk '/MemTotal/ {print $2; exit}')"
+          echo "RAM=${RAM_KB} kB"
+
+      - name: Warm Gradle dependencies and build test APKs
+        run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace
+
+      - name: Cut emulator network and clear diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          adb shell svc wifi disable || true
+          adb shell svc data disable || true
+          adb shell settings put global airplane_mode_on 1 || true
+          adb shell am broadcast -a android.intent.action.AIRPLANE_MODE --ez state true >/dev/null 2>&1 || true
+          adb logcat -c
+
+      - name: Verify emulator network isolation
+        # The exact same commit is separately gated by Android Verification, whose Phase-0 script
+        # inspects the built release APK with aapt and fails if INTERNET is requested. Keep this
+        # hosted runtime gate focused on device-side isolation instead of duplicating that contract.
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/reports/reliability-emulator
+          AIRPLANE_MODE="$(adb shell settings get global airplane_mode_on | tr -d '\r')"
+          {
+            echo "airplane_mode_on=${AIRPLANE_MODE}"
+            echo "sdk=$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
+            echo "abi=$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
+          } | tee build/reports/reliability-emulator/network-isolation.txt
+          if [[ "$AIRPLANE_MODE" != "1" ]]; then
+            echo "Hosted emulator is not in airplane mode"
+            exit 1
+          fi
+
+      - name: Run Android instrumentation with emulator offline
+        # The GitHub host remains online only for Gradle/UTP runner tooling. The emulator itself
+        # has Wi-Fi/data disabled and airplane mode enabled before PhotoBook instrumentation runs.
+        run: ./gradlew :app:connectedDebugAndroidTest --stacktrace
+
+      - name: Exercise repeated cold starts
+        shell: bash
+        run: |
+          set -euo pipefail
+          PACKAGE="com.photobook.app"
+          mapfile -t DEBUG_APKS < <(
+            find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*arm64-v8a*.apk' -print | sort
+          )
+          if [[ "${#DEBUG_APKS[@]}" -ne 1 ]]; then
+            echo "Expected exactly one ARM64 debug APK, found ${#DEBUG_APKS[@]}." >&2
+            find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' -print | sort >&2 || true
+            exit 1
+          fi
+          APK="${DEBUG_APKS[0]}"
+          echo "cold_start_apk=$APK"
+
+          # PhotoBook intentionally builds per-ABI APKs with no universal APK. The hosted x86_64
+          # image has already executed the ARM64 target under translation during instrumentation.
+          # connectedDebugAndroidTest removes the target package during cleanup, so reinstall the
+          # exact ARM64 debug split before cold-start stress.
+          adb install -r "$APK" >/dev/null
+          adb shell pm path "$PACKAGE" | tee "$RUNNER_TEMP/photobook-installed-package.txt"
+          grep -Fq "package:" "$RUNNER_TEMP/photobook-installed-package.txt"
+
+          for iteration in $(seq 1 20); do
+            adb shell am force-stop "$PACKAGE"
+            adb shell am start -W \
+              -a android.intent.action.MAIN \
+              -c android.intent.category.LAUNCHER \
+              -n "$PACKAGE/.MainActivity" \
+              >/dev/null
+            sleep 1
+          done
+          adb shell am force-stop "$PACKAGE"
+
+      - name: Fail on crash ANR or OOM signatures
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/reports/reliability-emulator
+          adb logcat -d > build/reports/reliability-emulator/logcat.txt
+          adb shell dumpsys meminfo com.photobook.app > build/reports/reliability-emulator/meminfo.txt 2>/dev/null || true
+          PATTERN='ANR in com\.photobook\.app|FATAL EXCEPTION.*photobook|OutOfMemoryError|Application Not Responding'
+          if grep -E -i "$PATTERN" build/reports/reliability-emulator/logcat.txt; then
+            echo "PhotoBook crash/ANR/OOM signature detected in hosted emulator evidence."
+            exit 1
+          fi
+
+      - name: Capture emulator diagnostics
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          mkdir -p build/reports/reliability-emulator
+          adb devices -l > build/reports/reliability-emulator/adb-devices.txt 2>/dev/null || true
+          adb shell getprop > build/reports/reliability-emulator/getprop.txt 2>/dev/null || true
+          adb shell dumpsys activity processes > build/reports/reliability-emulator/activity-processes.txt 2>/dev/null || true
+          adb logcat -d > build/reports/reliability-emulator/logcat-final.txt 2>/dev/null || true
+          cp "$RUNNER_TEMP/reliability-emulator.log" build/reports/reliability-emulator/emulator.log 2>/dev/null || true
+          cp "$RUNNER_TEMP/reliability-avd-list.txt" build/reports/reliability-emulator/avd-list.txt 2>/dev/null || true
+          cp "$RUNNER_TEMP/photobook-installed-package.txt" build/reports/reliability-emulator/installed-package.txt 2>/dev/null || true
+
+      - name: Upload hosted emulator evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reliability-emulator-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+            build/reports/reliability-emulator/

@@ -3,6 +3,7 @@ package com.photobook.app.ml
 import android.content.Context
 import android.os.BatteryManager
 import androidx.hilt.work.HiltWorker
+import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.Data
@@ -14,14 +15,19 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.photobook.app.data.model.IntelligenceStatus
+import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.data.index.IndexCommitCoordinator
 import com.photobook.app.data.index.IndexPersistence
 import com.photobook.app.data.index.PhotoIndex
+import com.photobook.app.data.source.MediaStoreScanner
 import com.photobook.app.feature.duplicates.BlurScoreComputer
 import com.photobook.app.feature.duplicates.PerceptualHashComputer
 import com.photobook.app.util.Constants
 import com.photobook.app.util.LocalDiagnostics
+import com.photobook.app.util.PermissionUtils
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
@@ -31,6 +37,8 @@ class TaggingWorker @AssistedInject constructor(
     @Assisted params: WorkerParameters,
     private val photoIndex: PhotoIndex,
     private val indexPersistence: IndexPersistence,
+    private val indexCommitCoordinator: IndexCommitCoordinator,
+    private val mediaStoreScanner: MediaStoreScanner,
     private val mlTagger: MLTagger,
     private val perceptualHashComputer: PerceptualHashComputer,
     private val blurScoreComputer: BlurScoreComputer,
@@ -59,19 +67,75 @@ class TaggingWorker @AssistedInject constructor(
         }
 
         val requestedIds = inputData.getLongArray(KEY_TARGET_PHOTO_IDS)?.toSet().orEmpty()
-        val photos = if (requestedIds.isEmpty()) {
-            photoIndex.snapshot()
-        } else {
-            photoIndex.snapshot().filter { photo -> photo.id in requestedIds }
+        if (requestedIds.isNotEmpty()) {
+            val requestedIdList = requestedIds.toList()
+            val focused = indexPersistence.getByIdsOrdered(requestedIdList)
+            if (focused.isEmpty()) return Result.success()
+            if (!processPhotoBatch(focused, processedBefore = 0)) return Result.retry()
+            val hasRemainingFocusedWork = indexPersistence.getByIdsOrdered(requestedIdList)
+                .any { photo -> photo.needsIntelligenceWork() }
+            return resultForRemainingWork(hasRemainingFocusedWork)
         }
-        if (photos.isEmpty()) {
+
+        val accessMode = PermissionUtils.photoAccessMode(applicationContext)
+        if (accessMode == PermissionUtils.PhotoAccessMode.None) {
             return Result.success()
         }
 
+        if (accessMode == PermissionUtils.PhotoAccessMode.Limited) {
+            val visibleIds = mediaStoreScanner.scanAllIds().sorted()
+            var processed = 0
+            visibleIds.chunked(DURABLE_FETCH_BATCH_SIZE).forEach { batchIds ->
+                if (isStopped) return Result.retry()
+                val photos = indexPersistence.getByIdsOrdered(batchIds)
+                    .filter { photo -> photo.needsIntelligenceWork() }
+                if (!processPhotoBatch(photos, processedBefore = processed)) {
+                    return Result.retry()
+                }
+                processed += photos.size
+            }
+            val hasRemainingVisibleWork = mediaStoreScanner.scanAllIds()
+                .chunked(DURABLE_FETCH_BATCH_SIZE)
+                .any { ids ->
+                    indexPersistence.getByIdsOrdered(ids.toList())
+                        .any { photo -> photo.needsIntelligenceWork() }
+                }
+            return resultForRemainingWork(hasRemainingVisibleWork)
+        }
+
+        var afterId = -1L
+        var processed = 0
+        while (true) {
+            if (isStopped) return Result.retry()
+
+            val photos = indexPersistence.getPendingIntelligenceBatch(
+                afterId = afterId,
+                limit = DURABLE_FETCH_BATCH_SIZE,
+            )
+            if (photos.isEmpty()) break
+
+            if (!processPhotoBatch(photos, processedBefore = processed)) {
+                return Result.retry()
+            }
+            processed += photos.size
+            afterId = photos.last().id
+        }
+
+        val hasRemainingLibraryWork = indexPersistence.getPendingIntelligenceBatch(
+            afterId = -1L,
+            limit = 1,
+        ).isNotEmpty()
+        return resultForRemainingWork(hasRemainingLibraryWork)
+    }
+
+    private suspend fun processPhotoBatch(
+        photos: List<PhotoRecord>,
+        processedBefore: Int,
+    ): Boolean {
         val pendingIndexUpdates = mutableListOf<PhotoIndex.PhotoIntelligenceUpdate>()
 
         photos.forEachIndexed { index, photo ->
-            if (isStopped) return Result.retry()
+            if (isStopped) return false
 
             val needsMl = photo.mlStatus.shouldProcess
             val needsOcr = photo.ocrStatus.shouldProcess
@@ -164,29 +228,54 @@ class TaggingWorker @AssistedInject constructor(
             }
 
             if (pendingIndexUpdates.size >= Constants.BATCH_SIZE) {
-                val updatedRecords = photoIndex.updatePhotosIntelligence(pendingIndexUpdates)
-                if (updatedRecords.isNotEmpty()) {
-                    indexPersistence.upsertAll(updatedRecords)
-                }
-                pendingIndexUpdates.clear()
-
-                if (isBatteryTooLow()) return Result.retry()
+                flushPendingUpdates(pendingIndexUpdates)
+                if (isBatteryTooLow()) return false
                 delay(Constants.BATCH_DELAY_MS)
             }
 
-            if (index % 500 == 0) {
-                setProgress(androidx.work.workDataOf("processed" to index, "total" to photos.size))
+            val processed = processedBefore + index + 1
+            if (processed % PROGRESS_INTERVAL == 0) {
+                setProgress(workDataOf("processed" to processed))
             }
         }
 
         if (pendingIndexUpdates.isNotEmpty()) {
-            val updatedRecords = photoIndex.updatePhotosIntelligence(pendingIndexUpdates)
-            if (updatedRecords.isNotEmpty()) {
-                indexPersistence.upsertAll(updatedRecords)
-            }
-            pendingIndexUpdates.clear()
+            flushPendingUpdates(pendingIndexUpdates)
         }
-        return Result.success()
+        return true
+    }
+
+    private fun PhotoRecord.needsIntelligenceWork(): Boolean {
+        return mlStatus.shouldProcess ||
+            ocrStatus.shouldProcess ||
+            perceptualHash == null ||
+            blurScore == null
+    }
+
+    private fun resultForRemainingWork(hasRemainingWork: Boolean): Result {
+        if (!hasRemainingWork) return Result.success()
+        return if (runAttemptCount < MAX_RETRY_ATTEMPTS) {
+            Result.retry()
+        } else {
+            Result.failure(workDataOf("reason" to "intelligence_work_incomplete"))
+        }
+    }
+
+    private suspend fun flushPendingUpdates(
+        pendingIndexUpdates: MutableList<PhotoIndex.PhotoIntelligenceUpdate>,
+    ) {
+        if (pendingIndexUpdates.isEmpty()) return
+        val updates = pendingIndexUpdates.toList()
+        indexCommitCoordinator.withCommit {
+            val committed = indexPersistence.applyIntelligenceUpdates(updates)
+            if (committed.isNotEmpty()) {
+                val committedIds = committed.asSequence().map { record -> record.id }.toHashSet()
+                photoIndex.updatePhotosIntelligence(
+                    updates.filter { update -> update.id in committedIds },
+                )
+            }
+        }
+        pendingIndexUpdates.clear()
     }
 
     private fun isBatteryTooLow(): Boolean {
@@ -200,22 +289,28 @@ class TaggingWorker @AssistedInject constructor(
         private const val KEY_TARGET_PHOTO_IDS = "target_photo_ids"
         private const val PRIORITY_WORK_NAME_PREFIX = "photobook_ml_worker_priority"
         private const val MAX_RETRY_ATTEMPTS = 3
+        private const val DURABLE_FETCH_BATCH_SIZE = 200
+        private const val PROGRESS_INTERVAL = 500
+        private const val MAINTENANCE_BACKOFF_SECONDS = 30L
 
         fun enqueueLibraryMaintenance(context: Context) {
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
                 .setRequiresBatteryNotLow(true)
-                .setRequiresCharging(true)
-                .setRequiresDeviceIdle(true)
                 .build()
 
             val request = OneTimeWorkRequestBuilder<TaggingWorker>()
                 .setConstraints(constraints)
+                .setBackoffCriteria(
+                    BackoffPolicy.EXPONENTIAL,
+                    MAINTENANCE_BACKOFF_SECONDS,
+                    TimeUnit.SECONDS,
+                )
                 .build()
 
             WorkManager.getInstance(context).enqueueUniqueWork(
                 Constants.ML_WORKER_NAME,
-                ExistingWorkPolicy.REPLACE,
+                ExistingWorkPolicy.KEEP,
                 request,
             )
         }

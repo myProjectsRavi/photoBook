@@ -136,6 +136,8 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     var pendingArchiveDueDeleteIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var showVault by remember { mutableStateOf(false) }
     var vaultItems by remember { mutableStateOf<List<VaultItem>>(emptyList()) }
+    var vaultSession by remember { mutableStateOf<VaultCryptoSession?>(null) }
+    var vaultPreviewGeneration by remember { mutableStateOf<Long?>(null) }
     var isVaultLoading by remember { mutableStateOf(false) }
     var isVaultBusy by remember { mutableStateOf(false) }
 
@@ -147,7 +149,12 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
-        viewModel.refreshPermissionStatus(PermissionUtils.photoAccessMode(context))
+        // A limited-to-limited reselection can keep the same coarse permission mode while changing
+        // the actual visible MediaStore set, so permission results always force reconciliation.
+        viewModel.refreshPermissionStatus(
+            accessMode = PermissionUtils.photoAccessMode(context),
+            forceReconcile = true,
+        )
     }
     val trashRequestLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult(),
@@ -217,6 +224,8 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         showVault = false
         val previewCleanupGeneration = vaultService.invalidatePreviewCache()
         vaultItems = emptyList()
+        vaultSession = null
+        vaultPreviewGeneration = null
         isVaultLoading = false
         isVaultBusy = false
         coroutineScope.launch {
@@ -227,15 +236,38 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     suspend fun loadVisibleVaultItems(session: VaultCryptoSession): List<VaultItem> {
         if (!showVault) return emptyList()
         val previewGeneration = vaultService.beginPreviewLoad()
+        vaultSession = session
+        vaultPreviewGeneration = previewGeneration
         val items = vaultService.listItems(
             session = session,
-            includePreviews = true,
-            previewGeneration = previewGeneration,
+            includePreviews = false,
         )
         return when {
             !showVault -> emptyList()
             vaultService.isPreviewLoadCurrent(previewGeneration) -> items
             else -> vaultItems
+        }
+    }
+
+    fun requestVaultPreview(item: VaultItem) {
+        if (item.previewUri != null || !showVault) return
+        val session = vaultSession ?: return
+        val previewGeneration = vaultPreviewGeneration ?: return
+        coroutineScope.launch {
+            val previewUri = runCatching {
+                vaultService.loadPreview(
+                    itemId = item.id,
+                    session = session,
+                    previewGeneration = previewGeneration,
+                )
+            }.getOrNull() ?: return@launch
+
+            if (!showVault || !vaultService.isPreviewLoadCurrent(previewGeneration)) {
+                return@launch
+            }
+            vaultItems = vaultItems.map { current ->
+                if (current.id == item.id) current.copy(previewUri = previewUri) else current
+            }
         }
     }
 
@@ -406,8 +438,22 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
 
     DisposableEffect(lifecycleOwner, showVault) {
         val observer = LifecycleEventObserver { _, event ->
-            if (showVault && event == Lifecycle.Event.ON_STOP) {
-                closeVault()
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    val mode = PermissionUtils.photoAccessMode(context)
+                    viewModel.refreshPermissionStatus(
+                        accessMode = mode,
+                        // Android 14 selected-photo membership can change without changing the
+                        // permission mode or MediaStore generation/version.
+                        forceReconcile = mode == PermissionUtils.PhotoAccessMode.Limited,
+                    )
+                }
+
+                Lifecycle.Event.ON_STOP -> {
+                    if (showVault) closeVault()
+                }
+
+                else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -527,6 +573,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         query = uiState.query,
         results = pagedResults,
         resultCount = uiState.resultCount,
+        resultQuery = uiState.resultQuery,
         searchReady = uiState.searchReady,
         favoritesOnly = uiState.favoritesOnly,
         reelsEnabled = uiState.reelsEnabled,
@@ -760,6 +807,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                     refreshVault(session)
                 }
             },
+            onPreviewNeeded = { item -> requestVaultPreview(item) },
             onMoveOut = { item ->
                 authenticateVault { session ->
                     moveVaultItemOut(item, session)

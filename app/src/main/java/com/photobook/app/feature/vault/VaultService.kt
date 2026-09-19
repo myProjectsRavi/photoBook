@@ -27,8 +27,12 @@ import java.security.MessageDigest
 import java.util.UUID
 import javax.crypto.Cipher
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 
@@ -187,6 +191,41 @@ class VaultService @Inject constructor(
         }
     }
 
+    suspend fun loadPreview(
+        itemId: String,
+        session: VaultCryptoSession,
+        previewGeneration: Long,
+    ): Uri? = withContext(Dispatchers.IO) {
+        previewCacheMutex.withLock {
+            if (previewCacheGeneration.get() != previewGeneration) {
+                return@withContext null
+            }
+            if (previewCacheNeedsCleanup.compareAndSet(true, false)) {
+                if (!deletePreviewCacheFiles()) {
+                    previewCacheNeedsCleanup.set(true)
+                    throw IOException("Unable to clear stale Vault preview cache")
+                }
+            }
+            if (previewCacheGeneration.get() != previewGeneration) {
+                return@withContext null
+            }
+
+            migrateLegacyItemsIfNeeded()
+            migrateLegacyCiphertextIfNeeded(session)
+            val entity = vaultDao.getVaultItemById(itemId) ?: return@withContext null
+            val uri = createPreviewUri(
+                entity = entity,
+                session = session,
+                expectedPreviewGeneration = previewGeneration,
+            )
+            if (uri != null) {
+                runCatching { previewFile(itemId).setLastModified(System.currentTimeMillis()) }
+                trimPreviewCache()
+            }
+            uri
+        }
+    }
+
     suspend fun addPhotos(
         photos: List<PhotoRecord>,
         session: VaultCryptoSession,
@@ -293,14 +332,14 @@ class VaultService @Inject constructor(
         itemId: String,
         session: VaultCryptoSession,
     ): VaultExportResult = withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             migrateLegacyItemsIfNeeded()
             migrateLegacyCiphertextIfNeeded(session)
             val item = vaultDao.getVaultItemById(itemId)
-                ?: return@runCatching VaultExportResult.Error()
+                ?: return@withContext VaultExportResult.Error()
             val encryptedFile = File(vaultDir, item.encryptedFileName)
             if (!encryptedFile.exists()) {
-                return@runCatching VaultExportResult.Error()
+                return@withContext VaultExportResult.Error()
             }
 
             val outputName = buildExportFileName(item.originalFileName)
@@ -314,35 +353,63 @@ class VaultService @Inject constructor(
                 }
             }
 
-            val outputUri = context.contentResolver.insert(
+            val resolver = context.contentResolver
+            currentCoroutineContext().ensureActive()
+            val outputUri = resolver.insert(
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                 values,
-            ) ?: return@runCatching VaultExportResult.Error()
+            ) ?: return@withContext VaultExportResult.Error()
 
+            var committed = false
             try {
-                val decryptedInput = openVaultInput(item, session)
-                val output = context.contentResolver.openOutputStream(outputUri, "w")
-                    ?: return@runCatching VaultExportResult.Error()
-                decryptedInput.use { input ->
-                    output.use { stream ->
-                        input.copyTo(stream)
+                currentCoroutineContext().ensureActive()
+                val sourceDigest = MessageDigest.getInstance("SHA-256")
+                val copiedBytes = openVaultInput(item, session).use { decryptedInput ->
+                    DigestInputStream(decryptedInput, sourceDigest).use { digestingInput ->
+                        val output = resolver.openOutputStream(outputUri, "w")
+                            ?: throw IOException("Unable to open Vault export output")
+                        output.use { stream ->
+                            val copied = digestingInput.copyTo(stream, STREAM_BUFFER_BYTES)
+                            stream.flush()
+                            copied
+                        }
                     }
                 }
+                if (copiedBytes <= 0L) {
+                    throw IOException("Vault export produced no bytes")
+                }
+                val expectedDigest = sourceDigest.digest()
 
+                currentCoroutineContext().ensureActive()
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    context.contentResolver.update(
+                    val updated = resolver.update(
                         outputUri,
                         ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) },
                         null,
                         null,
                     )
+                    if (updated != 1) {
+                        throw IOException("Vault export publication failed")
+                    }
                 }
+
+                currentCoroutineContext().ensureActive()
+                val actualDigest = resolver.openInputStream(outputUri)?.let(::sha256)
+                    ?: throw IOException("Vault export is not readable after publication")
+                if (!MessageDigest.isEqual(expectedDigest, actualDigest)) {
+                    throw IOException("Vault export integrity verification failed")
+                }
+
+                committed = true
                 VaultExportResult.Success(uri = outputUri, fileName = outputName)
-            } catch (t: Throwable) {
-                runCatching { context.contentResolver.delete(outputUri, null, null) }
-                VaultExportResult.Error(t)
+            } finally {
+                if (!committed) {
+                    runCatching { resolver.delete(outputUri, null, null) }
+                }
             }
-        }.getOrElse { error ->
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
             VaultExportResult.Error(error)
         }
     }
@@ -406,6 +473,7 @@ class VaultService @Inject constructor(
         val previewFile = previewFile(entity.id)
         if (previewFile.exists() && previewFile.length() > 0L) {
             return if (previewCacheGeneration.get() == expectedPreviewGeneration) {
+                runCatching { previewFile.setLastModified(System.currentTimeMillis()) }
                 Uri.fromFile(previewFile)
             } else {
                 null
@@ -609,6 +677,17 @@ class VaultService @Inject constructor(
         runCatching { previewFile(itemId).delete() }
     }
 
+    private fun trimPreviewCache() {
+        val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)
+        val files = previewRoot.listFiles()
+            ?.filter { file -> file.isFile && file.extension.equals("jpg", ignoreCase = true) }
+            ?.sortedByDescending { file -> file.lastModified() }
+            .orEmpty()
+        files.drop(MAX_PREVIEW_CACHE_FILES).forEach { file ->
+            runCatching { file.delete() }
+        }
+    }
+
     private fun calculateInSampleSize(width: Int, height: Int, maxEdge: Int): Int {
         var sampleSize = 1
         var sampledWidth = width
@@ -699,6 +778,7 @@ class VaultService @Inject constructor(
         private const val INSERT_CONFLICT = -1L
         private const val PREVIEW_MAX_EDGE_PX = 960
         private const val PREVIEW_JPEG_QUALITY = 82
+        private const val MAX_PREVIEW_CACHE_FILES = 48
         private const val STREAM_BUFFER_BYTES = 64 * 1024
     }
 }

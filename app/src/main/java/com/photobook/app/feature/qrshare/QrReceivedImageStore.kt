@@ -9,11 +9,16 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.security.MessageDigest
+import java.util.concurrent.CancellationException
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 
 class QrReceivedImageStore @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -41,7 +46,12 @@ class QrReceivedImageStore @Inject constructor(
         }
     }
 
-    private fun saveWithMediaStore(bytes: ByteArray, fileName: String, mimeType: String): Uri? {
+    private suspend fun saveWithMediaStore(
+        bytes: ByteArray,
+        fileName: String,
+        mimeType: String,
+    ): Uri? {
+        val resolver = context.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
             put(MediaStore.Images.Media.MIME_TYPE, mimeType)
@@ -49,45 +59,94 @@ class QrReceivedImageStore @Inject constructor(
             put(MediaStore.Images.Media.IS_PENDING, 1)
         }
 
-        val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+        currentCoroutineContext().ensureActive()
+        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             ?: return null
-        return runCatching {
-            context.contentResolver.openOutputStream(uri)?.use { stream ->
+        var committed = false
+        try {
+            currentCoroutineContext().ensureActive()
+            val output = resolver.openOutputStream(uri)
+                ?: return null
+            output.use { stream ->
                 stream.write(bytes)
                 stream.flush()
-            } ?: return null
+            }
 
+            currentCoroutineContext().ensureActive()
             values.clear()
             values.put(MediaStore.Images.Media.IS_PENDING, 0)
-            context.contentResolver.update(uri, values, null, null)
-            uri
-        }.getOrElse {
-            context.contentResolver.delete(uri, null, null)
-            null
+            if (resolver.update(uri, values, null, null) <= 0) {
+                return null
+            }
+
+            currentCoroutineContext().ensureActive()
+            if (!verifyPublishedBytes(uri, bytes)) {
+                return null
+            }
+
+            committed = true
+            return uri
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            return null
+        } finally {
+            if (!committed) {
+                runCatching { resolver.delete(uri, null, null) }
+            }
         }
     }
 
-    private fun saveLegacy(bytes: ByteArray, fileName: String, mimeType: String): Uri? {
+    private suspend fun saveLegacy(bytes: ByteArray, fileName: String, mimeType: String): Uri? {
         val picturesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
         val targetDir = File(picturesDir, "PhotoBook")
         if (!targetDir.exists() && !targetDir.mkdirs()) return null
 
         val target = uniqueTarget(File(targetDir, fileName))
-        return runCatching {
+        var committed = false
+        try {
+            currentCoroutineContext().ensureActive()
             FileOutputStream(target).use { output ->
                 output.write(bytes)
                 output.flush()
             }
+            currentCoroutineContext().ensureActive()
             MediaScannerConnection.scanFile(
                 context,
                 arrayOf(target.absolutePath),
                 arrayOf(mimeType),
                 null,
             )
-            Uri.fromFile(target)
-        }.getOrElse {
-            runCatching { target.delete() }
-            null
+            committed = true
+            return Uri.fromFile(target)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            return null
+        } finally {
+            if (!committed) {
+                runCatching { target.delete() }
+            }
+        }
+    }
+
+    private fun verifyPublishedBytes(uri: Uri, expectedBytes: ByteArray): Boolean {
+        val input = context.contentResolver.openInputStream(uri) ?: return false
+        val expectedDigest = MessageDigest.getInstance("SHA-256").digest(expectedBytes)
+        val actualDigest = sha256(input)
+        return MessageDigest.isEqual(expectedDigest, actualDigest)
+    }
+
+    private fun sha256(input: InputStream): ByteArray {
+        return input.use { stream ->
+            val digest = MessageDigest.getInstance("SHA-256")
+            val buffer = ByteArray(VERIFY_BUFFER_BYTES)
+            while (true) {
+                val read = stream.read(buffer)
+                if (read < 0) break
+                if (read > 0) digest.update(buffer, 0, read)
+            }
+            digest.digest()
         }
     }
 
@@ -122,6 +181,7 @@ class QrReceivedImageStore @Inject constructor(
     }
 
     companion object {
+        private const val VERIFY_BUFFER_BYTES = 8 * 1024
         private val SUPPORTED_MIME_TYPES = setOf("image/jpeg", "image/png", "image/webp")
     }
 }

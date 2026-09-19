@@ -70,6 +70,7 @@ fun MainScreen(
     query: String,
     results: LazyPagingItems<PhotoRecord>,
     resultCount: Int,
+    resultQuery: String,
     searchReady: Boolean,
     favoritesOnly: Boolean,
     reelsEnabled: Boolean,
@@ -114,6 +115,7 @@ fun MainScreen(
     onMemoryStorySelected: (MemoryStory) -> Unit,
 ) {
     val isSelectionMode = selectedPhotoIds.isNotEmpty()
+    val isSearchRevisionCurrent = query == resultQuery
     val smartAlbums = remember {
         listOf(
             SmartAlbum.Search("Screenshots", "source:screenshots", Icons.Default.Image, AccentIndigo),
@@ -415,13 +417,31 @@ fun MainScreen(
                     .padding(horizontal = 20.dp)
             ) {
                 when {
-                    !searchReady || (query.isBlank() && resultCount == 0) -> {
+                    !searchReady -> {
                         WelcomeState(
                             memories = memoryStories,
                             onThisDayStory = onThisDayStory,
                             onOnThisDayClick = onOpenOnThisDayStory,
                             onMemoryClick = onMemoryStorySelected,
                             compact = searchReady,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                    !isSearchRevisionCurrent -> {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator()
+                        }
+                    }
+                    query.isBlank() && resultCount == 0 -> {
+                        WelcomeState(
+                            memories = memoryStories,
+                            onThisDayStory = onThisDayStory,
+                            onOnThisDayClick = onOpenOnThisDayStory,
+                            onMemoryClick = onMemoryStorySelected,
+                            compact = true,
                             modifier = Modifier.fillMaxSize(),
                         )
                     }

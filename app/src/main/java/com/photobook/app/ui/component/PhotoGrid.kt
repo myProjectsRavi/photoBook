@@ -3,6 +3,7 @@ package com.photobook.app.ui.component
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
@@ -95,9 +96,13 @@ fun PhotoGrid(
         ) {
             items(
                 count = photos.itemCount,
-                key = { index -> photos[index]?.id ?: "photo-placeholder-$index" },
+                key = { index -> photos.peek(index)?.id ?: "photo-placeholder-$index" },
             ) { index ->
-                val photo = photos[index] ?: return@items
+                val photo = photos[index]
+                if (photo == null) {
+                    PhotoGridPlaceholder()
+                    return@items
+                }
                 PhotoThumbnail(
                     photo = photo,
                     isSelected = photo.id in selectedPhotoIds,
@@ -185,6 +190,19 @@ fun PhotoGrid(
             }
         }
     }
+}
+
+@Composable
+private fun PhotoGridPlaceholder() {
+    Box(
+        modifier = Modifier
+            .padding(2.dp)
+            .aspectRatio(1f)
+            .background(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                shape = RoundedCornerShape(10.dp),
+            ),
+    )
 }
 
 private fun timelineLabelForIndex(

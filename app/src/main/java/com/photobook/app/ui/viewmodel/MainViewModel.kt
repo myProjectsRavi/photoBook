@@ -12,6 +12,7 @@ import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import com.photobook.app.data.index.IndexBuilder
+import com.photobook.app.data.index.IndexCommitCoordinator
 import com.photobook.app.data.index.IndexPersistence
 import com.photobook.app.data.index.PhotoIndex
 import com.photobook.app.data.model.PhotoRecord
@@ -28,6 +29,7 @@ import com.photobook.app.feature.duplicates.DuplicatePhotoGroup
 import com.photobook.app.feature.duplicates.DuplicateMatchKind
 import com.photobook.app.feature.memories.MemoryCurator
 import com.photobook.app.feature.memories.MemoryStory
+import com.photobook.app.feature.notes.PhotoNoteStore
 import com.photobook.app.ml.TaggingWorker
 import com.photobook.app.search.FilterEngine
 import com.photobook.app.search.FolderToken
@@ -74,11 +76,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.paging.cachedIn
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.ensureActive
 
 @HiltViewModel
 class MainViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val indexBuilder: IndexBuilder,
+    private val indexCommitCoordinator: IndexCommitCoordinator,
     private val mediaStoreScanner: MediaStoreScanner,
     private val photoIndex: PhotoIndex,
     private val indexPersistence: IndexPersistence,
@@ -90,6 +95,7 @@ class MainViewModel @Inject constructor(
     private val duplicatePhotoFinder: DuplicatePhotoFinder,
     private val archiveService: ArchiveService,
     private val memoryCurator: MemoryCurator,
+    private val photoNoteStore: PhotoNoteStore,
     private val sharedPreferences: SharedPreferences,
 ) : ViewModel() {
 
@@ -102,6 +108,7 @@ class MainViewModel @Inject constructor(
         val query: String = "",
         val photoCount: Int = 0,
         val resultCount: Int = 0,
+        val resultQuery: String = "",
         val favoritesOnly: Boolean = false,
         val selectedPhotoIds: Set<Long> = emptySet(),
         val feedMode: HomeFeedMode = HomeFeedMode.Timeline,
@@ -146,12 +153,14 @@ class MainViewModel @Inject constructor(
         photoIndex.changes().debounce(RECORDS_UPDATE_DEBOUNCE_MS),
         uiState.map { it.favoritesOnly }.distinctUntilChanged(),
         uiState.map { it.feedMode }.distinctUntilChanged(),
-    ) { query, indexVersion, favoritesOnly, feedMode ->
+        photoNoteStore.changes(),
+    ) { query, indexVersion, favoritesOnly, feedMode, noteVersion ->
         SearchFlowInput(
             query = query,
             indexVersion = indexVersion,
             favoritesOnly = favoritesOnly,
             feedMode = feedMode,
+            noteVersion = noteVersion,
         )
     }.flatMapLatest { input ->
         // Read one immutable library view for this generation. Search v2 also receives the
@@ -161,6 +170,7 @@ class MainViewModel @Inject constructor(
             query = input.query,
             records = records,
             expectedIndexVersion = input.indexVersion,
+            noteRevision = input.noteVersion,
         )
         val filteredIds = if (input.favoritesOnly) {
             searchResult.orderedIds.filter { id ->
@@ -181,6 +191,7 @@ class MainViewModel @Inject constructor(
             state.copy(
                 photoCount = records.size,
                 resultCount = filteredIds.size,
+                resultQuery = input.query,
                 selectedPhotoIds = clampSelectionToResultIds(state.selectedPhotoIds, filteredIds),
                 timelineMarks = timelineMarks,
                 searchReady = !state.isIndexing,
@@ -197,6 +208,7 @@ class MainViewModel @Inject constructor(
                 pageSize = SEARCH_PAGE_SIZE,
                 initialLoadSize = SEARCH_PAGE_SIZE * 2,
                 prefetchDistance = SEARCH_PREFETCH_DISTANCE,
+                maxSize = SEARCH_MAX_LOADED_ITEMS,
                 enablePlaceholders = true,
             ),
             pagingSourceFactory = {
@@ -211,6 +223,7 @@ class MainViewModel @Inject constructor(
     private var hasInitializedIndex = false
     private var mediaObserver: ContentObserver? = null
     private var mediaRebuildJob: Job? = null
+    private var permissionReconcileJob: Job? = null
     private val memoryRefreshRequests = Channel<List<PhotoRecord>>(capacity = Channel.CONFLATED)
     private val memoryRefreshJob: Job = viewModelScope.launch(Dispatchers.Default) {
         for (records in memoryRefreshRequests) {
@@ -235,6 +248,7 @@ class MainViewModel @Inject constructor(
         val indexVersion: Long,
         val favoritesOnly: Boolean,
         val feedMode: HomeFeedMode,
+        val noteVersion: Long,
     )
 
     private data class SearchIdResult(
@@ -259,7 +273,11 @@ class MainViewModel @Inject constructor(
         observeSuggestions()
     }
 
-    fun refreshPermissionStatus(accessMode: PermissionUtils.PhotoAccessMode) {
+    fun refreshPermissionStatus(
+        accessMode: PermissionUtils.PhotoAccessMode,
+        forceReconcile: Boolean = false,
+    ) {
+        val previousMode = uiState.value.photoAccessMode
         val granted = accessMode != PermissionUtils.PhotoAccessMode.None
         uiState.update {
             it.copy(
@@ -267,9 +285,43 @@ class MainViewModel @Inject constructor(
                 photoAccessMode = accessMode,
             )
         }
-        if (granted && !hasInitializedIndex) {
+
+        if (!granted) {
+            // Remove revoked media from every in-memory/search surface immediately while retaining
+            // durable rows so a later regrant can restore user/intelligence fields safely.
+            permissionReconcileJob?.cancel()
+            permissionReconcileJob = viewModelScope.launch {
+                indexCommitCoordinator.withCommit {
+                    photoIndex.setRecords(emptyList())
+                }
+                latestSearchResultIds = emptyList()
+                latestVisibleResultIds = emptyList()
+            }
+            return
+        }
+
+        if (!hasInitializedIndex) {
             hasInitializedIndex = true
             initializeIndex()
+            return
+        }
+
+        if (forceReconcile || accessMode != previousMode) {
+            permissionReconcileJob?.cancel()
+            permissionReconcileJob = viewModelScope.launch {
+                uiState.update { it.copy(isIndexing = true, searchReady = false) }
+                try {
+                    syncMediaStoreIncremental(forceFullSync = true)
+                } finally {
+                    uiState.update {
+                        it.copy(
+                            isIndexing = false,
+                            indexProgress = 1f,
+                            searchReady = true,
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -440,8 +492,12 @@ class MainViewModel @Inject constructor(
 
     fun onToggleFavorite(photoId: Long) {
         viewModelScope.launch {
-            val isFavorite = photoIndex.toggleFavorite(photoId)
-            indexPersistence.setFavorite(photoId, isFavorite)
+            val current = photoIndex.getById(photoId) ?: return@launch
+            val isFavorite = !current.isFavorite
+            indexCommitCoordinator.withCommit {
+                indexPersistence.setFavorite(photoId, isFavorite)
+                photoIndex.setFavorite(photoId, isFavorite)
+            }
             uiState.update { state ->
                 state.copy(
                     viewerPhotos = state.viewerPhotos.map { photo ->
@@ -921,9 +977,16 @@ class MainViewModel @Inject constructor(
                 )
             }
 
-            val persisted = indexPersistence.load()
-            if (persisted.isNotEmpty()) {
-                photoIndex.setRecords(persisted)
+            indexCommitCoordinator.withCommit {
+                val persisted = indexPersistence.load()
+                if (persisted.isNotEmpty()) {
+                    // Full-index publication sorts the library, rebuilds ID lookup state, and rebuilds
+                    // keyword sets. Keep that O(n) CPU/allocation work off Main while serializing the
+                    // durable-load/publication boundary against background intelligence writers.
+                    withContext(Dispatchers.Default) {
+                        photoIndex.setRecords(persisted)
+                    }
+                }
             }
 
             syncMediaStoreIncremental(forceFullSync = photoIndex.snapshot().isEmpty())
@@ -1010,8 +1073,10 @@ class MainViewModel @Inject constructor(
     }
 
     private suspend fun removePhotosAfterTrash(photoIds: Set<Long>) {
-        photoIndex.removeRecords(photoIds)
-        indexPersistence.removeByIds(photoIds)
+        indexCommitCoordinator.withCommit {
+            indexPersistence.removeByIds(photoIds)
+            photoIndex.removeRecords(photoIds)
+        }
         latestSearchResultIds = latestSearchResultIds.filterNot { id -> id in photoIds }
         latestVisibleResultIds = latestVisibleResultIds.filterNot { id -> id in photoIds }
 
@@ -1091,7 +1156,9 @@ class MainViewModel @Inject constructor(
             val lastGeneration = sharedPreferences.getLong(Constants.MEDIA_STORE_GENERATION_KEY, -1L)
                 .takeIf { value -> value >= 0L }
 
-            val shouldFullSync = forceFullSync || existing.isEmpty() || lastVersion == null || currentVersion != lastVersion
+            val limitedAccess = uiState.value.photoAccessMode == PermissionUtils.PhotoAccessMode.Limited
+            val shouldFullSync = forceFullSync || limitedAccess || existing.isEmpty() ||
+                lastVersion == null || currentVersion != lastVersion
             if (shouldFullSync) {
                 rebuildEntireIndex(existing)
                 persistMediaStoreSyncState(currentVersion, currentGeneration)
@@ -1121,15 +1188,20 @@ class MainViewModel @Inject constructor(
             }
         }.preservingIntelligence(existing)
 
-        if (existing.isEmpty()) {
-            // On a first build, keep full Room/FTS persistence from overlapping structural
-            // PhotoIndex publication and the search/memory flows that publication wakes up.
-            indexPersistence.save(rebuilt)
-            photoIndex.setRecords(rebuilt)
-        } else {
-            // Preserve the established full-resync publication ordering for existing libraries.
-            photoIndex.setRecords(rebuilt)
-            indexPersistence.save(rebuilt)
+        indexCommitCoordinator.withCommit {
+            val limitedAccess = uiState.value.photoAccessMode == PermissionUtils.PhotoAccessMode.Limited
+            val committed = if (limitedAccess) {
+                // A limited grant is a visibility boundary, not deletion. Keep previously granted
+                // rows durable so favorites/intelligence survive a later regrant, but publish only
+                // the IDs MediaStore currently exposes to this app.
+                indexPersistence.upsertAll(rebuilt)
+                indexPersistence.getByIdsOrdered(rebuilt.map { record -> record.id })
+            } else {
+                // Under full access, a missing MediaStore row is a genuine structural removal.
+                indexPersistence.save(rebuilt)
+                indexPersistence.load()
+            }
+            photoIndex.setRecords(committed)
         }
     }
 
@@ -1167,22 +1239,15 @@ class MainViewModel @Inject constructor(
             return
         }
 
-        val merged = existingById.toMutableMap()
-        changedRebuilt.forEach { record ->
-            merged[record.id] = record
-        }
-        removedIds.forEach { id ->
-            merged.remove(id)
-        }
-
-        val updatedRecords = merged.values.sortedByDescending { record -> record.dateAdded }
-        photoIndex.setRecords(updatedRecords)
-
-        if (changedRebuilt.isNotEmpty()) {
-            indexPersistence.upsertAll(changedRebuilt)
-        }
-        if (removedIds.isNotEmpty()) {
-            indexPersistence.removeByIds(removedIds)
+        indexCommitCoordinator.withCommit {
+            if (changedRebuilt.isNotEmpty()) {
+                indexPersistence.upsertAll(changedRebuilt)
+            }
+            if (removedIds.isNotEmpty()) {
+                indexPersistence.removeByIds(removedIds)
+            }
+            val committed = indexPersistence.load()
+            photoIndex.setRecords(committed)
         }
 
         TaggingWorker.enqueueLibraryMaintenance(context)
@@ -1228,6 +1293,7 @@ class MainViewModel @Inject constructor(
 
     override fun onCleared() {
         mediaRebuildJob?.cancel()
+        permissionReconcileJob?.cancel()
         memoryRefreshRequests.close()
         memoryRefreshJob.cancel()
         mediaObserver?.let { observer ->
@@ -1319,35 +1385,43 @@ class MainViewModel @Inject constructor(
         query: String,
         records: List<PhotoRecord>,
         expectedIndexVersion: Long,
+        noteRevision: Long,
     ): SearchIdResult {
         val normalizedQuery = query.trim()
         if (normalizedQuery.isBlank()) {
-            // Timeline is the single feed mode now — shows all photos (incl. screenshots) chronologically.
+            // Building the complete timeline ID projection is O(n); keep it off Main and make it
+            // cooperatively cancellable when a newer index generation replaces this flow.
+            val orderedIds = withContext(Dispatchers.Default) {
+                val ids = ArrayList<Long>(records.size)
+                records.forEachIndexed { index, record ->
+                    if (index % SEARCH_CANCELLATION_CHECK_INTERVAL == 0) {
+                        coroutineContext.ensureActive()
+                    }
+                    ids += record.id
+                }
+                ids
+            }
             return SearchIdResult(
-                orderedIds = records.map { record -> record.id },
+                orderedIds = orderedIds,
                 tokens = emptyList(),
             )
         }
 
-        val typedTokens = queryParser.tokenize(normalizedQuery).map(tokenClassifier::classify)
-        val shouldUseDao = shouldUseDaoCandidateSearch(typedTokens)
         val context = buildSearchContext()
 
         if (SEARCH_RUNTIME_STRATEGY == SearchRuntimeStrategy.V2) {
-            val daoCandidateIds = if (shouldUseDao) {
-                indexPersistence.searchIdsByQueryText(normalizedQuery)
-            } else {
-                emptyList()
-            }
-            // Preserve the legacy empty-FTS fallback: an empty candidate set means search the
-            // current in-memory library rather than incorrectly returning no results.
-            val candidateIds = daoCandidateIds.takeIf { it.isNotEmpty() }
+            // PB03 correctness rule: FTS is not a proven superset of PhotoBook's authoritative
+            // predicate (filename substrings, encrypted notes, typed dates and canonical synonyms
+            // can all live outside a non-empty FTS candidate set). Until a complete typed candidate
+            // planner exists, scan the immutable in-memory revision rather than silently dropping
+            // valid results.
             val v2Result = withContext(Dispatchers.Default) {
                 searchEngineV2.search(
                     query = query,
-                    candidateIds = candidateIds,
+                    candidateIds = null,
                     context = context,
                     expectedIndexVersion = expectedIndexVersion,
+                    cancellationCheck = { coroutineContext.ensureActive() },
                 )
             }
             if (v2Result.complete) {
@@ -1356,40 +1430,28 @@ class MainViewModel @Inject constructor(
                     tokens = v2Result.tokens,
                 )
             }
+
+            // A writer changed the immutable search revision while this request was running.
+            // Do not publish an empty/stale intermediate result; flatMapLatest will cancel this
+            // obsolete transform when the debounced PhotoIndex generation arrives.
+            awaitCancellation()
         }
 
-        // Temporary internal rollback path. Keep this until 10k/50k/100k parity and release
-        // verification are green; it is not a user-facing or permanent dual architecture.
-        val daoCandidates = if (shouldUseDao) {
-            indexPersistence.searchByQueryText(normalizedQuery)
-        } else {
-            emptyList()
-        }
-        val recordsToSearch = if (daoCandidates.isNotEmpty()) daoCandidates else records
+        // Internal rollback path. It must preserve complete-result semantics as well, so do not
+        // reintroduce the unsafe FTS-exclusive candidate path here.
         val legacyResult = withContext(Dispatchers.Default) {
             filterEngine.search(
                 query = query,
-                records = recordsToSearch,
+                records = records,
                 context = context,
+                cancellationCheck = { coroutineContext.ensureActive() },
+                externalRevision = noteRevision,
             )
         }
         return SearchIdResult(
             orderedIds = legacyResult.results.map { record -> record.id },
             tokens = legacyResult.tokens,
         )
-    }
-
-    private fun shouldUseDaoCandidateSearch(tokens: List<QueryToken>): Boolean {
-        if (tokens.isEmpty()) return false
-        return tokens.any { token ->
-            when (token) {
-                is TextToken -> true
-                is MLTagToken -> true
-                is FolderToken -> true
-                is LocationToken -> token.keyword !in setOf("near_me", "here", "home", "office", "abroad")
-                else -> false
-            }
-        }
     }
 
     private fun buildTimelineMarks(
@@ -1549,6 +1611,10 @@ class MainViewModel @Inject constructor(
     companion object {
         private const val SEARCH_PAGE_SIZE = 60
         private const val SEARCH_PREFETCH_DISTANCE = 20
+        private const val SEARCH_CANCELLATION_CHECK_INTERVAL = 64
+        // Keep long-scroll memory bounded while retaining five normal pages around the viewport.
+        // Paging requires maxSize >= pageSize + 2 * prefetchDistance (100 for this configuration).
+        private const val SEARCH_MAX_LOADED_ITEMS = SEARCH_PAGE_SIZE * 5
         private const val VIEWER_WINDOW_RADIUS = 50
         private const val VIEWER_WINDOW_RECENTER_THRESHOLD = 12
         private const val RECORDS_UPDATE_DEBOUNCE_MS = 250L

@@ -24,6 +24,25 @@ interface PhotoDao {
 
     @Query(
         """
+        SELECT * FROM photos
+        WHERE id > :afterId
+            AND (
+                mlStatus IN ('PENDING', 'MODEL_PREPARING', 'FAILED_RETRYABLE')
+                OR ocrStatus IN ('PENDING', 'MODEL_PREPARING', 'FAILED_RETRYABLE')
+                OR perceptualHash IS NULL
+                OR blurScore IS NULL
+            )
+        ORDER BY id ASC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getPendingIntelligenceAfter(
+        afterId: Long,
+        limit: Int,
+    ): List<PhotoEntity>
+
+    @Query(
+        """
         UPDATE photos
         SET isOcrProcessed = 0,
             ocrStatus = 'PENDING'
@@ -31,6 +50,17 @@ interface PhotoDao {
         """,
     )
     suspend fun reopenPermanentlyFailedOcr(): Int
+
+    @Query(
+        """
+        UPDATE photos
+        SET mlTagsPayload = '[]',
+            isMlProcessed = 0,
+            mlStatus = 'PENDING',
+            isArchiveFoodCandidate = 0
+        """,
+    )
+    suspend fun reopenDerivedSemanticIntelligence(): Int
 
     @Query(
         """

@@ -14,9 +14,12 @@ import androidx.core.content.FileProvider
 import androidx.exifinterface.media.ExifInterface
 import com.photobook.app.data.model.PhotoRecord
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 class PhotoEditService @Inject constructor(
@@ -28,53 +31,80 @@ class PhotoEditService @Inject constructor(
             var rotated: Bitmap? = null
             var cropped: Bitmap? = null
             var filtered: Bitmap? = null
-            runCatching {
+            var tempFile: File? = null
+            var finalFile: File? = null
+            var committed = false
+
+            try {
+                coroutineContext.ensureActive()
                 source = decodeSampledBitmap(photo.uriString) ?: return@withContext PhotoEditResult.Error
+
                 rotated = applyRotation(source!!, state.rotationQuarterTurns)
-                if (rotated !== source) {
-                    source?.recycleSafely()
-                }
+                if (rotated !== source) source?.recycleSafely()
+
+                coroutineContext.ensureActive()
                 cropped = applyCrop(rotated!!, state)
-                if (cropped !== rotated) {
-                    rotated?.recycleSafely()
-                }
+                if (cropped !== rotated) rotated?.recycleSafely()
 
+                coroutineContext.ensureActive()
                 filtered = applyToneAndFilter(cropped!!, state)
-                if (filtered !== cropped) {
-                    cropped?.recycleSafely()
-                }
+                if (filtered !== cropped) cropped?.recycleSafely()
 
-                val outputDir = File(context.cacheDir, "safe_share").apply { mkdirs() }
-                val outputFile = File(outputDir, "edit_${photo.id}_${System.currentTimeMillis()}.jpg")
+                coroutineContext.ensureActive()
+                val outputDir = File(context.cacheDir, "safe_share").apply {
+                    check(exists() || mkdirs()) { "Unable to create editor output directory" }
+                }
+                val stem = "edit_${photo.id}_${System.currentTimeMillis()}"
+                tempFile = File(outputDir, "$stem.tmp")
+                finalFile = File(outputDir, "$stem.jpg")
+
                 withContext(Dispatchers.IO) {
-                    FileOutputStream(outputFile).use { stream ->
-                        filtered?.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, stream)
+                    FileOutputStream(tempFile!!).use { stream ->
+                        val encoded = filtered?.compress(
+                            Bitmap.CompressFormat.JPEG,
+                            JPEG_QUALITY,
+                            stream,
+                        ) == true
+                        check(encoded) { "JPEG compression failed" }
+                        stream.fd.sync()
                     }
+
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    FileInputStream(tempFile!!).use { stream ->
+                        BitmapFactory.decodeStream(stream, null, bounds)
+                    }
+                    check(bounds.outWidth > 0 && bounds.outHeight > 0) {
+                        "Edited JPEG failed read-back validation"
+                    }
+                    check(tempFile!!.length() > 0L) { "Edited JPEG is empty" }
+                    check(tempFile!!.renameTo(finalFile!!)) { "Unable to publish edited JPEG" }
                 }
 
+                coroutineContext.ensureActive()
                 val uri = FileProvider.getUriForFile(
                     context,
                     "${context.packageName}.fileprovider",
-                    outputFile,
+                    finalFile!!,
                 )
+                committed = true
                 PhotoEditResult.Success(
                     uri = uri,
-                    fileName = outputFile.name,
+                    fileName = finalFile!!.name,
                     mimeType = "image/jpeg",
                 )
-            }.getOrElse {
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
                 PhotoEditResult.Error
-            }.also {
+            } finally {
+                if (!committed) {
+                    runCatching { tempFile?.delete() }
+                    runCatching { finalFile?.delete() }
+                }
                 filtered?.recycleSafely()
-                if (filtered !== cropped) {
-                    cropped?.recycleSafely()
-                }
-                if (cropped !== rotated) {
-                    rotated?.recycleSafely()
-                }
-                if (rotated !== source) {
-                    source?.recycleSafely()
-                }
+                if (filtered !== cropped) cropped?.recycleSafely()
+                if (cropped !== rotated) rotated?.recycleSafely()
+                if (rotated !== source) source?.recycleSafely()
             }
         }
     }

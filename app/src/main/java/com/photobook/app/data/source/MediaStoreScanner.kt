@@ -67,21 +67,7 @@ class MediaStoreScanner @Inject constructor(
         selection: String?,
         selectionArgs: Array<String>?,
     ): List<RawPhotoData> {
-        val projection = buildList {
-            add(MediaStore.Images.Media._ID)
-            add(MediaStore.Images.Media.DISPLAY_NAME)
-            add(MediaStore.Images.Media.DATE_ADDED)
-            add(MediaStore.Images.Media.SIZE)
-            add(MediaStore.Images.Media.WIDTH)
-            add(MediaStore.Images.Media.HEIGHT)
-            add(MediaStore.Images.Media.MIME_TYPE)
-            add(MediaStore.Images.Media.BUCKET_DISPLAY_NAME)
-            add(MediaStore.Images.Media.RELATIVE_PATH)
-            add(MediaStore.Images.Media.DATA)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                add(MediaStore.MediaColumns.GENERATION_MODIFIED)
-            }
-        }.toTypedArray()
+        val projection = mediaStoreImageProjectionForSdk(Build.VERSION.SDK_INT)
 
         val photos = mutableListOf<RawPhotoData>()
         context.contentResolver.query(
@@ -99,7 +85,11 @@ class MediaStoreScanner @Inject constructor(
             val heightIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.HEIGHT)
             val mimeIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.MIME_TYPE)
             val bucketNameIndex = cursor.getColumnIndex(MediaStore.Images.Media.BUCKET_DISPLAY_NAME)
-            val relativePathIndex = cursor.getColumnIndex(MediaStore.Images.Media.RELATIVE_PATH)
+            val relativePathIndex = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                cursor.getColumnIndex(MediaStore.Images.Media.RELATIVE_PATH)
+            } else {
+                -1
+            }
             val dataPathIndex = cursor.getColumnIndex(MediaStore.Images.Media.DATA)
             val generationIndex = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 cursor.getColumnIndex(MediaStore.MediaColumns.GENERATION_MODIFIED)
@@ -156,4 +146,25 @@ class MediaStoreScanner @Inject constructor(
         }
         return photos
     }
+}
+
+@Suppress("DEPRECATION")
+internal fun mediaStoreImageProjectionForSdk(sdkInt: Int): Array<String> {
+    return buildList {
+        add(MediaStore.Images.Media._ID)
+        add(MediaStore.Images.Media.DISPLAY_NAME)
+        add(MediaStore.Images.Media.DATE_ADDED)
+        add(MediaStore.Images.Media.SIZE)
+        add(MediaStore.Images.Media.WIDTH)
+        add(MediaStore.Images.Media.HEIGHT)
+        add(MediaStore.Images.Media.MIME_TYPE)
+        add(MediaStore.Images.Media.BUCKET_DISPLAY_NAME)
+        if (sdkInt >= Build.VERSION_CODES.Q) {
+            add(MediaStore.Images.Media.RELATIVE_PATH)
+        }
+        add(MediaStore.Images.Media.DATA)
+        if (sdkInt >= Build.VERSION_CODES.R) {
+            add(MediaStore.MediaColumns.GENERATION_MODIFIED)
+        }
+    }.toTypedArray()
 }

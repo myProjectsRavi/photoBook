@@ -27,8 +27,11 @@ class SearchEngineV2 @Inject constructor(
         candidateIds: List<Long>? = null,
         context: SearchContext = SearchContext(),
         expectedIndexVersion: Long? = null,
+        cancellationCheck: (() -> Unit)? = null,
     ): SearchResult {
+        cancellationCheck?.invoke()
         val sourceVersion = index.version()
+        cancellationCheck?.invoke()
         if (!generationMatches(sourceVersion, expectedIndexVersion)) {
             return SearchResult(emptyList(), emptyList(), complete = false)
         }
@@ -64,7 +67,11 @@ class SearchEngineV2 @Inject constructor(
         val hitCapacity = (candidateIds?.size ?: sourceSnapshot.size).coerceAtMost(MAX_INITIAL_HIT_CAPACITY)
         val hits = ArrayList<SearchHit>(hitCapacity)
 
-        val complete = forEachSource(sourceSnapshot, candidateIds) { ordinal, photo ->
+        val complete = forEachSource(
+            sourceSnapshot = sourceSnapshot,
+            candidateIds = candidateIds,
+            cancellationCheck = cancellationCheck,
+        ) { ordinal, photo ->
             val smartMatch = filters.isNotEmpty() && filters.all { filter -> filter(photo) }
             val literalOcrMatch = OcrQueryMatcher.matches(photo.ocrText, query)
             if (smartMatch || literalOcrMatch) {
@@ -80,10 +87,12 @@ class SearchEngineV2 @Inject constructor(
                 )
             }
         }
+        cancellationCheck?.invoke()
         if (!complete || !generationMatches(sourceVersion, expectedIndexVersion)) {
             return SearchResult(emptyList(), tokens, complete = false)
         }
 
+        cancellationCheck?.invoke()
         if (hits.size > 1 && tokens.isNotEmpty()) {
             when {
                 isOldest -> hits.sortWith(
@@ -119,13 +128,18 @@ class SearchEngineV2 @Inject constructor(
     private inline fun forEachSource(
         sourceSnapshot: List<PhotoRecord>,
         candidateIds: List<Long>?,
+        noinline cancellationCheck: (() -> Unit)?,
         action: (ordinal: Int, photo: PhotoRecord) -> Unit,
     ): Boolean {
         if (candidateIds == null) {
-            sourceSnapshot.forEachIndexed(action)
+            sourceSnapshot.forEachIndexed { ordinal, photo ->
+                if (ordinal % CANCELLATION_CHECK_INTERVAL == 0) cancellationCheck?.invoke()
+                action(ordinal, photo)
+            }
             return true
         }
         candidateIds.forEachIndexed { ordinal, id ->
+            if (ordinal % CANCELLATION_CHECK_INTERVAL == 0) cancellationCheck?.invoke()
             val photo = index.getByIdFromSnapshot(sourceSnapshot, id) ?: return false
             action(ordinal, photo)
         }
@@ -148,5 +162,6 @@ class SearchEngineV2 @Inject constructor(
     private companion object {
         private const val RECENT_RESULT_LIMIT = 50
         private const val MAX_INITIAL_HIT_CAPACITY = 16_384
+        private const val CANCELLATION_CHECK_INTERVAL = 64
     }
 }

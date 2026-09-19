@@ -538,7 +538,7 @@ private fun splitAndAdd(text: String, target: MutableSet<String>) {
     if (lower.length - start >= 3) target.add(lower.substring(start))
 }
 
-private fun mergeTags(existing: List<MLTag>, incoming: List<MLTag>): List<MLTag> {
+internal fun mergeTags(existing: List<MLTag>, incoming: List<MLTag>): List<MLTag> {
     if (incoming.isEmpty()) return existing
     val merged = existing.associateByTo(LinkedHashMap()) { it.label.lowercase() }
     incoming.forEach { tag ->
@@ -551,7 +551,7 @@ private fun mergeTags(existing: List<MLTag>, incoming: List<MLTag>): List<MLTag>
     return merged.values.toList()
 }
 
-private fun applyIntelligenceUpdate(
+internal fun applyIntelligenceUpdate(
     record: PhotoRecord,
     update: PhotoIndex.PhotoIntelligenceUpdate,
     nextTags: List<MLTag>,
