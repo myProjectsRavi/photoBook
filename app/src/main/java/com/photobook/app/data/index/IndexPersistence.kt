@@ -142,6 +142,17 @@ class IndexPersistence @Inject constructor(
         }
     }
 
+    suspend fun getPendingIntelligenceBatch(
+        afterId: Long,
+        limit: Int,
+    ): List<PhotoRecord> {
+        if (limit <= 0) return emptyList()
+        return withContext(Dispatchers.IO) {
+            photoDao.getPendingIntelligenceAfter(afterId, limit)
+                .map { entity -> entity.toPhotoRecord() }
+        }
+    }
+
     /**
      * Phase-2 candidate path: return only compact row IDs from FTS. Full records are resolved from
      * the in-memory index during ranking and materialized from Room only for visible Paging pages.
