@@ -63,11 +63,18 @@ class ArchiveAccessBoundaryInstrumentedTest {
                 accessiblePhotoIds = setOf(2L),
             )
             assertEquals(listOf(2L), secondGrant.candidates.map { candidate -> candidate.photo.id })
-            assertEquals(listOf(2L), archiveDao.getCandidatePhotoIds())
             assertEquals(
-                ArchiveDecisionStates.STALE,
+                ArchiveDecisionStates.CANDIDATE,
                 archiveDao.getByPhotoIds(listOf(1L)).single().state,
             )
+            assertEquals(
+                ArchiveDecisionStates.CANDIDATE,
+                archiveDao.getByPhotoIds(listOf(2L)).single().state,
+            )
+
+            // Regranting the first photo must restore visibility without rebuilding user metadata.
+            val regranted = service.loadSummary(accessiblePhotoIds = setOf(1L))
+            assertEquals(listOf(1L), regranted.candidates.map { candidate -> candidate.photo.id })
 
             // Revoking access must not delete durable user/intelligence rows.
             assertNotNull(photoDao.getById(1L))
