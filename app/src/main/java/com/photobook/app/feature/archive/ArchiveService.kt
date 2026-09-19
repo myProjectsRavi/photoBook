@@ -374,10 +374,7 @@ class ArchiveService @Inject constructor(
     private suspend fun loadCandidatesInternal(
         accessiblePhotoIds: Set<Long>? = null,
     ): List<ArchiveCandidate> {
-        if (accessiblePhotoIds != null) {
-            reconcileCandidateAccess(accessiblePhotoIds)
-        }
-        val decisions = archiveDao.getCandidates(MAX_CANDIDATES)
+        val decisions = getVisibleCandidateDecisions(accessiblePhotoIds)
         if (decisions.isEmpty()) return emptyList()
 
         val photoIds = decisions.map { decision -> decision.photoId }
@@ -422,14 +419,28 @@ class ArchiveService @Inject constructor(
             .associateBy { decision -> decision.photoId }
     }
 
-    private suspend fun reconcileCandidateAccess(accessiblePhotoIds: Set<Long>) {
-        val staleIds = archiveDao.getCandidatePhotoIds()
-            .filterNot { photoId -> photoId in accessiblePhotoIds }
-        if (staleIds.isEmpty()) return
-        val nowMs = System.currentTimeMillis()
-        staleIds.chunked(ARCHIVE_DB_BATCH_SIZE).forEach { batch ->
-            archiveDao.markStale(batch, nowMs)
+    private suspend fun getVisibleCandidateDecisions(
+        accessiblePhotoIds: Set<Long>?,
+    ): List<ArchiveDecisionEntity> {
+        if (accessiblePhotoIds == null) {
+            return archiveDao.getCandidates(MAX_CANDIDATES)
         }
+        if (accessiblePhotoIds.isEmpty()) return emptyList()
+
+        return accessiblePhotoIds.toList()
+            .chunked(ARCHIVE_DB_BATCH_SIZE)
+            .flatMap { batch ->
+                archiveDao.getCandidatesForPhotoIds(
+                    photoIds = batch,
+                    limit = MAX_CANDIDATES,
+                )
+            }
+            .sortedWith(
+                compareByDescending<ArchiveDecisionEntity> { decision ->
+                    decision.lastDetectedAtMs
+                }.thenByDescending { decision -> decision.photoId },
+            )
+            .take(MAX_CANDIDATES)
     }
 
     private fun disabledSummary(): ArchiveSummary {
