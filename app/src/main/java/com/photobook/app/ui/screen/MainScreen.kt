@@ -70,6 +70,7 @@ fun MainScreen(
     query: String,
     results: LazyPagingItems<PhotoRecord>,
     resultCount: Int,
+    resultQuery: String,
     searchReady: Boolean,
     favoritesOnly: Boolean,
     reelsEnabled: Boolean,
@@ -425,7 +426,7 @@ fun MainScreen(
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
-                    query.isNotBlank() && resultCount == 0 -> {
+                    query.isNotBlank() && query == resultQuery && resultCount == 0 -> {
                         EmptyState(modifier = Modifier.fillMaxSize())
                     }
                     else -> {
