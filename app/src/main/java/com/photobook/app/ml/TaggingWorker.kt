@@ -3,6 +3,7 @@ package com.photobook.app.ml
 import android.content.Context
 import android.os.BatteryManager
 import androidx.hilt.work.HiltWorker
+import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.Data
@@ -63,10 +64,13 @@ class TaggingWorker @AssistedInject constructor(
 
         val requestedIds = inputData.getLongArray(KEY_TARGET_PHOTO_IDS)?.toSet().orEmpty()
         if (requestedIds.isNotEmpty()) {
-            val focused = indexPersistence.getByIdsOrdered(requestedIds.toList())
+            val requestedIdList = requestedIds.toList()
+            val focused = indexPersistence.getByIdsOrdered(requestedIdList)
             if (focused.isEmpty()) return Result.success()
             if (!processPhotoBatch(focused, processedBefore = 0)) return Result.retry()
-            return pendingResultAfterPass()
+            val hasRemainingFocusedWork = indexPersistence.getByIdsOrdered(requestedIdList)
+                .any { photo -> photo.needsIntelligenceWork() }
+            return resultForRemainingWork(hasRemainingFocusedWork)
         }
 
         var afterId = -1L
@@ -87,7 +91,11 @@ class TaggingWorker @AssistedInject constructor(
             afterId = photos.last().id
         }
 
-        return pendingResultAfterPass()
+        val hasRemainingLibraryWork = indexPersistence.getPendingIntelligenceBatch(
+            afterId = -1L,
+            limit = 1,
+        ).isNotEmpty()
+        return resultForRemainingWork(hasRemainingLibraryWork)
     }
 
     private suspend fun processPhotoBatch(
@@ -207,13 +215,15 @@ class TaggingWorker @AssistedInject constructor(
         return true
     }
 
-    private suspend fun pendingResultAfterPass(): Result {
-        val pending = indexPersistence.getPendingIntelligenceBatch(
-            afterId = -1L,
-            limit = 1,
-        )
-        if (pending.isEmpty()) return Result.success()
+    private fun PhotoRecord.needsIntelligenceWork(): Boolean {
+        return mlStatus.shouldProcess ||
+            ocrStatus.shouldProcess ||
+            perceptualHash == null ||
+            blurScore == null
+    }
 
+    private fun resultForRemainingWork(hasRemainingWork: Boolean): Result {
+        if (!hasRemainingWork) return Result.success()
         return if (runAttemptCount < MAX_RETRY_ATTEMPTS) {
             Result.retry()
         } else {
@@ -251,22 +261,26 @@ class TaggingWorker @AssistedInject constructor(
         private const val MAX_RETRY_ATTEMPTS = 3
         private const val DURABLE_FETCH_BATCH_SIZE = 200
         private const val PROGRESS_INTERVAL = 500
+        private const val MAINTENANCE_BACKOFF_SECONDS = 30L
 
         fun enqueueLibraryMaintenance(context: Context) {
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
                 .setRequiresBatteryNotLow(true)
-                .setRequiresCharging(true)
-                .setRequiresDeviceIdle(true)
                 .build()
 
             val request = OneTimeWorkRequestBuilder<TaggingWorker>()
                 .setConstraints(constraints)
+                .setBackoffCriteria(
+                    BackoffPolicy.EXPONENTIAL,
+                    MAINTENANCE_BACKOFF_SECONDS,
+                    TimeUnit.SECONDS,
+                )
                 .build()
 
             WorkManager.getInstance(context).enqueueUniqueWork(
                 Constants.ML_WORKER_NAME,
-                ExistingWorkPolicy.REPLACE,
+                ExistingWorkPolicy.KEEP,
                 request,
             )
         }
