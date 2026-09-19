@@ -79,24 +79,11 @@ class ArchiveService @Inject constructor(
 
         val nowMs = System.currentTimeMillis()
         val enabledCategories = enabledCategories()
-        val candidateEntities = when {
-            enabledCategories.isEmpty() -> emptyList()
-            else -> {
-                val paymentCandidates = if (ArchiveCategory.Payments in enabledCategories) {
-                    photoDao.getArchiveScreenshotCandidates(boundedLimit)
-                } else {
-                    emptyList()
-                }
-                val foodCandidates = if (ArchiveCategory.Food in enabledCategories) {
-                    photoDao.getArchiveFoodCandidates(boundedLimit)
-                } else {
-                    emptyList()
-                }
-                (paymentCandidates + foodCandidates)
-                    .distinctBy { entity -> entity.id }
-                    .filter { entity -> accessiblePhotoIds == null || entity.id in accessiblePhotoIds }
-            }
-        }
+        val candidateEntities = loadBoundedCandidateEntities(
+            enabledCategories = enabledCategories,
+            boundedLimit = boundedLimit,
+            accessiblePhotoIds = accessiblePhotoIds,
+        )
         val photoIds = candidateEntities.map { entity -> entity.id }
         val existingById = getArchiveDecisionsByPhotoIds(photoIds)
         val protectedIds = getProtectedIds(photoIds)
@@ -437,6 +424,50 @@ class ArchiveService @Inject constructor(
                 reasons = classification.reasons,
             )
         }
+    }
+
+    private suspend fun loadBoundedCandidateEntities(
+        enabledCategories: Set<ArchiveCategory>,
+        boundedLimit: Int,
+        accessiblePhotoIds: Set<Long>?,
+    ): List<PhotoEntity> {
+        if (enabledCategories.isEmpty() || boundedLimit <= 0) return emptyList()
+
+        val paymentCandidates = if (ArchiveCategory.Payments in enabledCategories) {
+            if (accessiblePhotoIds == null) {
+                photoDao.getArchiveScreenshotCandidates(boundedLimit)
+            } else {
+                accessiblePhotoIds.toList()
+                    .chunked(ARCHIVE_DB_BATCH_SIZE)
+                    .flatMap { batch -> photoDao.getArchiveScreenshotCandidatesForIds(batch) }
+                    .sortedWith(
+                        compareByDescending<PhotoEntity> { entity -> entity.dateAdded }
+                            .thenByDescending { entity -> entity.id },
+                    )
+                    .take(boundedLimit)
+            }
+        } else {
+            emptyList()
+        }
+
+        val foodCandidates = if (ArchiveCategory.Food in enabledCategories) {
+            if (accessiblePhotoIds == null) {
+                photoDao.getArchiveFoodCandidates(boundedLimit)
+            } else {
+                accessiblePhotoIds.toList()
+                    .chunked(ARCHIVE_DB_BATCH_SIZE)
+                    .flatMap { batch -> photoDao.getArchiveFoodCandidatesForIds(batch) }
+                    .sortedWith(
+                        compareByDescending<PhotoEntity> { entity -> entity.dateAdded }
+                            .thenByDescending { entity -> entity.id },
+                    )
+                    .take(boundedLimit)
+            }
+        } else {
+            emptyList()
+        }
+
+        return (paymentCandidates + foodCandidates).distinctBy { entity -> entity.id }
     }
 
     private suspend fun getDueDeleteCountForAccessibleIds(
