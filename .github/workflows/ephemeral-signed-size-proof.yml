@@ -1,0 +1,68 @@
+name: Ephemeral Signed AAB Size Proof
+
+on:
+  push:
+    branches:
+      - "release/2.0.16-signed-size-proof"
+
+permissions:
+  contents: read
+
+jobs:
+  signed-size-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Create disposable signing key
+        id: key
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEYSTORE="$RUNNER_TEMP/ephemeral-size-proof.jks"
+          keytool -genkeypair             -keystore "$KEYSTORE"             -storepass android             -alias sizeproof             -keypass android             -keyalg RSA             -keysize 2048             -validity 2             -dname "CN=PhotoBook Size Proof,O=Ephemeral,C=US"             -noprompt >/dev/null 2>&1
+          chmod 600 "$KEYSTORE"
+          echo "keystore=$KEYSTORE" >> "$GITHUB_OUTPUT"
+
+      - name: Build signed bundle and enforce hard limit
+        shell: bash
+        env:
+          KEYSTORE: ${{ steps.key.outputs.keystore }}
+        run: |
+          set -euo pipefail
+          ./gradlew clean             :app:bundleRelease             :app:verifyReleaseBundleSize             -Pandroid.injected.signing.store.file="$KEYSTORE"             -Pandroid.injected.signing.store.password=android             -Pandroid.injected.signing.key.alias=sizeproof             -Pandroid.injected.signing.key.password=android
+
+          AAB="app/build/outputs/bundle/release/app-release.aab"
+          test -s "$AAB"
+          unzip -tqq "$AAB"
+          jarsigner -verify -verbose -certs "$AAB" >/dev/null
+          BYTES="$(stat -c %s "$AAB")"
+          MAX=$((20 * 1024 * 1024))
+          (( BYTES <= MAX ))
+          {
+            echo "sourceCommit=70d8e569f9c4cb19d84271032d9650b7ea470ebf"
+            echo "workflowCommit=$GITHUB_SHA"
+            echo "versionCode=23"
+            echo "versionName=2.0.16"
+            echo "signedAabBytes=$BYTES"
+            echo "signedAabMiB=$(awk -v b="$BYTES" 'BEGIN { printf "%.4f", b/1048576 }')"
+            echo "headroomBytes=$((MAX - BYTES))"
+            echo "signature=VERIFIED_EPHEMERAL_SIZE_PROOF_ONLY"
+          } | tee signed-size-proof.txt
+
+      - name: Upload size report only
+        uses: actions/upload-artifact@v7
+        with:
+          name: photobook-2.0.16-ephemeral-signed-size-proof
+          retention-days: 3
+          if-no-files-found: error
+          path: signed-size-proof.txt
