@@ -50,6 +50,24 @@ class OcrTextSearchTest {
     }
 
     @Test
+    fun ocrPrefixQuery_doesNotMatchInsideUnrelatedToken() = runBlocking {
+        val index = PhotoIndex(PhotoIndexStrategy.V2)
+        index.setRecords(
+            listOf(
+                photo(1L, "PAN CARD issued"),
+                photo(2L, "pancard reference"),
+                photo(3L, "company annual report"),
+            ),
+        )
+
+        val result = searchEngine(index).search("pan")
+
+        assertThat(result.complete).isTrue()
+        assertThat(result.orderedIds).containsExactly(1L, 2L)
+        Unit
+    }
+
+    @Test
     fun singleDigitQuery_remainsSearchable() = runBlocking {
         val index = PhotoIndex(PhotoIndexStrategy.V2)
         index.setRecords(
