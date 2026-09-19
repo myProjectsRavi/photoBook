@@ -7,14 +7,21 @@ import androidx.security.crypto.MasterKey
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 @Singleton
 class PhotoNoteStore @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
-    private val prefs: SharedPreferences by lazy {
-        createEncryptedPrefsOrFallback()
+    private val securePrefsResult: Result<SharedPreferences> by lazy {
+        runCatching { createEncryptedPrefs() }
     }
+
+    private val revisionFlow = MutableStateFlow(0L)
+
+    fun changes(): StateFlow<Long> = revisionFlow.asStateFlow()
 
     // In-memory cache for fast search across all notes. Invalidated on save/delete.
     @Volatile
@@ -22,7 +29,7 @@ class PhotoNoteStore @Inject constructor(
 
     fun getNote(photoId: Long): String {
         if (photoId <= 0L) return ""
-        return prefs.getString(key(photoId), "").orEmpty()
+        return securePrefsResult.getOrNull()?.getString(key(photoId), "").orEmpty()
     }
 
     /**
@@ -36,24 +43,30 @@ class PhotoNoteStore @Inject constructor(
         return note.contains(text, ignoreCase = true)
     }
 
-    fun saveNote(photoId: Long, note: String) {
-        if (photoId <= 0L) return
+    fun saveNote(photoId: Long, note: String): Boolean {
+        if (photoId <= 0L) return false
         val trimmed = note.trim()
         if (trimmed.isEmpty()) {
-            deleteNote(photoId)
-            return
+            return deleteNote(photoId)
         }
-        prefs.edit().putString(key(photoId), trimmed.take(MAX_NOTE_CHARS)).apply()
-        noteCache = null // Invalidate cache
+        val prefs = securePrefsResult.getOrNull() ?: return false
+        val committed = prefs.edit()
+            .putString(key(photoId), trimmed.take(MAX_NOTE_CHARS))
+            .commit()
+        if (committed) publishRevision()
+        return committed
     }
 
-    fun deleteNote(photoId: Long) {
-        if (photoId <= 0L) return
-        prefs.edit().remove(key(photoId)).apply()
-        noteCache = null // Invalidate cache
+    fun deleteNote(photoId: Long): Boolean {
+        if (photoId <= 0L) return false
+        val prefs = securePrefsResult.getOrNull() ?: return false
+        val committed = prefs.edit().remove(key(photoId)).commit()
+        if (committed) publishRevision()
+        return committed
     }
 
     private fun loadAllNotes(): Map<Long, String> {
+        val prefs = securePrefsResult.getOrNull() ?: return emptyMap()
         val all = prefs.all ?: return emptyMap()
         val result = HashMap<Long, String>(all.size)
         val prefix = "photo_note_"
@@ -66,28 +79,30 @@ class PhotoNoteStore @Inject constructor(
         return result
     }
 
-    private fun createEncryptedPrefsOrFallback(): SharedPreferences {
-        return runCatching {
-            val key = MasterKey.Builder(context)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build()
-            EncryptedSharedPreferences.create(
-                context,
-                PREFS_NAME,
-                key,
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-            )
-        }.getOrElse {
-            context.getSharedPreferences(PREFS_FALLBACK_NAME, Context.MODE_PRIVATE)
-        }
+    private fun publishRevision() {
+        noteCache = null
+        revisionFlow.value = revisionFlow.value + 1L
+    }
+
+    private fun createEncryptedPrefs(): SharedPreferences {
+        val key = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        return EncryptedSharedPreferences.create(
+            context,
+            PREFS_NAME,
+            key,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
     }
 
     private fun key(photoId: Long): String = "photo_note_$photoId"
 
     companion object {
         private const val PREFS_NAME = "photobook_private_notes"
-        private const val PREFS_FALLBACK_NAME = "photobook_private_notes_fallback"
+        // The historical plaintext fallback file is intentionally left untouched for forensic/
+        // recovery purposes, but new code never reads or writes it.
         const val MAX_NOTE_CHARS = 1000
     }
 }
