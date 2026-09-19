@@ -128,7 +128,7 @@ class SearchEngineV2 @Inject constructor(
     private inline fun forEachSource(
         sourceSnapshot: List<PhotoRecord>,
         candidateIds: List<Long>?,
-        cancellationCheck: (() -> Unit)?,
+        noinline cancellationCheck: (() -> Unit)?,
         action: (ordinal: Int, photo: PhotoRecord) -> Unit,
     ): Boolean {
         if (candidateIds == null) {
