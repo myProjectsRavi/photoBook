@@ -5,9 +5,11 @@ import com.photobook.app.data.index.PhotoIndexStrategy
 import com.photobook.app.data.model.IntelligenceStatus
 import com.photobook.app.data.model.MLTag
 import com.photobook.app.data.model.PhotoRecord
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SearchEngineV2ParityTest {
@@ -62,6 +64,42 @@ class SearchEngineV2ParityTest {
             assertEquals("candidate v2 incomplete for '$query'", true, v2Result.complete)
             assertEquals("candidate ID/order mismatch for '$query'", legacyIds, v2Result.orderedIds)
         }
+    }
+
+    @Test
+    fun cancellationCheck_stopsObsoleteFullLibraryScan() = runBlocking {
+        val index = PhotoIndex(PhotoIndexStrategy.V2)
+        index.setRecords(deterministicRecords(20_000))
+        val parser = QueryParser()
+        val classifier = TokenClassifier(index)
+        val filters = FilterFactory()
+        val ranker = SearchRanker()
+        val v2 = SearchEngineV2(index, parser, classifier, filters, ranker)
+
+        var cancellationChecks = 0
+        var cancelled = false
+        try {
+            v2.search(
+                query = "invoice",
+                candidateIds = null,
+                context = SearchContext(nowMillis = NOW),
+                cancellationCheck = {
+                    cancellationChecks += 1
+                    if (cancellationChecks == 3) {
+                        throw CancellationException("test cancellation")
+                    }
+                },
+            )
+        } catch (_: CancellationException) {
+            cancelled = true
+        }
+
+        assertTrue("search must propagate cooperative cancellation", cancelled)
+        assertEquals(
+            "cancellation must stop at the injected bounded checkpoint",
+            3,
+            cancellationChecks,
+        )
     }
 
     @Test
