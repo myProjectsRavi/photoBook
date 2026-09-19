@@ -56,14 +56,25 @@ class ArchiveAccessBoundaryInstrumentedTest {
                 ),
             )
 
+            // Enable the feature without performing a pre-scan. The first decision creation
+            // below must therefore come from the scanLimit=1 request itself.
+            assertEquals(
+                true,
+                preferences.edit().putBoolean("archives_enabled_v1", true).commit(),
+            )
+
             // With scanLimit=1 the newer, revoked row must not consume the only candidate slot.
             // The access boundary is applied before limiting, so the older accessible row survives.
-            service.setEnabled(enabled = true, accessiblePhotoIds = setOf(10L))
             val summary = service.refreshCandidates(
                 scanLimit = 1,
                 accessiblePhotoIds = setOf(10L),
             )
             assertEquals(listOf(10L), summary.candidates.map { candidate -> candidate.photo.id })
+            assertEquals(
+                ArchiveDecisionStates.CANDIDATE,
+                database.archiveDao().getByPhotoIds(listOf(10L)).single().state,
+            )
+            assertEquals(0, database.archiveDao().getByPhotoIds(listOf(11L)).size)
         } finally {
             preferences.edit().clear().commit()
             database.close()
