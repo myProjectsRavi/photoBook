@@ -1062,11 +1062,15 @@ class MainViewModel @Inject constructor(
         )
     }
 
-    private fun currentArchiveAccessiblePhotoIds(): Set<Long> {
-        return photoIndex.snapshot()
-            .asSequence()
-            .map { photo -> photo.id }
-            .toHashSet()
+    private fun currentArchiveAccessiblePhotoIds(): Set<Long>? {
+        return when (uiState.value.photoAccessMode) {
+            PermissionUtils.PhotoAccessMode.Full -> null
+            PermissionUtils.PhotoAccessMode.Limited -> photoIndex.snapshot()
+                .asSequence()
+                .map { photo -> photo.id }
+                .toHashSet()
+            PermissionUtils.PhotoAccessMode.None -> emptySet()
+        }
     }
 
     private fun applyArchiveSummary(
