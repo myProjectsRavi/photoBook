@@ -3,7 +3,7 @@ name: Reliability Emulator Verification
 on:
   push:
     branches:
-      - "feature/reliability-search-audit-repair"
+      - "release/2.0.16-crash-certification"
     paths:
       - "app/src/**"
       - "app/build.gradle.kts"
@@ -215,7 +215,7 @@ jobs:
           adb shell pm path "$PACKAGE" | tee "$RUNNER_TEMP/photobook-installed-package.txt"
           grep -Fq "package:" "$RUNNER_TEMP/photobook-installed-package.txt"
 
-          for iteration in $(seq 1 20); do
+          for iteration in $(seq 1 50); do
             adb shell am force-stop "$PACKAGE"
             adb shell am start -W \
               -a android.intent.action.MAIN \
@@ -233,9 +233,13 @@ jobs:
           mkdir -p build/reports/reliability-emulator
           adb logcat -d > build/reports/reliability-emulator/logcat.txt
           adb shell dumpsys meminfo com.photobook.app > build/reports/reliability-emulator/meminfo.txt 2>/dev/null || true
-          PATTERN='ANR in com\.photobook\.app|FATAL EXCEPTION.*photobook|OutOfMemoryError|Application Not Responding'
-          if grep -E -i "$PATTERN" build/reports/reliability-emulator/logcat.txt; then
-            echo "PhotoBook crash/ANR/OOM signature detected in hosted emulator evidence."
+          adb logcat -d -b crash > build/reports/reliability-emulator/crash-buffer.txt 2>/dev/null || true
+          adb shell dumpsys activity exit-info com.photobook.app > build/reports/reliability-emulator/exit-info.txt 2>/dev/null || true
+          PATTERN='ANR in com\.photobook\.app|FATAL EXCEPTION.*photobook|OutOfMemoryError|Application Not Responding|Fatal signal|SIGSEGV|SIGABRT|UnsatisfiedLinkError'
+          if grep -E -i "$PATTERN" \
+            build/reports/reliability-emulator/logcat.txt \
+            build/reports/reliability-emulator/crash-buffer.txt; then
+            echo "PhotoBook crash/ANR/OOM/native-fatal signature detected in hosted emulator evidence."
             exit 1
           fi
 
