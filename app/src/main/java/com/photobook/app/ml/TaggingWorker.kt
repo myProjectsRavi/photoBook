@@ -14,6 +14,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.photobook.app.data.model.IntelligenceStatus
+import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.data.index.IndexCommitCoordinator
 import com.photobook.app.data.index.IndexPersistence
 import com.photobook.app.data.index.PhotoIndex
@@ -61,19 +62,42 @@ class TaggingWorker @AssistedInject constructor(
         }
 
         val requestedIds = inputData.getLongArray(KEY_TARGET_PHOTO_IDS)?.toSet().orEmpty()
-        val photos = if (requestedIds.isEmpty()) {
-            photoIndex.snapshot()
-        } else {
-            photoIndex.snapshot().filter { photo -> photo.id in requestedIds }
-        }
-        if (photos.isEmpty()) {
-            return Result.success()
+        if (requestedIds.isNotEmpty()) {
+            val focused = indexPersistence.getByIdsOrdered(requestedIds.toList())
+            if (focused.isEmpty()) return Result.success()
+            if (!processPhotoBatch(focused, processedBefore = 0)) return Result.retry()
+            return pendingResultAfterPass()
         }
 
+        var afterId = -1L
+        var processed = 0
+        while (true) {
+            if (isStopped) return Result.retry()
+
+            val photos = indexPersistence.getPendingIntelligenceBatch(
+                afterId = afterId,
+                limit = DURABLE_FETCH_BATCH_SIZE,
+            )
+            if (photos.isEmpty()) break
+
+            if (!processPhotoBatch(photos, processedBefore = processed)) {
+                return Result.retry()
+            }
+            processed += photos.size
+            afterId = photos.last().id
+        }
+
+        return pendingResultAfterPass()
+    }
+
+    private suspend fun processPhotoBatch(
+        photos: List<PhotoRecord>,
+        processedBefore: Int,
+    ): Boolean {
         val pendingIndexUpdates = mutableListOf<PhotoIndex.PhotoIntelligenceUpdate>()
 
         photos.forEachIndexed { index, photo ->
-            if (isStopped) return Result.retry()
+            if (isStopped) return false
 
             val needsMl = photo.mlStatus.shouldProcess
             val needsOcr = photo.ocrStatus.shouldProcess
@@ -167,20 +191,34 @@ class TaggingWorker @AssistedInject constructor(
 
             if (pendingIndexUpdates.size >= Constants.BATCH_SIZE) {
                 flushPendingUpdates(pendingIndexUpdates)
-
-                if (isBatteryTooLow()) return Result.retry()
+                if (isBatteryTooLow()) return false
                 delay(Constants.BATCH_DELAY_MS)
             }
 
-            if (index % 500 == 0) {
-                setProgress(androidx.work.workDataOf("processed" to index, "total" to photos.size))
+            val processed = processedBefore + index + 1
+            if (processed % PROGRESS_INTERVAL == 0) {
+                setProgress(workDataOf("processed" to processed))
             }
         }
 
         if (pendingIndexUpdates.isNotEmpty()) {
             flushPendingUpdates(pendingIndexUpdates)
         }
-        return Result.success()
+        return true
+    }
+
+    private suspend fun pendingResultAfterPass(): Result {
+        val pending = indexPersistence.getPendingIntelligenceBatch(
+            afterId = -1L,
+            limit = 1,
+        )
+        if (pending.isEmpty()) return Result.success()
+
+        return if (runAttemptCount < MAX_RETRY_ATTEMPTS) {
+            Result.retry()
+        } else {
+            Result.failure(workDataOf("reason" to "intelligence_work_incomplete"))
+        }
     }
 
     private suspend fun flushPendingUpdates(
@@ -211,6 +249,8 @@ class TaggingWorker @AssistedInject constructor(
         private const val KEY_TARGET_PHOTO_IDS = "target_photo_ids"
         private const val PRIORITY_WORK_NAME_PREFIX = "photobook_ml_worker_priority"
         private const val MAX_RETRY_ATTEMPTS = 3
+        private const val DURABLE_FETCH_BATCH_SIZE = 200
+        private const val PROGRESS_INTERVAL = 500
 
         fun enqueueLibraryMaintenance(context: Context) {
             val constraints = Constraints.Builder()
