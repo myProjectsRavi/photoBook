@@ -197,6 +197,7 @@ class MainViewModel @Inject constructor(
                 pageSize = SEARCH_PAGE_SIZE,
                 initialLoadSize = SEARCH_PAGE_SIZE * 2,
                 prefetchDistance = SEARCH_PREFETCH_DISTANCE,
+                maxSize = SEARCH_MAX_LOADED_ITEMS,
                 enablePlaceholders = true,
             ),
             pagingSourceFactory = {
@@ -1554,6 +1555,9 @@ class MainViewModel @Inject constructor(
     companion object {
         private const val SEARCH_PAGE_SIZE = 60
         private const val SEARCH_PREFETCH_DISTANCE = 20
+        // Keep long-scroll memory bounded while retaining five normal pages around the viewport.
+        // Paging requires maxSize >= pageSize + 2 * prefetchDistance (100 for this configuration).
+        private const val SEARCH_MAX_LOADED_ITEMS = SEARCH_PAGE_SIZE * 5
         private const val VIEWER_WINDOW_RADIUS = 50
         private const val VIEWER_WINDOW_RECENTER_THRESHOLD = 12
         private const val RECORDS_UPDATE_DEBOUNCE_MS = 250L
