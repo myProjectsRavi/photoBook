@@ -75,6 +75,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.paging.cachedIn
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.ensureActive
 
 @HiltViewModel
 class MainViewModel @Inject constructor(
@@ -1328,32 +1330,39 @@ class MainViewModel @Inject constructor(
     ): SearchIdResult {
         val normalizedQuery = query.trim()
         if (normalizedQuery.isBlank()) {
-            // Timeline is the single feed mode now — shows all photos (incl. screenshots) chronologically.
+            // Building the complete timeline ID projection is O(n); keep it off Main and make it
+            // cooperatively cancellable when a newer index generation replaces this flow.
+            val orderedIds = withContext(Dispatchers.Default) {
+                val ids = ArrayList<Long>(records.size)
+                records.forEachIndexed { index, record ->
+                    if (index % SEARCH_CANCELLATION_CHECK_INTERVAL == 0) {
+                        coroutineContext.ensureActive()
+                    }
+                    ids += record.id
+                }
+                ids
+            }
             return SearchIdResult(
-                orderedIds = records.map { record -> record.id },
+                orderedIds = orderedIds,
                 tokens = emptyList(),
             )
         }
 
-        val typedTokens = queryParser.tokenize(normalizedQuery).map(tokenClassifier::classify)
-        val shouldUseDao = shouldUseDaoCandidateSearch(typedTokens)
         val context = buildSearchContext()
 
         if (SEARCH_RUNTIME_STRATEGY == SearchRuntimeStrategy.V2) {
-            val daoCandidateIds = if (shouldUseDao) {
-                indexPersistence.searchIdsByQueryText(normalizedQuery)
-            } else {
-                emptyList()
-            }
-            // Preserve the legacy empty-FTS fallback: an empty candidate set means search the
-            // current in-memory library rather than incorrectly returning no results.
-            val candidateIds = daoCandidateIds.takeIf { it.isNotEmpty() }
+            // PB03 correctness rule: FTS is not a proven superset of PhotoBook's authoritative
+            // predicate (filename substrings, encrypted notes, typed dates and canonical synonyms
+            // can all live outside a non-empty FTS candidate set). Until a complete typed candidate
+            // planner exists, scan the immutable in-memory revision rather than silently dropping
+            // valid results.
             val v2Result = withContext(Dispatchers.Default) {
                 searchEngineV2.search(
                     query = query,
-                    candidateIds = candidateIds,
+                    candidateIds = null,
                     context = context,
                     expectedIndexVersion = expectedIndexVersion,
+                    cancellationCheck = { coroutineContext.ensureActive() },
                 )
             }
             if (v2Result.complete) {
@@ -1362,40 +1371,27 @@ class MainViewModel @Inject constructor(
                     tokens = v2Result.tokens,
                 )
             }
+
+            // A writer changed the immutable search revision while this request was running.
+            // Do not publish an empty/stale intermediate result; flatMapLatest will cancel this
+            // obsolete transform when the debounced PhotoIndex generation arrives.
+            awaitCancellation()
         }
 
-        // Temporary internal rollback path. Keep this until 10k/50k/100k parity and release
-        // verification are green; it is not a user-facing or permanent dual architecture.
-        val daoCandidates = if (shouldUseDao) {
-            indexPersistence.searchByQueryText(normalizedQuery)
-        } else {
-            emptyList()
-        }
-        val recordsToSearch = if (daoCandidates.isNotEmpty()) daoCandidates else records
+        // Internal rollback path. It must preserve complete-result semantics as well, so do not
+        // reintroduce the unsafe FTS-exclusive candidate path here.
         val legacyResult = withContext(Dispatchers.Default) {
             filterEngine.search(
                 query = query,
-                records = recordsToSearch,
+                records = records,
                 context = context,
+                cancellationCheck = { coroutineContext.ensureActive() },
             )
         }
         return SearchIdResult(
             orderedIds = legacyResult.results.map { record -> record.id },
             tokens = legacyResult.tokens,
         )
-    }
-
-    private fun shouldUseDaoCandidateSearch(tokens: List<QueryToken>): Boolean {
-        if (tokens.isEmpty()) return false
-        return tokens.any { token ->
-            when (token) {
-                is TextToken -> true
-                is MLTagToken -> true
-                is FolderToken -> true
-                is LocationToken -> token.keyword !in setOf("near_me", "here", "home", "office", "abroad")
-                else -> false
-            }
-        }
     }
 
     private fun buildTimelineMarks(
@@ -1555,6 +1551,7 @@ class MainViewModel @Inject constructor(
     companion object {
         private const val SEARCH_PAGE_SIZE = 60
         private const val SEARCH_PREFETCH_DISTANCE = 20
+        private const val SEARCH_CANCELLATION_CHECK_INTERVAL = 64
         // Keep long-scroll memory bounded while retaining five normal pages around the viewport.
         // Paging requires maxSize >= pageSize + 2 * prefetchDistance (100 for this configuration).
         private const val SEARCH_MAX_LOADED_ITEMS = SEARCH_PAGE_SIZE * 5
