@@ -56,7 +56,11 @@ class ArchiveAccessBoundaryInstrumentedTest {
                 accessiblePhotoIds = setOf(1L),
             )
             assertEquals(listOf(1L), firstGrant.candidates.map { candidate -> candidate.photo.id })
-            assertEquals(listOf(1L), archiveDao.getCandidatePhotoIds())
+            assertEquals(
+                ArchiveDecisionStates.CANDIDATE,
+                archiveDao.getByPhotoIds(listOf(1L)).single().state,
+            )
+            assertEquals(0, archiveDao.getByPhotoIds(listOf(2L)).size)
             assertNotNull(photoDao.getById(2L))
 
             val secondGrant = service.refreshCandidates(
