@@ -139,10 +139,20 @@ class MLTagger @Inject constructor(
                 val canonical = label.label
                 if (label.confidence >= LabelMapping.taggingThreshold(canonical)) {
                     archiveSignals += MLTag(canonical, label.confidence)
-                    if (label.isPreparedFood) {
-                        archiveSignals += MLTag("prepared_food", label.confidence)
-                        if (label.confidence >= ArchiveFoodSignals.MIN_PREPARED_FOOD_CONFIDENCE) {
-                            tagMap["prepared_food"] = MLTag("prepared_food", label.confidence)
+
+                    // These semantic labels are already computed locally for Archive safety. Persist
+                    // the supported canonical result as a normal searchable tag as well, retaining
+                    // the strongest valid confidence when compact + semantic producers overlap.
+                    val existingTag = tagMap[canonical]
+                    if (existingTag == null || existingTag.confidence < label.confidence) {
+                        tagMap[canonical] = MLTag(canonical, label.confidence)
+                    }
+
+                    val preparedConfidence = label.preparedFoodConfidence
+                    if (preparedConfidence != null) {
+                        archiveSignals += MLTag("prepared_food", preparedConfidence)
+                        if (preparedConfidence >= ArchiveFoodSignals.MIN_PREPARED_FOOD_CONFIDENCE) {
+                            tagMap["prepared_food"] = MLTag("prepared_food", preparedConfidence)
                         }
                     }
                 }
