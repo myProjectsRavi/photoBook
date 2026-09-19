@@ -35,10 +35,11 @@ class FilterEngine @Inject constructor(
         records: List<PhotoRecord>,
         context: SearchContext = SearchContext(),
         cancellationCheck: (() -> Unit)? = null,
+        externalRevision: Long = 0L,
     ): SearchResult {
         cancellationCheck?.invoke()
         val normalized = queryParser.normalize(query)
-        val key = "$normalized|${index.version()}|${records.size}"
+        val key = "$normalized|${index.version()}|${records.size}|$externalRevision"
         cache[key]?.let { cached -> return cached }
 
         if (normalized.isBlank()) {
