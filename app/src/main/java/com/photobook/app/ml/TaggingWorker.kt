@@ -19,10 +19,12 @@ import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.data.index.IndexCommitCoordinator
 import com.photobook.app.data.index.IndexPersistence
 import com.photobook.app.data.index.PhotoIndex
+import com.photobook.app.data.source.MediaStoreScanner
 import com.photobook.app.feature.duplicates.BlurScoreComputer
 import com.photobook.app.feature.duplicates.PerceptualHashComputer
 import com.photobook.app.util.Constants
 import com.photobook.app.util.LocalDiagnostics
+import com.photobook.app.util.PermissionUtils
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CancellationException
@@ -35,6 +37,7 @@ class TaggingWorker @AssistedInject constructor(
     private val photoIndex: PhotoIndex,
     private val indexPersistence: IndexPersistence,
     private val indexCommitCoordinator: IndexCommitCoordinator,
+    private val mediaStoreScanner: MediaStoreScanner,
     private val mlTagger: MLTagger,
     private val perceptualHashComputer: PerceptualHashComputer,
     private val blurScoreComputer: BlurScoreComputer,
@@ -71,6 +74,32 @@ class TaggingWorker @AssistedInject constructor(
             val hasRemainingFocusedWork = indexPersistence.getByIdsOrdered(requestedIdList)
                 .any { photo -> photo.needsIntelligenceWork() }
             return resultForRemainingWork(hasRemainingFocusedWork)
+        }
+
+        val accessMode = PermissionUtils.photoAccessMode(applicationContext)
+        if (accessMode == PermissionUtils.PhotoAccessMode.None) {
+            return Result.success()
+        }
+
+        if (accessMode == PermissionUtils.PhotoAccessMode.Limited) {
+            val visibleIds = mediaStoreScanner.scanAllIds().sorted()
+            var processed = 0
+            visibleIds.chunked(DURABLE_FETCH_BATCH_SIZE).forEach { batchIds ->
+                if (isStopped) return Result.retry()
+                val photos = indexPersistence.getByIdsOrdered(batchIds)
+                    .filter { photo -> photo.needsIntelligenceWork() }
+                if (!processPhotoBatch(photos, processedBefore = processed)) {
+                    return Result.retry()
+                }
+                processed += photos.size
+            }
+            val hasRemainingVisibleWork = mediaStoreScanner.scanAllIds()
+                .chunked(DURABLE_FETCH_BATCH_SIZE)
+                .any { ids ->
+                    indexPersistence.getByIdsOrdered(ids.toList())
+                        .any { photo -> photo.needsIntelligenceWork() }
+                }
+            return resultForRemainingWork(hasRemainingVisibleWork)
         }
 
         var afterId = -1L
