@@ -22,6 +22,55 @@ import org.junit.runner.RunWith
 class ArchiveAccessBoundaryInstrumentedTest {
 
     @Test
+    fun limitedAccess_appliesVisibilityBeforeBoundedCandidateLimit() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val database = Room.inMemoryDatabaseBuilder(
+            context,
+            PhotoBookDatabase::class.java,
+        )
+            .allowMainThreadQueries()
+            .build()
+        val preferences = context.getSharedPreferences(
+            "archive-limit-access-test-" + UUID.randomUUID(),
+            0,
+        )
+
+        try {
+            val photoDao = database.photoDao()
+            val service = ArchiveService(
+                photoDao = photoDao,
+                archiveDao = database.archiveDao(),
+                vaultDao = database.vaultDao(),
+                classifier = ArchiveClassifier(),
+                sharedPreferences = preferences,
+            )
+            val nowMs = System.currentTimeMillis()
+            photoDao.upsertPhotos(
+                listOf(
+                    paymentScreenshot(10L)
+                        .copy(dateAdded = nowMs - 60_000L)
+                        .toPhotoEntity(),
+                    paymentScreenshot(11L)
+                        .copy(dateAdded = nowMs)
+                        .toPhotoEntity(),
+                ),
+            )
+
+            // With scanLimit=1 the newer, revoked row must not consume the only candidate slot.
+            // The access boundary is applied before limiting, so the older accessible row survives.
+            service.setEnabled(enabled = true, accessiblePhotoIds = setOf(10L))
+            val summary = service.refreshCandidates(
+                scanLimit = 1,
+                accessiblePhotoIds = setOf(10L),
+            )
+            assertEquals(listOf(10L), summary.candidates.map { candidate -> candidate.photo.id })
+        } finally {
+            preferences.edit().clear().commit()
+            database.close()
+        }
+    }
+
+    @Test
     fun limitedAccess_reselectionNeverReturnsRevokedArchiveCandidates() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val database = Room.inMemoryDatabaseBuilder(
