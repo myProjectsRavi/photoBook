@@ -923,7 +923,12 @@ class MainViewModel @Inject constructor(
 
             val persisted = indexPersistence.load()
             if (persisted.isNotEmpty()) {
-                photoIndex.setRecords(persisted)
+                // Full-index publication sorts the library, rebuilds ID lookup state, and rebuilds
+                // keyword sets. Keep that O(n) CPU/allocation work off Main; only immutable state
+                // publication crosses back through the thread-safe PhotoIndex backend.
+                withContext(Dispatchers.Default) {
+                    photoIndex.setRecords(persisted)
+                }
             }
 
             syncMediaStoreIncremental(forceFullSync = photoIndex.snapshot().isEmpty())
