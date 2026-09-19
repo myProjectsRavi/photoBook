@@ -24,13 +24,6 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 55
-    env:
-      PHOTOBOOK_UPLOAD_KEYSTORE_BASE64: ${{ secrets.PHOTOBOOK_UPLOAD_KEYSTORE_BASE64 }}
-      PHOTOBOOK_UPLOAD_STORE_PASSWORD: ${{ secrets.PHOTOBOOK_UPLOAD_STORE_PASSWORD }}
-      PHOTOBOOK_UPLOAD_KEY_ALIAS: ${{ secrets.PHOTOBOOK_UPLOAD_KEY_ALIAS }}
-      PHOTOBOOK_UPLOAD_KEY_PASSWORD: ${{ secrets.PHOTOBOOK_UPLOAD_KEY_PASSWORD }}
-      PHOTOBOOK_UPLOAD_CERT_SHA256: ${{ secrets.PHOTOBOOK_UPLOAD_CERT_SHA256 }}
-
     steps:
       - name: Checkout exact main
         uses: actions/checkout@v6
@@ -44,6 +37,12 @@ jobs:
 
       - name: Fail closed unless signing material is configured
         shell: bash
+        env:
+          PHOTOBOOK_UPLOAD_KEYSTORE_BASE64: ${{ secrets.PHOTOBOOK_UPLOAD_KEYSTORE_BASE64 }}
+          PHOTOBOOK_UPLOAD_STORE_PASSWORD: ${{ secrets.PHOTOBOOK_UPLOAD_STORE_PASSWORD }}
+          PHOTOBOOK_UPLOAD_KEY_ALIAS: ${{ secrets.PHOTOBOOK_UPLOAD_KEY_ALIAS }}
+          PHOTOBOOK_UPLOAD_KEY_PASSWORD: ${{ secrets.PHOTOBOOK_UPLOAD_KEY_PASSWORD }}
+          PHOTOBOOK_UPLOAD_CERT_SHA256: ${{ secrets.PHOTOBOOK_UPLOAD_CERT_SHA256 }}
         run: |
           set -euo pipefail
           for name in             PHOTOBOOK_UPLOAD_KEYSTORE_BASE64             PHOTOBOOK_UPLOAD_STORE_PASSWORD             PHOTOBOOK_UPLOAD_KEY_ALIAS             PHOTOBOOK_UPLOAD_KEY_PASSWORD             PHOTOBOOK_UPLOAD_CERT_SHA256; do
@@ -56,6 +55,11 @@ jobs:
       - name: Materialize upload keystore outside workspace
         id: signing
         shell: bash
+        env:
+          PHOTOBOOK_UPLOAD_KEYSTORE_BASE64: ${{ secrets.PHOTOBOOK_UPLOAD_KEYSTORE_BASE64 }}
+          PHOTOBOOK_UPLOAD_STORE_PASSWORD: ${{ secrets.PHOTOBOOK_UPLOAD_STORE_PASSWORD }}
+          PHOTOBOOK_UPLOAD_KEY_ALIAS: ${{ secrets.PHOTOBOOK_UPLOAD_KEY_ALIAS }}
+          PHOTOBOOK_UPLOAD_CERT_SHA256: ${{ secrets.PHOTOBOOK_UPLOAD_CERT_SHA256 }}
         run: |
           set -euo pipefail
           KEYSTORE="$RUNNER_TEMP/photobook-upload.jks"
@@ -92,6 +96,9 @@ jobs:
         shell: bash
         env:
           KEYSTORE: ${{ steps.signing.outputs.keystore }}
+          PHOTOBOOK_UPLOAD_STORE_PASSWORD: ${{ secrets.PHOTOBOOK_UPLOAD_STORE_PASSWORD }}
+          PHOTOBOOK_UPLOAD_KEY_ALIAS: ${{ secrets.PHOTOBOOK_UPLOAD_KEY_ALIAS }}
+          PHOTOBOOK_UPLOAD_KEY_PASSWORD: ${{ secrets.PHOTOBOOK_UPLOAD_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           ./gradlew clean             :app:assembleRelease             :app:bundleRelease             :app:verifyApkSize             :app:verifyReleaseBundleSize             :app:lintRelease             -Pandroid.injected.signing.store.file="$KEYSTORE"             -Pandroid.injected.signing.store.password="$PHOTOBOOK_UPLOAD_STORE_PASSWORD"             -Pandroid.injected.signing.key.alias="$PHOTOBOOK_UPLOAD_KEY_ALIAS"             -Pandroid.injected.signing.key.password="$PHOTOBOOK_UPLOAD_KEY_PASSWORD"
@@ -99,7 +106,7 @@ jobs:
       - name: Verify final signed AAB and release APK contract
         shell: bash
         env:
-          KEYSTORE: ${{ steps.signing.outputs.keystore }}
+          PHOTOBOOK_UPLOAD_CERT_SHA256: ${{ secrets.PHOTOBOOK_UPLOAD_CERT_SHA256 }}
         run: |
           set -euo pipefail
           AAB="app/build/outputs/bundle/release/app-release.aab"
