@@ -312,9 +312,10 @@ class MainViewModel @Inject constructor(
                 uiState.update { it.copy(isIndexing = true, searchReady = false) }
                 try {
                     syncMediaStoreIncremental(forceFullSync = true)
-                    if (uiState.value.showArchives) {
-                        loadArchiveSummary(refreshCandidates = false)
-                    }
+                    // Archive candidate count is visible from the home surface even when the
+                    // Archive sheet is closed, so permission reselection must clamp Archive state
+                    // on every reconciliation, not only while the sheet is open.
+                    loadArchiveSummary(refreshCandidates = false)
                 } finally {
                     uiState.update {
                         it.copy(
