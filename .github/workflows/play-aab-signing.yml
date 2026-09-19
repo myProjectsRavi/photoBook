@@ -1,0 +1,162 @@
+name: Play AAB Signing Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_version_code:
+        description: Expected Play versionCode
+        required: true
+        default: "23"
+      expected_version_name:
+        description: Expected Play versionName
+        required: true
+        default: "2.0.16"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: photobook-play-signing
+  cancel-in-progress: false
+
+jobs:
+  signed-play-aab:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      PHOTOBOOK_UPLOAD_KEYSTORE_BASE64: ${{ secrets.PHOTOBOOK_UPLOAD_KEYSTORE_BASE64 }}
+      PHOTOBOOK_UPLOAD_STORE_PASSWORD: ${{ secrets.PHOTOBOOK_UPLOAD_STORE_PASSWORD }}
+      PHOTOBOOK_UPLOAD_KEY_ALIAS: ${{ secrets.PHOTOBOOK_UPLOAD_KEY_ALIAS }}
+      PHOTOBOOK_UPLOAD_KEY_PASSWORD: ${{ secrets.PHOTOBOOK_UPLOAD_KEY_PASSWORD }}
+      PHOTOBOOK_UPLOAD_CERT_SHA256: ${{ secrets.PHOTOBOOK_UPLOAD_CERT_SHA256 }}
+
+    steps:
+      - name: Checkout exact main
+        uses: actions/checkout@v6
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Fail closed unless signing material is configured
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in             PHOTOBOOK_UPLOAD_KEYSTORE_BASE64             PHOTOBOOK_UPLOAD_STORE_PASSWORD             PHOTOBOOK_UPLOAD_KEY_ALIAS             PHOTOBOOK_UPLOAD_KEY_PASSWORD             PHOTOBOOK_UPLOAD_CERT_SHA256; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Required repository secret is not configured: $name" >&2
+              exit 1
+            fi
+          done
+
+      - name: Materialize upload keystore outside workspace
+        id: signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEYSTORE="$RUNNER_TEMP/photobook-upload.jks"
+          printf '%s' "$PHOTOBOOK_UPLOAD_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
+          chmod 600 "$KEYSTORE"
+          test -s "$KEYSTORE"
+          echo "keystore=$KEYSTORE" >> "$GITHUB_OUTPUT"
+
+          ACTUAL_KEYSTORE_CERT="$(
+            keytool -list -v               -keystore "$KEYSTORE"               -storepass "$PHOTOBOOK_UPLOAD_STORE_PASSWORD"               -alias "$PHOTOBOOK_UPLOAD_KEY_ALIAS" 2>/dev/null               | awk -F'SHA256:' '/SHA256:/{gsub(/[:[:space:]]/,"",$2); print toupper($2); exit}'
+          )"
+          EXPECTED_CERT="$(printf '%s' "$PHOTOBOOK_UPLOAD_CERT_SHA256" | tr -d ':[:space:]' | tr '[:lower:]' '[:upper:]')"
+          [[ -n "$ACTUAL_KEYSTORE_CERT" ]]
+          if [[ "$ACTUAL_KEYSTORE_CERT" != "$EXPECTED_CERT" ]]; then
+            echo "Configured keystore certificate does not match the expected Play upload certificate." >&2
+            exit 1
+          fi
+          echo "upload_certificate_sha256=$ACTUAL_KEYSTORE_CERT"
+
+      - name: Verify source release metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          METADATA="$(./gradlew -q :app:printReleaseMetadata)"
+          printf '%s\n' "$METADATA"
+          VERSION_CODE="$(printf '%s\n' "$METADATA" | awk -F= '$1=="versionCode"{print $2}')"
+          VERSION_NAME="$(printf '%s\n' "$METADATA" | awk -F= '$1=="versionName"{print $2}')"
+          TARGET_SDK="$(printf '%s\n' "$METADATA" | awk -F= '$1=="targetSdk"{print $2}')"
+          [[ "$VERSION_CODE" == "${{ inputs.expected_version_code }}" ]]
+          [[ "$VERSION_NAME" == "${{ inputs.expected_version_name }}" ]]
+          [[ "$TARGET_SDK" == "36" ]]
+
+      - name: Build exact signed release artifacts
+        shell: bash
+        env:
+          KEYSTORE: ${{ steps.signing.outputs.keystore }}
+        run: |
+          set -euo pipefail
+          ./gradlew clean             :app:assembleRelease             :app:bundleRelease             :app:verifyApkSize             :app:verifyReleaseBundleSize             :app:lintRelease             -Pandroid.injected.signing.store.file="$KEYSTORE"             -Pandroid.injected.signing.store.password="$PHOTOBOOK_UPLOAD_STORE_PASSWORD"             -Pandroid.injected.signing.key.alias="$PHOTOBOOK_UPLOAD_KEY_ALIAS"             -Pandroid.injected.signing.key.password="$PHOTOBOOK_UPLOAD_KEY_PASSWORD"
+
+      - name: Verify final signed AAB and release APK contract
+        shell: bash
+        env:
+          KEYSTORE: ${{ steps.signing.outputs.keystore }}
+        run: |
+          set -euo pipefail
+          AAB="app/build/outputs/bundle/release/app-release.aab"
+          test -s "$AAB"
+
+          MAX_AAB_BYTES=$((20 * 1024 * 1024))
+          AAB_BYTES="$(stat -c %s "$AAB")"
+          if (( AAB_BYTES > MAX_AAB_BYTES )); then
+            echo "Final signed AAB exceeds 20 MiB: $AAB_BYTES bytes" >&2
+            exit 1
+          fi
+
+          jarsigner -verify -strict -verbose -certs "$AAB" >/dev/null
+
+          AAB_CERT="$(
+            keytool -printcert -jarfile "$AAB" 2>/dev/null               | awk -F'SHA256:' '/SHA256:/{gsub(/[:[:space:]]/,"",$2); print toupper($2); exit}'
+          )"
+          EXPECTED_CERT="$(printf '%s' "$PHOTOBOOK_UPLOAD_CERT_SHA256" | tr -d ':[:space:]' | tr '[:lower:]' '[:upper:]')"
+          [[ -n "$AAB_CERT" ]]
+          if [[ "$AAB_CERT" != "$EXPECTED_CERT" ]]; then
+            echo "Final AAB signer does not match expected Play upload certificate." >&2
+            exit 1
+          fi
+
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          AAPT="$(find "$SDK_ROOT/build-tools" -maxdepth 2 -type f -name aapt -print | sort -V | tail -n 1)"
+          test -x "$AAPT"
+          mapfile -t APKS < <(find app/build/outputs/apk/release -type f -name '*.apk' -print | sort)
+          [[ "${#APKS[@]}" -ge 1 ]]
+          for apk in "${APKS[@]}"; do
+            if "$AAPT" dump permissions "$apk" | grep -Fq 'android.permission.INTERNET'; then
+              echo "Final release APK unexpectedly requests INTERNET: $apk" >&2
+              exit 1
+            fi
+          done
+
+          unzip -l "$AAB" | grep -Fq 'base/assets/photobook/food_live_label_model.tflite'
+
+          SHA256="$(sha256sum "$AAB" | awk '{print $1}')"
+          {
+            echo "commit=$GITHUB_SHA"
+            echo "versionCode=${{ inputs.expected_version_code }}"
+            echo "versionName=${{ inputs.expected_version_name }}"
+            echo "targetSdk=36"
+            echo "aabBytes=$AAB_BYTES"
+            echo "aabSha256=$SHA256"
+            echo "uploadCertificateSha256=$AAB_CERT"
+            echo "internetPermission=ABSENT"
+            echo "bundledSemanticModel=PRESENT"
+          } | tee app/build/outputs/bundle/release/play-aab-verification.txt
+
+      - name: Upload verified Play artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: PhotoBook-v${{ inputs.expected_version_name }}-vc${{ inputs.expected_version_code }}-SIGNED-PLAY-AAB
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            app/build/outputs/bundle/release/app-release.aab
+            app/build/outputs/bundle/release/play-aab-verification.txt
