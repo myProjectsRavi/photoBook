@@ -96,6 +96,7 @@ jobs:
             -no-snapshot \
             -no-metrics \
             -gpu swiftshader_indirect \
+            -partition-size 2048 \
             -memory 2048 \
             -cores 2 \
             > "$RUNNER_TEMP/reliability-emulator.log" 2>&1 &
