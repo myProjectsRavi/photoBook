@@ -108,6 +108,7 @@ class MainViewModel @Inject constructor(
         val query: String = "",
         val photoCount: Int = 0,
         val resultCount: Int = 0,
+        val resultQuery: String = "",
         val favoritesOnly: Boolean = false,
         val selectedPhotoIds: Set<Long> = emptySet(),
         val feedMode: HomeFeedMode = HomeFeedMode.Timeline,
@@ -190,6 +191,7 @@ class MainViewModel @Inject constructor(
             state.copy(
                 photoCount = records.size,
                 resultCount = filteredIds.size,
+                resultQuery = input.query,
                 selectedPhotoIds = clampSelectionToResultIds(state.selectedPhotoIds, filteredIds),
                 timelineMarks = timelineMarks,
                 searchReady = !state.isIndexing,
