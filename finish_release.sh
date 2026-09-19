@@ -53,7 +53,7 @@ if (( aab_bytes > max_aab_bytes )); then
   exit 1
 fi
 
-if ! unzip -l "$aab" | grep -Fq "base/assets/photobook/food_live_label_model.tflite"; then
+if ! unzip -Z1 "$aab" "base/assets/photobook/food_live_label_model.tflite" >/dev/null 2>&1; then
   echo "Bundled local semantic-label model is missing from final AAB." >&2
   exit 1
 fi
