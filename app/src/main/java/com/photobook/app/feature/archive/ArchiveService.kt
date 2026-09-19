@@ -326,24 +326,18 @@ class ArchiveService @Inject constructor(
         archiveDao.markStale(photoIds.toList(), System.currentTimeMillis())
     }
 
-    suspend fun dueDeleteItems(
-        limit: Int = MAX_DUE_DELETE_ITEMS,
-        accessiblePhotoIds: Set<Long>? = null,
-    ): List<ArchiveDueDeleteItem> = withContext(Dispatchers.IO) {
-        if (!isEnabled()) return@withContext emptyList()
-        val nowMs = System.currentTimeMillis()
-        archiveDao.markDueDeleteItems(nowMs)
-        getDueDeleteEntities(
-            nowMs = nowMs,
-            limit = limit,
-            accessiblePhotoIds = accessiblePhotoIds,
-        ).map { decision ->
-            ArchiveDueDeleteItem(
-                photoId = decision.photoId,
-                uriString = decision.uriString,
-            )
+    suspend fun dueDeleteItems(limit: Int = MAX_DUE_DELETE_ITEMS): List<ArchiveDueDeleteItem> =
+        withContext(Dispatchers.IO) {
+            if (!isEnabled()) return@withContext emptyList()
+            archiveDao.markDueDeleteItems(System.currentTimeMillis())
+            archiveDao.getDueDeleteItems(System.currentTimeMillis(), limit)
+                .map { decision ->
+                    ArchiveDueDeleteItem(
+                        photoId = decision.photoId,
+                        uriString = decision.uriString,
+                    )
+                }
         }
-    }
 
     suspend fun archivedTrashPhotoIds(): Set<Long> = withContext(Dispatchers.IO) {
         archiveDao.getArchivedTrashPhotoIds().toSet()
@@ -366,15 +360,7 @@ class ArchiveService @Inject constructor(
         accessiblePhotoIds: Set<Long>? = null,
     ): ArchiveSummary {
         val candidates = loadCandidatesInternal(accessiblePhotoIds)
-        val dueCount = if (accessiblePhotoIds == null) {
-            archiveDao.getDueDeleteCount(nowMs)
-        } else {
-            getDueDeleteEntities(
-                nowMs = nowMs,
-                limit = Int.MAX_VALUE,
-                accessiblePhotoIds = accessiblePhotoIds,
-            ).size
-        }
+        val dueCount = archiveDao.getDueDeleteCount(nowMs)
         return ArchiveSummary(
             candidates = candidates,
             dueDeleteCount = dueCount,
@@ -444,34 +430,6 @@ class ArchiveService @Inject constructor(
         staleIds.chunked(ARCHIVE_DB_BATCH_SIZE).forEach { batch ->
             archiveDao.markStale(batch, nowMs)
         }
-    }
-
-    private suspend fun getDueDeleteEntities(
-        nowMs: Long,
-        limit: Int,
-        accessiblePhotoIds: Set<Long>?,
-    ): List<ArchiveDecisionEntity> {
-        if (limit <= 0) return emptyList()
-        if (accessiblePhotoIds == null) {
-            return archiveDao.getDueDeleteItems(nowMs, limit)
-        }
-        if (accessiblePhotoIds.isEmpty()) return emptyList()
-
-        return accessiblePhotoIds.toList()
-            .chunked(ARCHIVE_DB_BATCH_SIZE)
-            .flatMap { batch ->
-                archiveDao.getDueDeleteItemsForPhotoIds(
-                    nowMs = nowMs,
-                    photoIds = batch,
-                    limit = limit,
-                )
-            }
-            .sortedWith(
-                compareBy<ArchiveDecisionEntity> { decision ->
-                    decision.trashedAtMs ?: Long.MAX_VALUE
-                }.thenBy { decision -> decision.photoId },
-            )
-            .take(limit)
     }
 
     private fun disabledSummary(): ArchiveSummary {
