@@ -5,7 +5,7 @@ PhotoBook is a private, offline-first Android photo manager for fast local searc
 ## Privacy Position
 
 - The app does not request `android.permission.INTERNET`.
-- Photo indexing, bundled semantic image labels, compact face signals, search ranking, Archives detection, PDF export, QR sharing, and vault operations run on-device. OCR has an explicit local-unavailable state until a Latin model fits the hard size budget; it never downloads a model or reports a false success.
+- Photo indexing, bundled semantic image labels, bundled Latin OCR, compact face signals, search ranking, Archives detection, PDF export, QR sharing, and vault operations run on-device. OCR executes from the app-local model and never downloads a model or requires network access.
 - `android:allowBackup="false"` is set for the application.
 - Vault files are stored in app-private encrypted storage; vault metadata is stored in Room.
 - Local diagnostics are written only to app-private storage and are not uploaded.
@@ -28,7 +28,7 @@ PhotoBook is a private, offline-first Android photo manager for fast local searc
 
 - The bundled ML Kit image-labeling model provides semantic Food/live-subject signals offline; compact local image heuristics, Android's local face detector, and the ZXing QR-only decoder remain bundled in the app. LiteRT 1.4.1 runs the local model with 16 KB-aligned native libraries. There is no Play Services model installation, deferred download, or ML manifest metadata.
 - Archive Food is deliberately conservative: a photo must have semantic food evidence plus prepared, served, or packaged-food context, and live people, animals, birds, pets, wildlife, and similar subjects veto the candidate. A generic legacy `food` tag is not sufficient by itself.
-- Latin OCR currently fails deterministically as a local capability-unavailable result because the available bundled vendor model exceeds the hard APK/AAB gates. This limitation is visible to callers and never falls back to network delivery.
+- Latin OCR is bundled in the app for local text extraction and search indexing. Hosted API 35 verification exercises the real OCR engine with host and emulator network access cut; it does not fall back to remote delivery.
 - Indexing tracks ML/OCR state explicitly: pending, model preparing, processed, retryable failure, or permanent failure.
 - A photo is not marked processed when an analyzer is unavailable or fails.
 
@@ -66,7 +66,7 @@ PhotoBook is a private, offline-first Android photo manager for fast local searc
 - Full-screen viewer opens a bounded photo window around the selected image and recenters as the user swipes, avoiding a full in-memory viewer list for very large libraries.
 - Low-RAM devices use the Lite performance tier for smaller thumbnails, smaller intelligence bitmaps, lower image-cache percentage, and sequential ML work.
 - Duplicate prefiltering and archive candidate queries are database-driven where possible to reduce heap pressure.
-- Room is authoritative for search and archive state. FTS IDs are loaded in bounded pages; full-library snapshots are reserved for visible UI/state that genuinely needs them.
+- Room is authoritative durable state. Search evaluates one immutable in-memory index revision to preserve complete eligibility, while Paging materializes visible result rows in bounded windows; FTS remains synchronized durable search support rather than an exclusive candidate filter.
 
 ## Size Discipline
 
@@ -74,7 +74,7 @@ PhotoBook must stay lightweight. The current Gradle gates are:
 
 - `verifyApkSize`: every generated APK must be <= 30 MB.
 - `verifyReleaseBundleSize`: release AAB output must be <= 20 MB.
-- `compileSdk` and `targetSdk` are 36 for the current Play requirement. Source-controlled release truth is `versionCode = 21`, `versionName = "2.0.14"`; Play Console consumption is an external preflight, not a repository fact.
+- `compileSdk` and `targetSdk` are 36 for the current Play requirement. Source-controlled release truth is `versionCode = 23`, `versionName = "2.0.16"`; Play Console consumption is an external preflight, not a repository fact.
 - Release builds use R8 with the optimized Android defaults and resource shrinking (`isMinifyEnabled = true`, `isShrinkResources = true`) to reduce memory, code, and resource overhead without changing the debug build.
 
 CI runs the same verification command used locally:
@@ -92,7 +92,7 @@ CI runs the same verification command used locally:
 - WorkManager
 - Hilt
 - Coil
-- Compact local image/face heuristics and ZXing QR decoding
+- Bundled Latin OCR, compact local image/face heuristics, and ZXing QR decoding
 - Android `PdfDocument`
 - AndroidX Security Crypto
 - AndroidX Biometric
