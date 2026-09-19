@@ -20,8 +20,19 @@ interface ArchiveDao {
     )
     suspend fun getCandidates(limit: Int): List<ArchiveDecisionEntity>
 
-    @Query("SELECT photoId FROM archive_decisions WHERE state = 'candidate'")
-    suspend fun getCandidatePhotoIds(): List<Long>
+    @Query(
+        """
+        SELECT * FROM archive_decisions
+        WHERE state = 'candidate'
+            AND photoId IN (:photoIds)
+        ORDER BY lastDetectedAtMs DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getCandidatesForPhotoIds(
+        photoIds: List<Long>,
+        limit: Int,
+    ): List<ArchiveDecisionEntity>
 
     @Query("SELECT COUNT(*) FROM archive_decisions WHERE state = 'candidate'")
     suspend fun getCandidateCount(): Int
