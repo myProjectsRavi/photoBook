@@ -38,6 +38,41 @@ if [[ ! -s "$aab" ]]; then
   exit 1
 fi
 
+# The Play upload artifact must be structurally valid and signed. An unsigned
+# CI bundle must never be copied out as a production artifact by this script.
+unzip -tqq "$aab"
+if ! jarsigner -verify -verbose -certs "$aab" >/dev/null 2>&1; then
+  echo "Release AAB is unsigned or its JAR signature is invalid: $aab" >&2
+  exit 1
+fi
+
+aab_bytes="$(wc -c < "$aab" | tr -d '[:space:]')"
+max_aab_bytes=$((20 * 1024 * 1024))
+if (( aab_bytes > max_aab_bytes )); then
+  echo "Final signed AAB exceeds 20 MiB: $aab_bytes bytes" >&2
+  exit 1
+fi
+
+if ! unzip -l "$aab" | grep -Fq "base/assets/photobook/food_live_label_model.tflite"; then
+  echo "Bundled local semantic-label model is missing from final AAB." >&2
+  exit 1
+fi
+
+cert_report="$(LC_ALL=C keytool -printcert -jarfile "$aab")"
+signer_sha256="$(printf '%s\n' "$cert_report" | awk -F'SHA256:' '/SHA256:/ {print $2; exit}' | tr -d '[:space:]:' | tr '[:lower:]' '[:upper:]')"
+if [[ -z "$signer_sha256" ]]; then
+  echo "Unable to read signer SHA-256 certificate fingerprint from final AAB." >&2
+  exit 1
+fi
+
+if [[ -n "${EXPECTED_UPLOAD_CERT_SHA256:-}" ]]; then
+  expected_signer="$(printf '%s' "$EXPECTED_UPLOAD_CERT_SHA256" | tr -d '[:space:]:' | tr '[:lower:]' '[:upper:]')"
+  if [[ "$signer_sha256" != "$expected_signer" ]]; then
+    echo "Final AAB signer does not match EXPECTED_UPLOAD_CERT_SHA256." >&2
+    exit 1
+  fi
+fi
+
 apks=()
 while IFS= read -r apk; do
   apks+=("$apk")
