@@ -12,6 +12,7 @@ import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import com.photobook.app.data.index.IndexBuilder
+import com.photobook.app.data.index.IndexCommitCoordinator
 import com.photobook.app.data.index.IndexPersistence
 import com.photobook.app.data.index.PhotoIndex
 import com.photobook.app.data.model.PhotoRecord
@@ -79,6 +80,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 class MainViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val indexBuilder: IndexBuilder,
+    private val indexCommitCoordinator: IndexCommitCoordinator,
     private val mediaStoreScanner: MediaStoreScanner,
     private val photoIndex: PhotoIndex,
     private val indexPersistence: IndexPersistence,
@@ -441,8 +443,12 @@ class MainViewModel @Inject constructor(
 
     fun onToggleFavorite(photoId: Long) {
         viewModelScope.launch {
-            val isFavorite = photoIndex.toggleFavorite(photoId)
-            indexPersistence.setFavorite(photoId, isFavorite)
+            val current = photoIndex.getById(photoId) ?: return@launch
+            val isFavorite = !current.isFavorite
+            indexCommitCoordinator.withCommit {
+                indexPersistence.setFavorite(photoId, isFavorite)
+                photoIndex.setFavorite(photoId, isFavorite)
+            }
             uiState.update { state ->
                 state.copy(
                     viewerPhotos = state.viewerPhotos.map { photo ->
@@ -922,13 +928,15 @@ class MainViewModel @Inject constructor(
                 )
             }
 
-            val persisted = indexPersistence.load()
-            if (persisted.isNotEmpty()) {
-                // Full-index publication sorts the library, rebuilds ID lookup state, and rebuilds
-                // keyword sets. Keep that O(n) CPU/allocation work off Main; only immutable state
-                // publication crosses back through the thread-safe PhotoIndex backend.
-                withContext(Dispatchers.Default) {
-                    photoIndex.setRecords(persisted)
+            indexCommitCoordinator.withCommit {
+                val persisted = indexPersistence.load()
+                if (persisted.isNotEmpty()) {
+                    // Full-index publication sorts the library, rebuilds ID lookup state, and rebuilds
+                    // keyword sets. Keep that O(n) CPU/allocation work off Main while serializing the
+                    // durable-load/publication boundary against background intelligence writers.
+                    withContext(Dispatchers.Default) {
+                        photoIndex.setRecords(persisted)
+                    }
                 }
             }
 
@@ -1016,8 +1024,10 @@ class MainViewModel @Inject constructor(
     }
 
     private suspend fun removePhotosAfterTrash(photoIds: Set<Long>) {
-        photoIndex.removeRecords(photoIds)
-        indexPersistence.removeByIds(photoIds)
+        indexCommitCoordinator.withCommit {
+            indexPersistence.removeByIds(photoIds)
+            photoIndex.removeRecords(photoIds)
+        }
         latestSearchResultIds = latestSearchResultIds.filterNot { id -> id in photoIds }
         latestVisibleResultIds = latestVisibleResultIds.filterNot { id -> id in photoIds }
 
@@ -1127,15 +1137,12 @@ class MainViewModel @Inject constructor(
             }
         }.preservingIntelligence(existing)
 
-        if (existing.isEmpty()) {
-            // On a first build, keep full Room/FTS persistence from overlapping structural
-            // PhotoIndex publication and the search/memory flows that publication wakes up.
+        indexCommitCoordinator.withCommit {
+            // Room/FTS is authoritative. Structural persistence preserves the newest committed
+            // favorite/intelligence fields, then memory publishes exactly the durable revision.
             indexPersistence.save(rebuilt)
-            photoIndex.setRecords(rebuilt)
-        } else {
-            // Preserve the established full-resync publication ordering for existing libraries.
-            photoIndex.setRecords(rebuilt)
-            indexPersistence.save(rebuilt)
+            val committed = indexPersistence.load()
+            photoIndex.setRecords(committed)
         }
     }
 
@@ -1173,22 +1180,15 @@ class MainViewModel @Inject constructor(
             return
         }
 
-        val merged = existingById.toMutableMap()
-        changedRebuilt.forEach { record ->
-            merged[record.id] = record
-        }
-        removedIds.forEach { id ->
-            merged.remove(id)
-        }
-
-        val updatedRecords = merged.values.sortedByDescending { record -> record.dateAdded }
-        photoIndex.setRecords(updatedRecords)
-
-        if (changedRebuilt.isNotEmpty()) {
-            indexPersistence.upsertAll(changedRebuilt)
-        }
-        if (removedIds.isNotEmpty()) {
-            indexPersistence.removeByIds(removedIds)
+        indexCommitCoordinator.withCommit {
+            if (changedRebuilt.isNotEmpty()) {
+                indexPersistence.upsertAll(changedRebuilt)
+            }
+            if (removedIds.isNotEmpty()) {
+                indexPersistence.removeByIds(removedIds)
+            }
+            val committed = indexPersistence.load()
+            photoIndex.setRecords(committed)
         }
 
         TaggingWorker.enqueueLibraryMaintenance(context)
