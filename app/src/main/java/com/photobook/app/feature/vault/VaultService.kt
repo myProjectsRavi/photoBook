@@ -242,7 +242,9 @@ class VaultService @Inject constructor(
             migrateLegacyItemsIfNeeded()
             migrateLegacyCiphertextIfNeeded(session)
             val photoIds = photos.map { photo -> photo.id }
-            val existingByPhotoId = vaultDao.getProtectedPhotoIds(photoIds).toMutableSet()
+            val existingByPhotoId = photoIds.chunked(DB_QUERY_BATCH_SIZE)
+                .flatMap { batch -> vaultDao.getProtectedPhotoIds(batch) }
+                .toMutableSet()
 
             var added = 0
             var skipped = 0
@@ -779,6 +781,7 @@ class VaultService @Inject constructor(
         private const val PREVIEW_MAX_EDGE_PX = 960
         private const val PREVIEW_JPEG_QUALITY = 82
         private const val MAX_PREVIEW_CACHE_FILES = 48
+        private const val DB_QUERY_BATCH_SIZE = 200
         private const val STREAM_BUFFER_BYTES = 64 * 1024
     }
 }
