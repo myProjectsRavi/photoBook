@@ -32,6 +32,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 
@@ -187,6 +188,41 @@ class VaultService @Inject constructor(
             if (expectedPreviewGeneration != null) {
                 previewCacheMutex.unlock()
             }
+        }
+    }
+
+    suspend fun loadPreview(
+        itemId: String,
+        session: VaultCryptoSession,
+        previewGeneration: Long,
+    ): Uri? = withContext(Dispatchers.IO) {
+        previewCacheMutex.withLock {
+            if (previewCacheGeneration.get() != previewGeneration) {
+                return@withContext null
+            }
+            if (previewCacheNeedsCleanup.compareAndSet(true, false)) {
+                if (!deletePreviewCacheFiles()) {
+                    previewCacheNeedsCleanup.set(true)
+                    throw IOException("Unable to clear stale Vault preview cache")
+                }
+            }
+            if (previewCacheGeneration.get() != previewGeneration) {
+                return@withContext null
+            }
+
+            migrateLegacyItemsIfNeeded()
+            migrateLegacyCiphertextIfNeeded(session)
+            val entity = vaultDao.getVaultItemById(itemId) ?: return@withContext null
+            val uri = createPreviewUri(
+                entity = entity,
+                session = session,
+                expectedPreviewGeneration = previewGeneration,
+            )
+            if (uri != null) {
+                runCatching { previewFile(itemId).setLastModified(System.currentTimeMillis()) }
+                trimPreviewCache()
+            }
+            uri
         }
     }
 
@@ -437,6 +473,7 @@ class VaultService @Inject constructor(
         val previewFile = previewFile(entity.id)
         if (previewFile.exists() && previewFile.length() > 0L) {
             return if (previewCacheGeneration.get() == expectedPreviewGeneration) {
+                runCatching { previewFile.setLastModified(System.currentTimeMillis()) }
                 Uri.fromFile(previewFile)
             } else {
                 null
@@ -640,6 +677,17 @@ class VaultService @Inject constructor(
         runCatching { previewFile(itemId).delete() }
     }
 
+    private fun trimPreviewCache() {
+        val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)
+        val files = previewRoot.listFiles()
+            ?.filter { file -> file.isFile && file.extension.equals("jpg", ignoreCase = true) }
+            ?.sortedByDescending { file -> file.lastModified() }
+            .orEmpty()
+        files.drop(MAX_PREVIEW_CACHE_FILES).forEach { file ->
+            runCatching { file.delete() }
+        }
+    }
+
     private fun calculateInSampleSize(width: Int, height: Int, maxEdge: Int): Int {
         var sampleSize = 1
         var sampledWidth = width
@@ -730,6 +778,7 @@ class VaultService @Inject constructor(
         private const val INSERT_CONFLICT = -1L
         private const val PREVIEW_MAX_EDGE_PX = 960
         private const val PREVIEW_JPEG_QUALITY = 82
+        private const val MAX_PREVIEW_CACHE_FILES = 48
         private const val STREAM_BUFFER_BYTES = 64 * 1024
     }
 }
