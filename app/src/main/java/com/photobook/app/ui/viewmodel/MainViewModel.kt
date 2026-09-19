@@ -29,6 +29,7 @@ import com.photobook.app.feature.duplicates.DuplicatePhotoGroup
 import com.photobook.app.feature.duplicates.DuplicateMatchKind
 import com.photobook.app.feature.memories.MemoryCurator
 import com.photobook.app.feature.memories.MemoryStory
+import com.photobook.app.feature.notes.PhotoNoteStore
 import com.photobook.app.ml.TaggingWorker
 import com.photobook.app.search.FilterEngine
 import com.photobook.app.search.FolderToken
@@ -94,6 +95,7 @@ class MainViewModel @Inject constructor(
     private val duplicatePhotoFinder: DuplicatePhotoFinder,
     private val archiveService: ArchiveService,
     private val memoryCurator: MemoryCurator,
+    private val photoNoteStore: PhotoNoteStore,
     private val sharedPreferences: SharedPreferences,
 ) : ViewModel() {
 
@@ -150,12 +152,14 @@ class MainViewModel @Inject constructor(
         photoIndex.changes().debounce(RECORDS_UPDATE_DEBOUNCE_MS),
         uiState.map { it.favoritesOnly }.distinctUntilChanged(),
         uiState.map { it.feedMode }.distinctUntilChanged(),
-    ) { query, indexVersion, favoritesOnly, feedMode ->
+        photoNoteStore.changes(),
+    ) { query, indexVersion, favoritesOnly, feedMode, noteVersion ->
         SearchFlowInput(
             query = query,
             indexVersion = indexVersion,
             favoritesOnly = favoritesOnly,
             feedMode = feedMode,
+            noteVersion = noteVersion,
         )
     }.flatMapLatest { input ->
         // Read one immutable library view for this generation. Search v2 also receives the
@@ -165,6 +169,7 @@ class MainViewModel @Inject constructor(
             query = input.query,
             records = records,
             expectedIndexVersion = input.indexVersion,
+            noteRevision = input.noteVersion,
         )
         val filteredIds = if (input.favoritesOnly) {
             searchResult.orderedIds.filter { id ->
@@ -241,6 +246,7 @@ class MainViewModel @Inject constructor(
         val indexVersion: Long,
         val favoritesOnly: Boolean,
         val feedMode: HomeFeedMode,
+        val noteVersion: Long,
     )
 
     private data class SearchIdResult(
@@ -1377,6 +1383,7 @@ class MainViewModel @Inject constructor(
         query: String,
         records: List<PhotoRecord>,
         expectedIndexVersion: Long,
+        noteRevision: Long,
     ): SearchIdResult {
         val normalizedQuery = query.trim()
         if (normalizedQuery.isBlank()) {
@@ -1436,6 +1443,7 @@ class MainViewModel @Inject constructor(
                 records = records,
                 context = context,
                 cancellationCheck = { coroutineContext.ensureActive() },
+                externalRevision = noteRevision,
             )
         }
         return SearchIdResult(
