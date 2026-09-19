@@ -48,10 +48,10 @@ class ArchiveAccessBoundaryInstrumentedTest {
             photoDao.upsertPhotos(
                 listOf(
                     paymentScreenshot(10L)
-                        .copy(dateAdded = nowMs - 60_000L)
+                        .copy(dateAdded = nowMs - 4L * 24L * 60L * 60L * 1000L)
                         .toPhotoEntity(),
                     paymentScreenshot(11L)
-                        .copy(dateAdded = nowMs)
+                        .copy(dateAdded = nowMs - 3L * 24L * 60L * 60L * 1000L)
                         .toPhotoEntity(),
                 ),
             )
