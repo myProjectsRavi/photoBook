@@ -134,7 +134,12 @@ class IndexPersistence @Inject constructor(
     suspend fun getByIdsOrdered(ids: List<Long>): List<PhotoRecord> {
         if (ids.isEmpty()) return emptyList()
         return withContext(Dispatchers.IO) {
-            val entities = photoDao.getByIds(ids)
+            // Room expands collection parameters in IN (:ids) into one SQLite bind variable per
+            // element. Android's SQLite binding limit is 999, so never pass an unbounded selected
+            // photo grant (or search result) to one query. Reuse the existing small DB batch size
+            // and reconstruct the caller's exact ordering after all batches are loaded.
+            val entities = ids.chunked(DB_BATCH_SIZE)
+                .flatMap { batch -> photoDao.getByIds(batch) }
             if (entities.isEmpty()) {
                 return@withContext emptyList()
             }
@@ -170,15 +175,7 @@ class IndexPersistence @Inject constructor(
     /** Retained unchanged as the Search-v1 rollback path until Phase-2 parity is certified. */
     suspend fun searchByQueryText(rawQuery: String, limit: Int = Int.MAX_VALUE): List<PhotoRecord> {
         val ids = searchIdsByQueryText(rawQuery, limit)
-        if (ids.isEmpty()) return emptyList()
-        return withContext(Dispatchers.IO) {
-            val entities = photoDao.getByIds(ids)
-            if (entities.isEmpty()) {
-                return@withContext emptyList()
-            }
-            val byId = entities.associateBy { it.id }
-            ids.mapNotNull { id -> byId[id]?.toPhotoRecord() }
-        }
+        return getByIdsOrdered(ids)
     }
 
     private suspend fun reopenLegacyOcrFailuresIfNeeded() {
