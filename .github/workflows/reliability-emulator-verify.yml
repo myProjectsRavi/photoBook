@@ -65,6 +65,12 @@ jobs:
           test -x "$SDKMANAGER"
           test -x "$AVDMANAGER"
           test -x "$ADB"
+          # Hosted runner images carry NDK/CMake toolchains that PhotoBook does not use.
+          # Reclaim them before provisioning because the current API-35 Google APIs userdata
+          # image requires slightly more free disk than the stock runner leaves available.
+          sudo rm -rf "$SDK_ROOT/ndk" "$SDK_ROOT/cmake"
+          df -h "$SDK_ROOT" "$RUNNER_TEMP" || true
+
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" --channel=0 "emulator" "$SYSTEM_IMAGE"
           test -x "$EMULATOR"
@@ -78,11 +84,6 @@ jobs:
 
           test -f "$ANDROID_AVD_HOME/$AVD_NAME.ini"
           test -d "$ANDROID_AVD_HOME/$AVD_NAME.avd"
-          AVD_CONFIG="$ANDROID_AVD_HOME/$AVD_NAME.avd/config.ini"
-          test -f "$AVD_CONFIG"
-          sed -i '/^disk\.dataPartition\.size=/d' "$AVD_CONFIG"
-          printf '%s\n' 'disk.dataPartition.size=2G' >> "$AVD_CONFIG"
-          grep -Fxq 'disk.dataPartition.size=2G' "$AVD_CONFIG"
           "$EMULATOR" -list-avds | tee "$RUNNER_TEMP/reliability-avd-list.txt"
           grep -Fxq "$AVD_NAME" "$RUNNER_TEMP/reliability-avd-list.txt"
 
