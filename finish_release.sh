@@ -11,6 +11,12 @@ fi
 
 echo "Building PhotoBook from $SCRIPT_DIR"
 
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  echo "Refusing release build from a dirty tracked worktree." >&2
+  exit 1
+fi
+source_commit="$(git rev-parse HEAD)"
+
 metadata="$(./gradlew -q :app:printReleaseMetadata)"
 version_code="$(printf '%s\n' "$metadata" | awk -F= '$1 == "versionCode" { print $2 }')"
 version_name="$(printf '%s\n' "$metadata" | awk -F= '$1 == "versionName" { print $2 }')"
