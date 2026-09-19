@@ -191,7 +191,7 @@ class FilterFactory private constructor(
         if (normalized.isBlank()) return { true }
 
         return { photo ->
-            photo.hasOcrToken(normalized) ||
+            OcrQueryMatcher.matches(photo.ocrText, normalized) ||
                 photo.fileName.contains(normalized, ignoreCase = true) ||
                 photo.folderName.contains(normalized, ignoreCase = true) ||
                 photo.folderPath.contains(normalized, ignoreCase = true) ||
