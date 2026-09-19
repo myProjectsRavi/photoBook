@@ -216,6 +216,7 @@ class MainViewModel @Inject constructor(
     private var hasInitializedIndex = false
     private var mediaObserver: ContentObserver? = null
     private var mediaRebuildJob: Job? = null
+    private var permissionReconcileJob: Job? = null
     private val memoryRefreshRequests = Channel<List<PhotoRecord>>(capacity = Channel.CONFLATED)
     private val memoryRefreshJob: Job = viewModelScope.launch(Dispatchers.Default) {
         for (records in memoryRefreshRequests) {
@@ -264,7 +265,11 @@ class MainViewModel @Inject constructor(
         observeSuggestions()
     }
 
-    fun refreshPermissionStatus(accessMode: PermissionUtils.PhotoAccessMode) {
+    fun refreshPermissionStatus(
+        accessMode: PermissionUtils.PhotoAccessMode,
+        forceReconcile: Boolean = false,
+    ) {
+        val previousMode = uiState.value.photoAccessMode
         val granted = accessMode != PermissionUtils.PhotoAccessMode.None
         uiState.update {
             it.copy(
@@ -272,9 +277,43 @@ class MainViewModel @Inject constructor(
                 photoAccessMode = accessMode,
             )
         }
-        if (granted && !hasInitializedIndex) {
+
+        if (!granted) {
+            // Remove revoked media from every in-memory/search surface immediately while retaining
+            // durable rows so a later regrant can restore user/intelligence fields safely.
+            permissionReconcileJob?.cancel()
+            permissionReconcileJob = viewModelScope.launch {
+                indexCommitCoordinator.withCommit {
+                    photoIndex.setRecords(emptyList())
+                }
+                latestSearchResultIds = emptyList()
+                latestVisibleResultIds = emptyList()
+            }
+            return
+        }
+
+        if (!hasInitializedIndex) {
             hasInitializedIndex = true
             initializeIndex()
+            return
+        }
+
+        if (forceReconcile || accessMode != previousMode) {
+            permissionReconcileJob?.cancel()
+            permissionReconcileJob = viewModelScope.launch {
+                uiState.update { it.copy(isIndexing = true, searchReady = false) }
+                try {
+                    syncMediaStoreIncremental(forceFullSync = true)
+                } finally {
+                    uiState.update {
+                        it.copy(
+                            isIndexing = false,
+                            indexProgress = 1f,
+                            searchReady = true,
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -1109,7 +1148,9 @@ class MainViewModel @Inject constructor(
             val lastGeneration = sharedPreferences.getLong(Constants.MEDIA_STORE_GENERATION_KEY, -1L)
                 .takeIf { value -> value >= 0L }
 
-            val shouldFullSync = forceFullSync || existing.isEmpty() || lastVersion == null || currentVersion != lastVersion
+            val limitedAccess = uiState.value.photoAccessMode == PermissionUtils.PhotoAccessMode.Limited
+            val shouldFullSync = forceFullSync || limitedAccess || existing.isEmpty() ||
+                lastVersion == null || currentVersion != lastVersion
             if (shouldFullSync) {
                 rebuildEntireIndex(existing)
                 persistMediaStoreSyncState(currentVersion, currentGeneration)
@@ -1140,10 +1181,18 @@ class MainViewModel @Inject constructor(
         }.preservingIntelligence(existing)
 
         indexCommitCoordinator.withCommit {
-            // Room/FTS is authoritative. Structural persistence preserves the newest committed
-            // favorite/intelligence fields, then memory publishes exactly the durable revision.
-            indexPersistence.save(rebuilt)
-            val committed = indexPersistence.load()
+            val limitedAccess = uiState.value.photoAccessMode == PermissionUtils.PhotoAccessMode.Limited
+            val committed = if (limitedAccess) {
+                // A limited grant is a visibility boundary, not deletion. Keep previously granted
+                // rows durable so favorites/intelligence survive a later regrant, but publish only
+                // the IDs MediaStore currently exposes to this app.
+                indexPersistence.upsertAll(rebuilt)
+                indexPersistence.getByIdsOrdered(rebuilt.map { record -> record.id })
+            } else {
+                // Under full access, a missing MediaStore row is a genuine structural removal.
+                indexPersistence.save(rebuilt)
+                indexPersistence.load()
+            }
             photoIndex.setRecords(committed)
         }
     }
@@ -1236,6 +1285,7 @@ class MainViewModel @Inject constructor(
 
     override fun onCleared() {
         mediaRebuildJob?.cancel()
+        permissionReconcileJob?.cancel()
         memoryRefreshRequests.close()
         memoryRefreshJob.cancel()
         mediaObserver?.let { observer ->
