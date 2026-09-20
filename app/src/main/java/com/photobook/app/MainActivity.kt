@@ -51,6 +51,7 @@ import com.photobook.app.feature.vault.VaultItem
 import com.photobook.app.feature.vault.VaultSaveResult
 import com.photobook.app.feature.vault.VaultService
 import com.photobook.app.feature.vault.rememberVaultAuthenticator
+import com.photobook.app.feature.phototextsearch.vaultPhotoTextLayoutSource
 import com.photobook.app.ui.screen.ArchivesScreen
 import com.photobook.app.ui.screen.MainScreen
 import com.photobook.app.ui.screen.OnboardingScreen
@@ -141,6 +142,13 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     var vaultPreviewRequests by remember { mutableStateOf<Set<String>>(emptySet()) }
     var isVaultLoading by remember { mutableStateOf(false) }
     var isVaultBusy by remember { mutableStateOf(false) }
+    val vaultTextLayoutSource = remember(vaultService, vaultSession) {
+        vaultPhotoTextLayoutSource(
+            context = context.applicationContext,
+            vaultService = vaultService,
+            sessionProvider = { vaultSession },
+        )
+    }
 
     // Trash bin state
     var showTrashScreen by remember { mutableStateOf(false) }
@@ -821,6 +829,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             items = vaultItems,
             isLoading = isVaultLoading,
             isBusy = isVaultBusy,
+            photoTextLayoutSource = vaultTextLayoutSource,
             onDismiss = { closeVault() },
             onRefresh = {
                 authenticateVault { session ->
