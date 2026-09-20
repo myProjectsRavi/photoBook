@@ -20,9 +20,16 @@ PhotoBook is a free, private, offline-first Android gallery. Preserve the local 
 - Search evaluates one immutable in-memory index revision for complete eligibility and deterministic ranking; FTS remains synchronized durable support rather than an exclusive candidate source. Limited Android 14 access is visible and never represented as a complete library.
 - Vault distinguishes newly added IDs from already protected IDs, removes partial ciphertext, sanitizes MIME/extension pairs, and clears decrypted previews on every lifecycle/security path.
 
+## Search inside a photo
+
+- In-photo search is explicit and on-demand. It reuses the bundled Latin OCR, stores OCR geometry only in bounded memory, never modifies source media, and never adds a library-wide indexing job.
+- Preserve literal case-insensitive word/number/phrase semantics, leading zeros and punctuation. Query edits must reuse one OCR layout; do not rerun OCR on every keystroke.
+- OCR geometry and the displayed image must share the same orientation/fit transform. Search results are request/photo/access scoped and stale results must fail closed.
+- Viewer and Reels search remain offline. Vault search must use authenticated encrypted input, never a persistent plaintext export, and must clear on Vault lock/background/dismissal.
+
 ## Release truth
 
-- `app/build.gradle.kts` is the only checked-in release truth: `versionCode = 23`, `versionName = "2.0.16"`, `targetSdk = 36`.
+- `app/build.gradle.kts` is the only checked-in release truth: `versionCode = 24`, `versionName = "2.0.17"`, `targetSdk = 36`.
 - Release uses R8 optimization and resource shrinking with `proguard-android-optimize.txt`; keep the release shrinker enabled and validate the signed output after any keep-rule change.
 - Play Console consumption, track state, and upload eligibility are external preflight facts and must not be written as repository facts.
 - `finish_release.sh` is reproducible build-only: it discovers the repository root, derives metadata from Gradle, builds release artifacts, checks existence, merged manifest, sizes, and lint, and never pushes, opens a browser, or uploads.
