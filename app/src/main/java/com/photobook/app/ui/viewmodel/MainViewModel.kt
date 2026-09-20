@@ -306,7 +306,15 @@ class MainViewModel @Inject constructor(
         }
 
         if (shouldReconcile) {
-            invalidateAccessDerivedMemories()
+            // Every permission reconciliation establishes a new publication generation so an
+            // in-flight memory curation job can never publish across an access boundary.
+            accessGenerationGate.advance()
+            // A mode transition is known to change the visibility contract immediately. For a
+            // repeated Limited -> Limited resume we first compare the selected ID set below; if
+            // it is unchanged the existing memory cards remain valid and need not flicker away.
+            if (accessModeChanged) {
+                clearAccessDerivedMemories()
+            }
         }
 
         if (!granted) {
@@ -1286,6 +1294,7 @@ class MainViewModel @Inject constructor(
         }
 
         if (visibilityChanged) {
+            clearAccessDerivedMemories()
             // Fail closed as soon as the current grant is known. Revoked rows remain durable in
             // Room but disappear from every in-memory/search/memory surface before any slower
             // metadata reconciliation for newly granted or changed rows.
@@ -1536,8 +1545,7 @@ class MainViewModel @Inject constructor(
         )
     }
 
-    private fun invalidateAccessDerivedMemories() {
-        accessGenerationGate.advance()
+    private fun clearAccessDerivedMemories() {
         lastMemoryRecordsIdentity = 0
         lastMemoryAccessGeneration = -1L
         uiState.update { state ->
