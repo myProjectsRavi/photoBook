@@ -40,14 +40,11 @@ class MediaStorePhotoTextLayoutSource @Inject constructor(
             val uri = runCatching { Uri.parse(source.uriString) }.getOrNull()
                 ?: return@withContext PhotoTextLayoutLoadResult.Unavailable
 
-            // Media metadata is advisory, not the authority for whether the photo is readable.
-            // Some OEM/document providers can open the image bytes but omit one or more MediaStore
-            // columns from an item query. Treating that as deletion caused valid photos to surface as
-            // "no longer available" before OCR even started.
+            // The displayed URI is the source of truth for in-photo search. Media metadata is
+            // only a best-effort mutation stamp. OEM/document providers can omit MediaStore columns,
+            // and an upgraded index can temporarily carry an ID that differs from the current row.
+            // Neither case means the URI that the viewer is already displaying is unreadable.
             val before = readSourceStamp(uri)
-            if (before?.mediaId != null && before.mediaId != source.photoId) {
-                return@withContext PhotoTextLayoutLoadResult.Unavailable
-            }
 
             val ready = try {
                 onDeviceIntelligence.ensureReady(needsMl = false, needsOcr = true).ocrReady
@@ -83,9 +80,6 @@ class MediaStorePhotoTextLayoutSource @Inject constructor(
                 currentCoroutineContext().ensureActive()
 
                 val after = readSourceStamp(uri)
-                if (after?.mediaId != null && after.mediaId != source.photoId) {
-                    return@withContext PhotoTextLayoutLoadResult.Unavailable
-                }
                 if (before != null && after != null && before != after) {
                     return@withContext PhotoTextLayoutLoadResult.Failed
                 }
