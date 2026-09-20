@@ -111,6 +111,11 @@ class SearchCompletionInstrumentedTest {
                         "p50Ms=$p50Ms p95Ms=$p95Ms maxMs=$maxMs " +
                         "exactIds=${searchCase.expectedIds.joinToString(",")}",
                 )
+                assertTrue(
+                    "100k search p95 exceeded ${SEARCH_P95_BUDGET_MS}ms for ${searchCase.label}: " +
+                        "p95=$p95Ms samples=$sorted",
+                    p95Ms <= SEARCH_P95_BUDGET_MS,
+                )
             }
         } finally {
             noteStore.deleteNote(NOTE_ID)
@@ -177,6 +182,7 @@ class SearchCompletionInstrumentedTest {
         private const val LOG_TAG = "PhotoBookSearchCert"
         private const val LIBRARY_SIZE = 100_000
         private const val MEASURED_ITERATIONS = 10
+        private const val SEARCH_P95_BUDGET_MS = 300L
         private const val FIXED_NOW_MS = 1_786_900_000_000L
 
         private const val OCR_ID = 101L
