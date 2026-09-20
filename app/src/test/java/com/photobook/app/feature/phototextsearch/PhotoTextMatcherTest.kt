@@ -9,101 +9,108 @@ class PhotoTextMatcherTest {
     private val matcher = PhotoTextMatcher()
 
     @Test
-    fun matching_isAsciiCaseInsensitiveAndLiteral() {\n        runBlocking {
-        val layout = layout(
-            element(1, 0, 0, "Invoice"),
-            element(2, 0, 0, "001234"),
-            element(3, 0, 0, "AB-1234"),
-        )
-        val blocks = matcher.buildBlocks(layout)
-
-        assertThat(matcher.find(blocks, matcher.normalizeQuery("InVoIcE")).single().elementIds)
-            .containsExactly(1)
-        assertThat(matcher.find(blocks, matcher.normalizeQuery("1234")).map { it.elementIds })
-            .containsExactly(listOf(2), listOf(3))
-        assertThat(matcher.find(blocks, matcher.normalizeQuery("AB1234"))).isEmpty()
-        }
-    }
-
-    @Test
-    fun matching_preservesLeadingZerosAndPunctuation() {\n        runBlocking {
-        val blocks = matcher.buildBlocks(
-            layout(
-                element(1, 0, 0, "Reference"),
+    fun matching_isAsciiCaseInsensitiveAndLiteral() {
+        runBlocking {
+            val layout = layout(
+                element(1, 0, 0, "Invoice"),
                 element(2, 0, 0, "001234"),
-                element(3, 0, 0, "12.50"),
-            ),
-        )
+                element(3, 0, 0, "AB-1234"),
+            )
+            val blocks = matcher.buildBlocks(layout)
 
-        assertThat(matcher.find(blocks, matcher.normalizeQuery("001234")).single().elementIds)
-            .containsExactly(2)
-        assertThat(matcher.find(blocks, matcher.normalizeQuery("12.50")).single().elementIds)
-            .containsExactly(3)
+            assertThat(matcher.find(blocks, matcher.normalizeQuery("InVoIcE")).single().elementIds)
+                .containsExactly(1)
+            assertThat(matcher.find(blocks, matcher.normalizeQuery("1234")).map { it.elementIds })
+                .containsExactly(listOf(2), listOf(3))
+            assertThat(matcher.find(blocks, matcher.normalizeQuery("AB1234"))).isEmpty()
         }
     }
 
     @Test
-    fun phrase_canCrossLineBreakInsideSameBlock() {\n        runBlocking {
-        val blocks = matcher.buildBlocks(
-            layout(
-                element(1, 7, 0, "INVOICE"),
-                element(2, 7, 1, "NUMBER"),
-            ),
-        )
+    fun matching_preservesLeadingZerosAndPunctuation() {
+        runBlocking {
+            val blocks = matcher.buildBlocks(
+                layout(
+                    element(1, 0, 0, "Reference"),
+                    element(2, 0, 0, "001234"),
+                    element(3, 0, 0, "12.50"),
+                ),
+            )
 
-        val hits = matcher.find(blocks, matcher.normalizeQuery("invoice number"))
-
-        assertThat(hits).hasSize(1)
-        assertThat(hits.single().elementIds).containsExactly(1, 2).inOrder()
+            assertThat(matcher.find(blocks, matcher.normalizeQuery("001234")).single().elementIds)
+                .containsExactly(2)
+            assertThat(matcher.find(blocks, matcher.normalizeQuery("12.50")).single().elementIds)
+                .containsExactly(3)
         }
     }
 
     @Test
-    fun phrase_neverCrossesIndependentBlocks() {\n        runBlocking {
-        val blocks = matcher.buildBlocks(
-            layout(
-                element(1, 1, 0, "INVOICE"),
-                element(2, 2, 0, "NUMBER"),
-            ),
-        )
+    fun phrase_canCrossLineBreakInsideSameBlock() {
+        runBlocking {
+            val blocks = matcher.buildBlocks(
+                layout(
+                    element(1, 7, 0, "INVOICE"),
+                    element(2, 7, 1, "NUMBER"),
+                ),
+            )
 
-        assertThat(matcher.find(blocks, matcher.normalizeQuery("invoice number"))).isEmpty()
+            val hits = matcher.find(blocks, matcher.normalizeQuery("invoice number"))
+
+            assertThat(hits).hasSize(1)
+            assertThat(hits.single().elementIds).containsExactly(1, 2).inOrder()
         }
     }
 
     @Test
-    fun repeatedOccurrences_areNonOverlappingAndDeterministic() {\n        runBlocking {
-        val blocks = matcher.buildBlocks(layout(element(1, 0, 0, "PAN and company pan")))
+    fun phrase_neverCrossesIndependentBlocks() {
+        runBlocking {
+            val blocks = matcher.buildBlocks(
+                layout(
+                    element(1, 1, 0, "INVOICE"),
+                    element(2, 2, 0, "NUMBER"),
+                ),
+            )
 
-        val hits = matcher.find(blocks, matcher.normalizeQuery("pan"))
-
-        assertThat(hits).hasSize(2)
-        assertThat(hits.map { it.elementIds }).containsExactly(listOf(1), listOf(1)).inOrder()
+            assertThat(matcher.find(blocks, matcher.normalizeQuery("invoice number"))).isEmpty()
         }
     }
 
     @Test
-    fun substringHighlightsContainingElement() {\n        runBlocking {
-        val blocks = matcher.buildBlocks(layout(element(8, 0, 0, "001234")))
+    fun repeatedOccurrences_areNonOverlappingAndDeterministic() {
+        runBlocking {
+            val blocks = matcher.buildBlocks(layout(element(1, 0, 0, "PAN and company pan")))
 
-        val hit = matcher.find(blocks, matcher.normalizeQuery("1234")).single()
+            val hits = matcher.find(blocks, matcher.normalizeQuery("pan"))
 
-        assertThat(hit.elementIds).containsExactly(8)
+            assertThat(hits).hasSize(2)
+            assertThat(hits.map { it.elementIds }).containsExactly(listOf(1), listOf(1)).inOrder()
         }
     }
 
     @Test
-    fun whitespaceIsCollapsedButPunctuationIsNotRemoved() {\n        runBlocking {
-        val blocks = matcher.buildBlocks(
-            layout(
-                element(1, 0, 0, "INVOICE"),
-                element(2, 0, 1, "NUMBER"),
-            ),
-        )
+    fun substringHighlightsContainingElement() {
+        runBlocking {
+            val blocks = matcher.buildBlocks(layout(element(8, 0, 0, "001234")))
 
-        assertThat(matcher.normalizeQuery("  invoice   number  ")).isEqualTo("invoice number")
-        assertThat(matcher.find(blocks, matcher.normalizeQuery("invoice   number"))).hasSize(1)
-        assertThat(matcher.normalizeQuery("AB-1234")).isEqualTo("ab-1234")
+            val hit = matcher.find(blocks, matcher.normalizeQuery("1234")).single()
+
+            assertThat(hit.elementIds).containsExactly(8)
+        }
+    }
+
+    @Test
+    fun whitespaceIsCollapsedButPunctuationIsNotRemoved() {
+        runBlocking {
+            val blocks = matcher.buildBlocks(
+                layout(
+                    element(1, 0, 0, "INVOICE"),
+                    element(2, 0, 1, "NUMBER"),
+                ),
+            )
+
+            assertThat(matcher.normalizeQuery("  invoice   number  ")).isEqualTo("invoice number")
+            assertThat(matcher.find(blocks, matcher.normalizeQuery("invoice   number"))).hasSize(1)
+            assertThat(matcher.normalizeQuery("AB-1234")).isEqualTo("ab-1234")
         }
     }
 
