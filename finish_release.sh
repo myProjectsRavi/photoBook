@@ -15,6 +15,12 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
   echo "Refusing release build from a dirty tracked worktree." >&2
   exit 1
 fi
+untracked_files="$(git ls-files --others --exclude-standard)"
+if [[ -n "$untracked_files" ]]; then
+  echo "Refusing release build with non-ignored untracked files:" >&2
+  printf '%s\n' "$untracked_files" >&2
+  exit 1
+fi
 source_commit="$(git rev-parse HEAD)"
 
 metadata="$(./gradlew -q :app:printReleaseMetadata)"
@@ -53,7 +59,7 @@ if (( aab_bytes > max_aab_bytes )); then
   exit 1
 fi
 
-if ! unzip -l "$aab" | grep -Fq "base/assets/photobook/food_live_label_model.tflite"; then
+if ! unzip -Z1 "$aab" "base/assets/photobook/food_live_label_model.tflite" >/dev/null 2>&1; then
   echo "Bundled local semantic-label model is missing from final AAB." >&2
   exit 1
 fi
@@ -87,7 +93,7 @@ if [[ -z "$merged_manifest" || ! -s "$merged_manifest" ]]; then
   echo "Merged release manifest was not found." >&2
   exit 1
 fi
-if rg -n 'android\.permission\.INTERNET|android:name="INTERNET"' "$merged_manifest"; then
+if grep -E -n 'android\.permission\.INTERNET|android:name="INTERNET"' "$merged_manifest"; then
   echo "Release manifest unexpectedly contains INTERNET permission: $merged_manifest" >&2
   exit 1
 fi

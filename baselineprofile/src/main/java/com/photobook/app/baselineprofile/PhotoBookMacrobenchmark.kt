@@ -82,7 +82,7 @@ class PhotoBookMacrobenchmark {
     @Test
     fun b_coldStartup() {
         ensureSteadyStateIndex()
-        forceStopTarget(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()))
+        // StartupMode.COLD owns target-process termination for every measured iteration.
 
         benchmarkRule.measureRepeated(
             packageName = TARGET_PACKAGE,
@@ -93,11 +93,12 @@ class PhotoBookMacrobenchmark {
             iterations = STARTUP_ITERATIONS,
             startupMode = StartupMode.COLD,
             setupBlock = {
-                // StartupMode.COLD kills the target process between setupBlock and
-                // measureBlock. Keep setup process-free; the persisted index was
-                // prepared before entering measureRepeated.
+                // Permission/package work can race a background process restart after very large
+                // libraries. Cold startup requires the target to be stably stopped immediately
+                // before Macrobenchmark begins the measured launch.
                 grantRuntimePermissions(device)
                 pressHome()
+                ensureTargetStopped(device)
             },
         ) {
             startActivityAndWait()
@@ -127,7 +128,7 @@ class PhotoBookMacrobenchmark {
     @Test
     fun d_firstVisibleThumbnailLatency() {
         ensureSteadyStateIndex()
-        forceStopTarget(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()))
+        // StartupMode.COLD owns target-process termination for every measured iteration.
         val samplesMs = mutableListOf<Long>()
 
         benchmarkRule.measureRepeated(
@@ -141,6 +142,7 @@ class PhotoBookMacrobenchmark {
             setupBlock = {
                 grantRuntimePermissions(device)
                 pressHome()
+                ensureTargetStopped(device)
             },
         ) {
             val startMs = SystemClock.elapsedRealtime()
@@ -506,14 +508,23 @@ class PhotoBookMacrobenchmark {
         return matchesOuterCell || matchesPaddedCard
     }
 
-    private fun forceStopTarget(device: UiDevice) {
-        device.executeShellCommand("am force-stop $TARGET_PACKAGE")
+    private fun ensureTargetStopped(device: UiDevice) {
         val deadlineMs = SystemClock.elapsedRealtime() + PROCESS_STOP_TIMEOUT_MS
         while (SystemClock.elapsedRealtime() < deadlineMs) {
-            if (device.executeShellCommand("pidof $TARGET_PACKAGE").trim().isEmpty()) return
-            SystemClock.sleep(100)
+            device.executeShellCommand("am force-stop $TARGET_PACKAGE")
+            SystemClock.sleep(PROCESS_STOP_POLL_MS)
+            if (device.executeShellCommand("pidof $TARGET_PACKAGE").trim().isNotEmpty()) {
+                continue
+            }
+
+            // Require a brief stable-empty window. At 100k photos a pending background callback
+            // can restart the app a few hundred milliseconds after the first force-stop.
+            SystemClock.sleep(PROCESS_STOP_STABLE_MS)
+            if (device.executeShellCommand("pidof $TARGET_PACKAGE").trim().isEmpty()) {
+                return
+            }
         }
-        error("PhotoBook process remained alive after benchmark force-stop precondition")
+        error("PhotoBook process would not remain stopped before cold-start measurement")
     }
 
     private fun grantRuntimePermissions(device: UiDevice) {
@@ -588,7 +599,9 @@ class PhotoBookMacrobenchmark {
         private const val INTERACTION_ITERATIONS = 5
         private const val UI_TIMEOUT_MS = 8_000L
         private const val THUMBNAIL_TIMEOUT_MS = 60_000L
-        private const val PROCESS_STOP_TIMEOUT_MS = 5_000L
+        private const val PROCESS_STOP_TIMEOUT_MS = 8_000L
+        private const val PROCESS_STOP_POLL_MS = 100L
+        private const val PROCESS_STOP_STABLE_MS = 400L
         private const val MAX_ANCESTOR_DEPTH = 4
         private const val RESULTS_HORIZONTAL_INSET_DP = 20f
         private const val PHOTO_CARD_PADDING_DP = 2f

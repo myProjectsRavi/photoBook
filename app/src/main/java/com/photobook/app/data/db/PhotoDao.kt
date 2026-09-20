@@ -77,6 +77,18 @@ interface PhotoDao {
     @Query(
         """
         SELECT * FROM photos
+        WHERE id IN (:ids)
+            AND isFavorite = 0
+            AND mimeType LIKE 'image/%'
+            AND isArchiveScreenshotCandidate = 1
+        ORDER BY dateAdded DESC, id DESC
+        """,
+    )
+    suspend fun getArchiveScreenshotCandidatesForIds(ids: List<Long>): List<PhotoEntity>
+
+    @Query(
+        """
+        SELECT * FROM photos
         WHERE isFavorite = 0
             AND mimeType LIKE 'image/%'
             AND isArchiveScreenshotCandidate = 1
@@ -114,6 +126,19 @@ interface PhotoDao {
         """,
     )
     suspend fun getArchiveFoodCandidates(limit: Int): List<PhotoEntity>
+
+    @Query(
+        """
+        SELECT * FROM photos
+        WHERE id IN (:ids)
+            AND isFavorite = 0
+            AND mimeType LIKE 'image/%'
+            AND isMlProcessed = 1
+            AND isArchiveFoodCandidate = 1
+        ORDER BY dateAdded DESC, id DESC
+        """,
+    )
+    suspend fun getArchiveFoodCandidatesForIds(ids: List<Long>): List<PhotoEntity>
 
     @Query(
         """

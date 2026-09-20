@@ -143,6 +143,7 @@ fun VaultBottomSheet(
         VaultItemPreviewDialog(
             item = item,
             isBusy = isBusy,
+            onPreviewNeeded = { onPreviewNeeded(item) },
             onDismiss = { previewItemId = null },
             onMoveOut = {
                 previewItemId = null
@@ -186,6 +187,7 @@ private fun VaultItemCard(
             VaultPreviewImage(
                 item = item,
                 contentScale = ContentScale.Crop,
+                onPreviewError = onPreviewNeeded,
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(1f)
@@ -235,6 +237,7 @@ private fun VaultItemCard(
 private fun VaultItemPreviewDialog(
     item: VaultItem,
     isBusy: Boolean,
+    onPreviewNeeded: () -> Unit,
     onDismiss: () -> Unit,
     onMoveOut: () -> Unit,
     onDelete: () -> Unit,
@@ -269,6 +272,7 @@ private fun VaultItemPreviewDialog(
                 VaultPreviewImage(
                     item = item,
                     contentScale = ContentScale.Fit,
+                    onPreviewError = onPreviewNeeded,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
@@ -310,6 +314,7 @@ private fun VaultItemPreviewDialog(
 private fun VaultPreviewImage(
     item: VaultItem,
     contentScale: ContentScale,
+    onPreviewError: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     if (item.previewUri == null) {
@@ -329,6 +334,7 @@ private fun VaultPreviewImage(
             model = item.previewUri,
             contentDescription = item.originalFileName,
             contentScale = contentScale,
+            onError = { onPreviewError() },
             modifier = modifier,
         )
     }

@@ -9,8 +9,10 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.photobook.app.data.source.MediaStoreScanner
 import com.photobook.app.feature.archive.ArchiveService
 import com.photobook.app.util.Constants
+import com.photobook.app.util.PermissionUtils
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import java.util.concurrent.TimeUnit
@@ -20,11 +22,17 @@ class ArchiveScanWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted params: WorkerParameters,
     private val archiveService: ArchiveService,
+    private val mediaStoreScanner: MediaStoreScanner,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
         return runCatching {
-            archiveService.refreshCandidates()
+            val accessiblePhotoIds = when (PermissionUtils.photoAccessMode(applicationContext)) {
+                PermissionUtils.PhotoAccessMode.None -> return Result.success()
+                PermissionUtils.PhotoAccessMode.Limited -> mediaStoreScanner.scanAllIds()
+                PermissionUtils.PhotoAccessMode.Full -> null
+            }
+            archiveService.refreshCandidates(accessiblePhotoIds = accessiblePhotoIds)
             Result.success()
         }.getOrElse {
             if (runAttemptCount < 3) Result.retry() else Result.success()

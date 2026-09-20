@@ -303,6 +303,17 @@ if os.environ.get("PHASE3_X86") == "1":
         )
     text = text.replace(old_abi, new_abi)
 
+    # Production intentionally excludes emulator ABIs. Phase-3 temporarily adds x86_64
+    # so the release-like target can run on GitHub's KVM emulator; retain x86 exclusion
+    # while allowing x86_64 native dependencies (notably bundled OCR) into this CI-only APK.
+    old_native_excludes = '            excludes += setOf("**/x86/**", "**/x86_64/**")'
+    new_native_excludes = '            excludes += setOf("**/x86/**")'
+    if text.count(old_native_excludes) != 1:
+        raise SystemExit(
+            "Expected exactly one production x86/x86_64 JNI exclusion before Phase-3 CI patch"
+        )
+    text = text.replace(old_native_excludes, new_native_excludes)
+
 profile_line = '    add("benchmarkImplementation", "androidx.profileinstaller:profileinstaller:1.4.1")'
 if text.count(profile_line) != 1:
     raise SystemExit(

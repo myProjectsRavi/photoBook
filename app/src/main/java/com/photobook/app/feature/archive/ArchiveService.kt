@@ -44,51 +44,48 @@ class ArchiveService @Inject constructor(
     private val sharedPreferences: SharedPreferences,
 ) {
 
-    suspend fun refreshCandidates(scanLimit: Int = DEFAULT_SCAN_LIMIT): ArchiveSummary = withContext(Dispatchers.IO) {
-        refreshCandidatesInternal(scanLimit = scanLimit)
+    suspend fun refreshCandidates(
+        scanLimit: Int = DEFAULT_SCAN_LIMIT,
+        accessiblePhotoIds: Set<Long>? = null,
+    ): ArchiveSummary = withContext(Dispatchers.IO) {
+        refreshCandidatesInternal(
+            scanLimit = scanLimit,
+            accessiblePhotoIds = accessiblePhotoIds,
+        )
     }
 
     suspend fun refreshAllCandidates(
+        accessiblePhotoIds: Set<Long>? = null,
         onBatchCommitted: suspend (ArchiveSummary) -> Unit = {},
     ): ArchiveSummary = withContext(Dispatchers.IO) {
         refreshCandidatesInternal(
             scanLimit = null,
+            accessiblePhotoIds = accessiblePhotoIds,
             onBatchCommitted = onBatchCommitted,
         )
     }
 
     private suspend fun refreshCandidatesInternal(
         scanLimit: Int?,
+        accessiblePhotoIds: Set<Long>?,
         onBatchCommitted: suspend (ArchiveSummary) -> Unit = {},
     ): ArchiveSummary {
         if (!isEnabled()) return disabledSummary()
 
-        val boundedLimit = scanLimit ?: return refreshAllCandidatesBounded(onBatchCommitted)
+        val boundedLimit = scanLimit ?: return refreshAllCandidatesBounded(
+            accessiblePhotoIds = accessiblePhotoIds,
+            onBatchCommitted = onBatchCommitted,
+        )
 
         val nowMs = System.currentTimeMillis()
         val enabledCategories = enabledCategories()
-        val candidateEntities = when {
-            enabledCategories.isEmpty() -> emptyList()
-            else -> {
-                val paymentCandidates = if (ArchiveCategory.Payments in enabledCategories) {
-                    photoDao.getArchiveScreenshotCandidates(boundedLimit)
-                } else {
-                    emptyList()
-                }
-                val foodCandidates = if (ArchiveCategory.Food in enabledCategories) {
-                    photoDao.getArchiveFoodCandidates(boundedLimit)
-                } else {
-                    emptyList()
-                }
-                (paymentCandidates + foodCandidates).distinctBy { entity -> entity.id }
-            }
-        }
+        val candidateEntities = loadBoundedCandidateEntities(
+            enabledCategories = enabledCategories,
+            boundedLimit = boundedLimit,
+            accessiblePhotoIds = accessiblePhotoIds,
+        )
         val photoIds = candidateEntities.map { entity -> entity.id }
-        val existingById = if (photoIds.isEmpty()) {
-            emptyMap()
-        } else {
-            archiveDao.getByPhotoIds(photoIds).associateBy { decision -> decision.photoId }
-        }
+        val existingById = getArchiveDecisionsByPhotoIds(photoIds)
         val protectedIds = getProtectedIds(photoIds)
         val retentionDays = retentionDays()
 
@@ -122,10 +119,14 @@ class ArchiveService @Inject constructor(
             }
         }
         archiveDao.markDueDeleteItems(nowMs)
-        return loadSummaryInternal(nowMs = nowMs)
+        return loadSummaryInternal(
+            nowMs = nowMs,
+            accessiblePhotoIds = accessiblePhotoIds,
+        )
     }
 
     private suspend fun refreshAllCandidatesBounded(
+        accessiblePhotoIds: Set<Long>?,
         onBatchCommitted: suspend (ArchiveSummary) -> Unit,
     ): ArchiveSummary {
         val scanStartedAtMs = System.currentTimeMillis()
@@ -178,10 +179,13 @@ class ArchiveService @Inject constructor(
             val page = (paymentPage + foodPage).distinctBy { entity -> entity.id }
             if (page.isEmpty()) break
 
-            val pageIds = page.map { entity -> entity.id }
-            val existingById = archiveDao.getByPhotoIds(pageIds).associateBy { it.photoId }
+            val accessiblePage = page.filter { entity ->
+                accessiblePhotoIds == null || entity.id in accessiblePhotoIds
+            }
+            val pageIds = accessiblePage.map { entity -> entity.id }
+            val existingById = getArchiveDecisionsByPhotoIds(pageIds)
             val protectedIds = getProtectedIds(pageIds)
-            val nextDecisions = page.mapNotNull { entity ->
+            val nextDecisions = accessiblePage.mapNotNull { entity ->
                 if (entity.id in protectedIds) return@mapNotNull null
                 val existing = existingById[entity.id]
                 if (existing?.state in SUPPRESSED_STATES) return@mapNotNull null
@@ -205,30 +209,45 @@ class ArchiveService @Inject constructor(
             nextDecisions.chunked(ARCHIVE_DECISION_BATCH_SIZE).forEach { batch ->
                 archiveDao.upsertDecisions(batch)
             }
-            onBatchCommitted(loadSummaryInternal(scanStartedAtMs))
+            onBatchCommitted(
+                loadSummaryInternal(
+                    nowMs = scanStartedAtMs,
+                    accessiblePhotoIds = accessiblePhotoIds,
+                ),
+            )
 
             val paymentsComplete = ArchiveCategory.Payments !in enabledCategories || paymentCursor.exhausted
             val foodComplete = ArchiveCategory.Food !in enabledCategories || foodCursor.exhausted
             if (paymentsComplete && foodComplete) break
         }
 
-        archiveDao.markCandidatesStaleBefore(scanStartedAtMs, System.currentTimeMillis())
+        // Only a full MediaStore grant proves that an unobserved candidate is structurally gone
+        // or no longer qualifies. Under Android's selected-photo access, an unobserved durable row
+        // may simply be outside the current grant and must remain recoverable after regrant.
+        if (accessiblePhotoIds == null) {
+            archiveDao.markCandidatesStaleBefore(scanStartedAtMs, System.currentTimeMillis())
+        }
         archiveDao.markDueDeleteItems(System.currentTimeMillis())
-        return loadSummaryInternal()
+        return loadSummaryInternal(accessiblePhotoIds = accessiblePhotoIds)
     }
 
-    suspend fun loadSummary(): ArchiveSummary = withContext(Dispatchers.IO) {
+    suspend fun loadSummary(
+        accessiblePhotoIds: Set<Long>? = null,
+    ): ArchiveSummary = withContext(Dispatchers.IO) {
         if (!isEnabled()) return@withContext disabledSummary()
         archiveDao.markDueDeleteItems(System.currentTimeMillis())
-        loadSummaryInternal()
+        loadSummaryInternal(accessiblePhotoIds = accessiblePhotoIds)
     }
 
-    suspend fun setEnabled(enabled: Boolean): ArchiveSummary = withContext(Dispatchers.IO) {
+    suspend fun setEnabled(
+        enabled: Boolean,
+        accessiblePhotoIds: Set<Long>? = null,
+    ): ArchiveSummary = withContext(Dispatchers.IO) {
         sharedPreferences.edit()
             .putBoolean(KEY_ENABLED, enabled)
             .apply()
         if (enabled) {
-            refreshCandidates()
+            refreshCandidates(accessiblePhotoIds = accessiblePhotoIds)
         } else {
             disabledSummary()
         }
@@ -238,22 +257,28 @@ class ArchiveService @Inject constructor(
         return sharedPreferences.getBoolean(KEY_ENABLED, DEFAULT_ENABLED)
     }
 
-    suspend fun setPaymentsEnabled(enabled: Boolean): ArchiveSummary = withContext(Dispatchers.IO) {
+    suspend fun setPaymentsEnabled(
+        enabled: Boolean,
+        accessiblePhotoIds: Set<Long>? = null,
+    ): ArchiveSummary = withContext(Dispatchers.IO) {
         sharedPreferences.edit()
             .putBoolean(KEY_PAYMENTS_ENABLED, enabled)
             .apply()
-        if (isEnabled()) refreshCandidates() else disabledSummary()
+        if (isEnabled()) refreshCandidates(accessiblePhotoIds = accessiblePhotoIds) else disabledSummary()
     }
 
     fun isPaymentsEnabled(): Boolean {
         return sharedPreferences.getBoolean(KEY_PAYMENTS_ENABLED, DEFAULT_PAYMENTS_ENABLED)
     }
 
-    suspend fun setFoodEnabled(enabled: Boolean): ArchiveSummary = withContext(Dispatchers.IO) {
+    suspend fun setFoodEnabled(
+        enabled: Boolean,
+        accessiblePhotoIds: Set<Long>? = null,
+    ): ArchiveSummary = withContext(Dispatchers.IO) {
         sharedPreferences.edit()
             .putBoolean(KEY_FOOD_ENABLED, enabled)
             .apply()
-        if (isEnabled()) refreshCandidates() else disabledSummary()
+        if (isEnabled()) refreshCandidates(accessiblePhotoIds = accessiblePhotoIds) else disabledSummary()
     }
 
     fun isFoodEnabled(): Boolean {
@@ -276,35 +301,56 @@ class ArchiveService @Inject constructor(
 
     suspend fun markKept(photoIds: Set<Long>) = withContext(Dispatchers.IO) {
         if (photoIds.isEmpty()) return@withContext
-        archiveDao.markKept(photoIds.toList(), System.currentTimeMillis())
+        val nowMs = System.currentTimeMillis()
+        photoIds.toList().chunked(ARCHIVE_DB_BATCH_SIZE).forEach { batch ->
+            archiveDao.markKept(batch, nowMs)
+        }
     }
 
     suspend fun markTrashed(photoIds: Set<Long>, retentionDays: Int) = withContext(Dispatchers.IO) {
         if (photoIds.isEmpty()) return@withContext
-        archiveDao.markTrashed(
-            photoIds = photoIds.toList(),
-            trashedAtMs = System.currentTimeMillis(),
-            retentionDays = normalizeRetentionDays(retentionDays),
-        )
+        val trashedAtMs = System.currentTimeMillis()
+        val normalizedRetentionDays = normalizeRetentionDays(retentionDays)
+        photoIds.toList().chunked(ARCHIVE_DB_BATCH_SIZE).forEach { batch ->
+            archiveDao.markTrashed(
+                photoIds = batch,
+                trashedAtMs = trashedAtMs,
+                retentionDays = normalizedRetentionDays,
+            )
+        }
     }
 
     suspend fun markDueDeleted(photoIds: Set<Long>) = withContext(Dispatchers.IO) {
         if (photoIds.isEmpty()) return@withContext
-        archiveDao.markStale(photoIds.toList(), System.currentTimeMillis())
+        val nowMs = System.currentTimeMillis()
+        photoIds.toList().chunked(ARCHIVE_DB_BATCH_SIZE).forEach { batch ->
+            archiveDao.markStale(batch, nowMs)
+        }
     }
 
-    suspend fun dueDeleteItems(limit: Int = MAX_DUE_DELETE_ITEMS): List<ArchiveDueDeleteItem> =
-        withContext(Dispatchers.IO) {
-            if (!isEnabled()) return@withContext emptyList()
-            archiveDao.markDueDeleteItems(System.currentTimeMillis())
-            archiveDao.getDueDeleteItems(System.currentTimeMillis(), limit)
-                .map { decision ->
-                    ArchiveDueDeleteItem(
-                        photoId = decision.photoId,
-                        uriString = decision.uriString,
-                    )
-                }
+    suspend fun dueDeleteItems(
+        limit: Int = MAX_DUE_DELETE_ITEMS,
+        accessiblePhotoIds: Set<Long>? = null,
+    ): List<ArchiveDueDeleteItem> = withContext(Dispatchers.IO) {
+        if (!isEnabled()) return@withContext emptyList()
+        val nowMs = System.currentTimeMillis()
+        archiveDao.markDueDeleteItems(nowMs)
+        val decisions = if (accessiblePhotoIds == null) {
+            archiveDao.getDueDeleteItems(nowMs, limit)
+        } else {
+            getDueDeleteItemsForAccessibleIds(
+                nowMs = nowMs,
+                accessiblePhotoIds = accessiblePhotoIds,
+                limit = limit,
+            )
         }
+        decisions.map { decision ->
+            ArchiveDueDeleteItem(
+                photoId = decision.photoId,
+                uriString = decision.uriString,
+            )
+        }
+    }
 
     suspend fun archivedTrashPhotoIds(): Set<Long> = withContext(Dispatchers.IO) {
         archiveDao.getArchivedTrashPhotoIds().toSet()
@@ -322,9 +368,19 @@ class ArchiveService @Inject constructor(
         archiveDao.getDueDeleteCount(nowMs)
     }
 
-    private suspend fun loadSummaryInternal(nowMs: Long = System.currentTimeMillis()): ArchiveSummary {
-        val candidates = loadCandidatesInternal()
-        val dueCount = archiveDao.getDueDeleteCount(nowMs)
+    private suspend fun loadSummaryInternal(
+        nowMs: Long = System.currentTimeMillis(),
+        accessiblePhotoIds: Set<Long>? = null,
+    ): ArchiveSummary {
+        val candidates = loadCandidatesInternal(accessiblePhotoIds)
+        val dueCount = if (accessiblePhotoIds == null) {
+            archiveDao.getDueDeleteCount(nowMs)
+        } else {
+            getDueDeleteCountForAccessibleIds(
+                nowMs = nowMs,
+                accessiblePhotoIds = accessiblePhotoIds,
+            )
+        }
         return ArchiveSummary(
             candidates = candidates,
             dueDeleteCount = dueCount,
@@ -335,8 +391,10 @@ class ArchiveService @Inject constructor(
         )
     }
 
-    private suspend fun loadCandidatesInternal(): List<ArchiveCandidate> {
-        val decisions = archiveDao.getCandidates(MAX_CANDIDATES)
+    private suspend fun loadCandidatesInternal(
+        accessiblePhotoIds: Set<Long>? = null,
+    ): List<ArchiveCandidate> {
+        val decisions = getVisibleCandidateDecisions(accessiblePhotoIds)
         if (decisions.isEmpty()) return emptyList()
 
         val photoIds = decisions.map { decision -> decision.photoId }
@@ -344,7 +402,10 @@ class ArchiveService @Inject constructor(
             .associate { entity -> entity.id to entity.toPhotoRecord() }
         val missingIds = photoIds.filterNot { id -> id in photosById }
         if (missingIds.isNotEmpty()) {
-            archiveDao.markStale(missingIds, System.currentTimeMillis())
+            val nowMs = System.currentTimeMillis()
+            missingIds.chunked(ARCHIVE_DB_BATCH_SIZE).forEach { batch ->
+                archiveDao.markStale(batch, nowMs)
+            }
         }
 
         val protectedIds = getProtectedIds(photoIds)
@@ -365,9 +426,125 @@ class ArchiveService @Inject constructor(
         }
     }
 
+    private suspend fun loadBoundedCandidateEntities(
+        enabledCategories: Set<ArchiveCategory>,
+        boundedLimit: Int,
+        accessiblePhotoIds: Set<Long>?,
+    ): List<PhotoEntity> {
+        if (enabledCategories.isEmpty() || boundedLimit <= 0) return emptyList()
+
+        val paymentCandidates = if (ArchiveCategory.Payments in enabledCategories) {
+            if (accessiblePhotoIds == null) {
+                photoDao.getArchiveScreenshotCandidates(boundedLimit)
+            } else {
+                accessiblePhotoIds.toList()
+                    .chunked(ARCHIVE_DB_BATCH_SIZE)
+                    .flatMap { batch -> photoDao.getArchiveScreenshotCandidatesForIds(batch) }
+                    .sortedWith(
+                        compareByDescending<PhotoEntity> { entity -> entity.dateAdded }
+                            .thenByDescending { entity -> entity.id },
+                    )
+                    .take(boundedLimit)
+            }
+        } else {
+            emptyList()
+        }
+
+        val foodCandidates = if (ArchiveCategory.Food in enabledCategories) {
+            if (accessiblePhotoIds == null) {
+                photoDao.getArchiveFoodCandidates(boundedLimit)
+            } else {
+                accessiblePhotoIds.toList()
+                    .chunked(ARCHIVE_DB_BATCH_SIZE)
+                    .flatMap { batch -> photoDao.getArchiveFoodCandidatesForIds(batch) }
+                    .sortedWith(
+                        compareByDescending<PhotoEntity> { entity -> entity.dateAdded }
+                            .thenByDescending { entity -> entity.id },
+                    )
+                    .take(boundedLimit)
+            }
+        } else {
+            emptyList()
+        }
+
+        return (paymentCandidates + foodCandidates).distinctBy { entity -> entity.id }
+    }
+
+    private suspend fun getDueDeleteCountForAccessibleIds(
+        nowMs: Long,
+        accessiblePhotoIds: Set<Long>,
+    ): Int {
+        if (accessiblePhotoIds.isEmpty()) return 0
+        return accessiblePhotoIds.toList()
+            .chunked(ARCHIVE_DB_BATCH_SIZE)
+            .sumOf { batch ->
+                archiveDao.getDueDeleteCountForPhotoIds(
+                    nowMs = nowMs,
+                    photoIds = batch,
+                )
+            }
+    }
+
+    private suspend fun getDueDeleteItemsForAccessibleIds(
+        nowMs: Long,
+        accessiblePhotoIds: Set<Long>,
+        limit: Int,
+    ): List<ArchiveDecisionEntity> {
+        if (limit <= 0 || accessiblePhotoIds.isEmpty()) return emptyList()
+        return accessiblePhotoIds.toList()
+            .chunked(ARCHIVE_DB_BATCH_SIZE)
+            .flatMap { batch ->
+                archiveDao.getDueDeleteItemsForPhotoIds(
+                    nowMs = nowMs,
+                    photoIds = batch,
+                )
+            }
+            .sortedWith(
+                compareBy<ArchiveDecisionEntity> { decision ->
+                    decision.trashedAtMs ?: Long.MAX_VALUE
+                }.thenBy { decision -> decision.photoId },
+            )
+            .take(limit)
+    }
+
     private suspend fun getProtectedIds(photoIds: List<Long>): Set<Long> {
         if (photoIds.isEmpty()) return emptySet()
-        return vaultDao.getProtectedPhotoIds(photoIds).toSet()
+        return photoIds.chunked(ARCHIVE_DB_BATCH_SIZE)
+            .flatMap { batch -> vaultDao.getProtectedPhotoIds(batch) }
+            .toSet()
+    }
+
+    private suspend fun getArchiveDecisionsByPhotoIds(
+        photoIds: List<Long>,
+    ): Map<Long, ArchiveDecisionEntity> {
+        if (photoIds.isEmpty()) return emptyMap()
+        return photoIds.chunked(ARCHIVE_DB_BATCH_SIZE)
+            .flatMap { batch -> archiveDao.getByPhotoIds(batch) }
+            .associateBy { decision -> decision.photoId }
+    }
+
+    private suspend fun getVisibleCandidateDecisions(
+        accessiblePhotoIds: Set<Long>?,
+    ): List<ArchiveDecisionEntity> {
+        if (accessiblePhotoIds == null) {
+            return archiveDao.getCandidates(MAX_CANDIDATES)
+        }
+        if (accessiblePhotoIds.isEmpty()) return emptyList()
+
+        return accessiblePhotoIds.toList()
+            .chunked(ARCHIVE_DB_BATCH_SIZE)
+            .flatMap { batch ->
+                archiveDao.getCandidatesForPhotoIds(
+                    photoIds = batch,
+                    limit = MAX_CANDIDATES,
+                )
+            }
+            .sortedWith(
+                compareByDescending<ArchiveDecisionEntity> { decision ->
+                    decision.lastDetectedAtMs
+                }.thenByDescending { decision -> decision.photoId },
+            )
+            .take(MAX_CANDIDATES)
     }
 
     private fun disabledSummary(): ArchiveSummary {
@@ -413,6 +590,7 @@ class ArchiveService @Inject constructor(
         private const val MAX_CANDIDATES = 120
         private const val ARCHIVE_DECISION_BATCH_SIZE = 250
         private const val ARCHIVE_PAGE_SIZE = 250
+        private const val ARCHIVE_DB_BATCH_SIZE = 200
 
         private val SUPPRESSED_STATES = setOf(
             ArchiveDecisionStates.KEPT,
