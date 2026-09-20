@@ -4,8 +4,13 @@ import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.photobook.app.data.db.PhotoBookDatabase
+import com.photobook.app.data.index.IndexCommitCoordinator
 import com.photobook.app.data.index.IndexPersistence
+import com.photobook.app.data.index.PhotoIndex
+import com.photobook.app.data.model.IntelligenceStatus
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.ui.viewmodel.AccessGenerationGate
+import com.photobook.app.ui.viewmodel.commitLimitedAccessReconciliation
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -97,6 +102,76 @@ class IndexPersistenceInstrumentedTest {
             val resolved = persistence.getByIdsOrdered(requestedIds)
 
             assertEquals(requestedIds, resolved.map { record -> record.id })
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
+    fun limitedReconcile_interveningFavoriteAndOcrCommitCannotBeRevertedInMemory() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val database = Room.inMemoryDatabaseBuilder(
+            context,
+            PhotoBookDatabase::class.java,
+        )
+            .allowMainThreadQueries()
+            .build()
+
+        try {
+            val persistence = IndexPersistence(
+                context = context,
+                database = database,
+                photoDao = database.photoDao(),
+            )
+            val coordinator = IndexCommitCoordinator()
+            val photoIndex = PhotoIndex()
+            val accessGate = AccessGenerationGate()
+            val initial = fixtureRecord(91L, "before.jpg").copy(
+                isFavorite = false,
+                ocrText = "",
+                isOcrProcessed = false,
+                ocrStatus = IntelligenceStatus.PENDING,
+            )
+            persistence.upsertAll(listOf(initial))
+            photoIndex.setRecords(listOf(initial))
+            assertTrue(accessGate.markPublished(accessGate.current()))
+
+            // Reconciliation has already captured/rebuilt this stale record outside the commit
+            // boundary. Before it publishes, a newer favorite + OCR commit lands.
+            val staleRebuilt = initial.copy(fileName = "after-structural-scan.jpg")
+            coordinator.withCommit {
+                persistence.setFavorite(initial.id, true)
+                val intelligenceUpdate = PhotoIndex.PhotoIntelligenceUpdate(
+                    id = initial.id,
+                    ocrText = "recognized invoice 8675309",
+                    isOcrProcessed = true,
+                    ocrStatus = IntelligenceStatus.PROCESSED,
+                )
+                persistence.applyIntelligenceUpdates(listOf(intelligenceUpdate))
+                photoIndex.setFavorite(initial.id, true)
+                photoIndex.updatePhotosIntelligence(listOf(intelligenceUpdate))
+            }
+
+            // Production reconciliation must reload Room *inside the same commit lock* after its
+            // structural upsert instead of publishing staleRebuilt directly.
+            commitLimitedAccessReconciliation(
+                indexCommitCoordinator = coordinator,
+                indexPersistence = persistence,
+                photoIndex = photoIndex,
+                accessGenerationGate = accessGate,
+                accessGeneration = accessGate.current(),
+                visibleIds = listOf(initial.id),
+                rebuiltRecords = listOf(staleRebuilt),
+            )
+
+            val inMemory = photoIndex.getById(initial.id)
+            val durable = persistence.getByIdsOrdered(listOf(initial.id)).single()
+            assertEquals(true, inMemory?.isFavorite)
+            assertEquals("recognized invoice 8675309", inMemory?.ocrText)
+            assertEquals(IntelligenceStatus.PROCESSED, inMemory?.ocrStatus)
+            assertEquals(true, durable.isFavorite)
+            assertEquals("recognized invoice 8675309", durable.ocrText)
+            assertEquals(IntelligenceStatus.PROCESSED, durable.ocrStatus)
         } finally {
             database.close()
         }
