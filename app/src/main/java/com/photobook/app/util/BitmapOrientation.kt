@@ -46,7 +46,7 @@ object BitmapOrientation {
                 source.width,
                 source.height,
                 matrix,
-                true,
+                false,
             )
         }.getOrNull()
     }
