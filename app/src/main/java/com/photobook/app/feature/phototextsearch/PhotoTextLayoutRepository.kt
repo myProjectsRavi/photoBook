@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
@@ -154,6 +155,64 @@ class MediaStorePhotoTextLayoutSource @Inject constructor(
     }
 
     private fun decodeOwnedUprightBitmap(uri: Uri): OwnedUprightBitmap? {
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        val lowRam = activityManager?.isLowRamDevice == true
+        val maxEdge = if (lowRam) LOW_RAM_MAX_EDGE_PX else NORMAL_MAX_EDGE_PX
+        val maxPixels = if (lowRam) LOW_RAM_MAX_PIXELS else NORMAL_MAX_PIXELS
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            decodeWithImageDecoder(uri, maxEdge, maxPixels)?.let { bitmap ->
+                return OwnedUprightBitmap(bitmap)
+            }
+        }
+
+        return decodeWithBitmapFactory(uri, maxEdge, maxPixels)?.let(::OwnedUprightBitmap)
+    }
+
+    @android.annotation.TargetApi(Build.VERSION_CODES.P)
+    private fun decodeWithImageDecoder(
+        uri: Uri,
+        maxEdge: Int,
+        maxPixels: Int,
+    ): Bitmap? {
+        val resolver = context.contentResolver
+        val bitmap = runCatching {
+            ImageDecoder.decodeBitmap(ImageDecoder.createSource(resolver, uri)) { decoder, info, _ ->
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                var targetWidth = info.size.width.coerceAtLeast(1)
+                var targetHeight = info.size.height.coerceAtLeast(1)
+                while (
+                    targetWidth > maxEdge ||
+                    targetHeight > maxEdge ||
+                    targetWidth.toLong() * targetHeight.toLong() > maxPixels.toLong()
+                ) {
+                    targetWidth = ((targetWidth + 1) / 2).coerceAtLeast(1)
+                    targetHeight = ((targetHeight + 1) / 2).coerceAtLeast(1)
+                }
+                if (targetWidth != info.size.width || targetHeight != info.size.height) {
+                    decoder.setTargetSize(targetWidth, targetHeight)
+                }
+            }
+        }.getOrNull() ?: return null
+
+        if (
+            bitmap.isRecycled ||
+            bitmap.width <= 0 ||
+            bitmap.height <= 0 ||
+            bitmap.config == Bitmap.Config.HARDWARE
+        ) {
+            recycleSafely(bitmap)
+            return null
+        }
+        // ImageDecoder applies encoded orientation before returning the bitmap.
+        return bitmap
+    }
+
+    private fun decodeWithBitmapFactory(
+        uri: Uri,
+        maxEdge: Int,
+        maxPixels: Int,
+    ): Bitmap? {
         val resolver = context.contentResolver
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         resolver.openInputStream(uri)?.use { stream ->
@@ -161,10 +220,6 @@ class MediaStorePhotoTextLayoutSource @Inject constructor(
         } ?: return null
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
 
-        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
-        val lowRam = activityManager?.isLowRamDevice == true
-        val maxEdge = if (lowRam) LOW_RAM_MAX_EDGE_PX else NORMAL_MAX_EDGE_PX
-        val maxPixels = if (lowRam) LOW_RAM_MAX_PIXELS else NORMAL_MAX_PIXELS
         val sample = calculateSampleSize(
             width = bounds.outWidth,
             height = bounds.outHeight,
@@ -174,6 +229,7 @@ class MediaStorePhotoTextLayoutSource @Inject constructor(
         val options = BitmapFactory.Options().apply {
             inSampleSize = sample
             inPreferredConfig = Bitmap.Config.ARGB_8888
+            inMutable = true
         }
         val rawDecoded = resolver.openInputStream(uri)?.use { stream ->
             BitmapFactory.decodeStream(stream, null, options)
@@ -212,7 +268,7 @@ class MediaStorePhotoTextLayoutSource @Inject constructor(
         if (upright !== decoded) {
             recycleSafely(decoded)
         }
-        return OwnedUprightBitmap(upright)
+        return upright
     }
 
     private fun calculateSampleSize(
