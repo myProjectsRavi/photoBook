@@ -695,6 +695,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                 }
             },
             reelsEnabled = uiState.reelsEnabled,
+            initialSearchRequested = uiState.viewerInitialSearchRequested,
         )
     }
 
@@ -705,6 +706,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             photos = storyViewerPhotos,
             onDismiss = viewModel::closeStoryViewer,
             onOpenPhoto = viewModel::openStoryPhoto,
+            onSearchPhoto = viewModel::searchStoryPhoto,
         )
     }
 
