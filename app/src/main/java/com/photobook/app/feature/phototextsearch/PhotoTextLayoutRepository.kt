@@ -42,6 +42,9 @@ class MediaStorePhotoTextLayoutSource @Inject constructor(
 
             val before = readSourceStamp(uri)
                 ?: return@withContext PhotoTextLayoutLoadResult.Unavailable
+            if (before.mediaId != source.photoId) {
+                return@withContext PhotoTextLayoutLoadResult.Unavailable
+            }
 
             val ready = try {
                 onDeviceIntelligence.ensureReady(needsMl = false, needsOcr = true).ocrReady
@@ -74,7 +77,7 @@ class MediaStorePhotoTextLayoutSource @Inject constructor(
 
                 val after = readSourceStamp(uri)
                     ?: return@withContext PhotoTextLayoutLoadResult.Unavailable
-                if (before != after) {
+                if (after.mediaId != source.photoId || before != after) {
                     return@withContext PhotoTextLayoutLoadResult.Failed
                 }
 
