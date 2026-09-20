@@ -175,32 +175,40 @@ class MediaStorePhotoTextLayoutSource @Inject constructor(
             inSampleSize = sample
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
-        val decoded = resolver.openInputStream(uri)?.use { stream ->
+        val rawDecoded = resolver.openInputStream(uri)?.use { stream ->
             BitmapFactory.decodeStream(stream, null, options)
         } ?: return null
 
-        if (
-            decoded.isRecycled ||
-            decoded.width <= 0 ||
-            decoded.height <= 0 ||
-            decoded.config == Bitmap.Config.HARDWARE
-        ) {
-            recycleSafely(decoded)
+        if (rawDecoded.isRecycled || rawDecoded.width <= 0 || rawDecoded.height <= 0) {
+            recycleSafely(rawDecoded)
             return null
         }
 
-        val orientation = resolver.openInputStream(uri)?.use { stream ->
-            ExifInterface(stream).getAttributeInt(
-                ExifInterface.TAG_ORIENTATION,
-                ExifInterface.ORIENTATION_UNDEFINED,
-            )
-        } ?: ExifInterface.ORIENTATION_UNDEFINED
-
-        val upright = BitmapOrientation.upright(decoded, orientation)
-        if (upright == null) {
-            recycleSafely(decoded)
-            return null
+        // Android/OEM decoders may return a hardware bitmap even when ARGB_8888 is requested.
+        // ML Kit's bitmap path requires a software bitmap, so normalize instead of rejecting a
+        // perfectly readable image.
+        val decoded = if (rawDecoded.config == Bitmap.Config.HARDWARE) {
+            val software = runCatching {
+                rawDecoded.copy(Bitmap.Config.ARGB_8888, false)
+            }.getOrNull()
+            recycleSafely(rawDecoded)
+            software ?: return null
+        } else {
+            rawDecoded
         }
+
+        // EXIF is optional metadata. A missing/corrupt/unsupported EXIF block must never make a
+        // readable photo "unavailable"; fall back to the decoded orientation in that case.
+        val orientation = runCatching {
+            resolver.openInputStream(uri)?.use { stream ->
+                ExifInterface(stream).getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_UNDEFINED,
+                )
+            } ?: ExifInterface.ORIENTATION_UNDEFINED
+        }.getOrDefault(ExifInterface.ORIENTATION_UNDEFINED)
+
+        val upright = BitmapOrientation.upright(decoded, orientation) ?: decoded
         if (upright !== decoded) {
             recycleSafely(decoded)
         }
