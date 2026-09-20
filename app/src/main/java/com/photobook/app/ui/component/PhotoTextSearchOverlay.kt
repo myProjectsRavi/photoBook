@@ -33,10 +33,10 @@ fun PhotoTextSearchOverlay(
 
     Canvas(modifier = modifier) {
         if (paintable.isEmpty() || byId.isEmpty()) return@Canvas
-        paintable.forEach { occurrence ->
+        paintable.forEach occurrenceLoop@ { occurrence ->
             val isActive = occurrence === active || occurrence == active
-            occurrence.elementIds.forEach { elementId ->
-                val element = byId[elementId] ?: return@forEach
+            occurrence.elementIds.forEach elementLoop@ { elementId ->
+                val element = byId[elementId] ?: return@elementLoop
                 val mapped = PhotoTextCoordinateMapper.mapPolygonToFitViewport(
                     corners = element.corners,
                     uprightWidth = layout.uprightWidth,
@@ -44,7 +44,7 @@ fun PhotoTextSearchOverlay(
                     viewportWidth = size.width,
                     viewportHeight = size.height,
                 )
-                if (mapped.size < 3) return@forEach
+                if (mapped.size < 3) return@elementLoop
 
                 val path = Path().apply {
                     moveTo(mapped.first().x, mapped.first().y)
