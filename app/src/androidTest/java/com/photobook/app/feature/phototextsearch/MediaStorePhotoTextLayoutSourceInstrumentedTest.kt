@@ -44,7 +44,7 @@ class MediaStorePhotoTextLayoutSourceInstrumentedTest {
                 ),
             )
             assertTrue(
-                "A readable content URI must not be rejected only because provider metadata is incomplete",
+                "A readable content URI must not be rejected only because provider metadata is incomplete: result=$result",
                 result is PhotoTextLayoutLoadResult.Success,
             )
         } finally {
@@ -90,7 +90,7 @@ class MediaStorePhotoTextLayoutSourceInstrumentedTest {
                 ),
             )
             assertTrue(
-                "A readable MediaStore image must produce an OCR layout",
+                "A readable MediaStore image must produce an OCR layout: result=$valid",
                 valid is PhotoTextLayoutLoadResult.Success,
             )
 
@@ -101,7 +101,7 @@ class MediaStorePhotoTextLayoutSourceInstrumentedTest {
                 ),
             )
             assertTrue(
-                "Search must follow the URI currently displayed even if a persisted record ID is stale",
+                "Search must follow the URI currently displayed even if a persisted record ID is stale: result=$mismatchedRecordId",
                 mismatchedRecordId is PhotoTextLayoutLoadResult.Success,
             )
         } finally {
