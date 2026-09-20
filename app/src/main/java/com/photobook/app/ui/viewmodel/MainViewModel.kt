@@ -164,9 +164,12 @@ class MainViewModel @Inject constructor(
             noteVersion = noteVersion,
         )
     }.flatMapLatest { input ->
-        // Read one immutable library view for this generation. Search v2 also receives the
-        // generation number and fails closed to the legacy snapshot if the index changes mid-run.
-        val records = photoIndex.snapshot()
+        // Bind the published access generation to the immutable library snapshot at capture time.
+        // Reading the published generation first is fail-closed: if a new access-scoped index is
+        // published concurrently, the newer records can temporarily carry the older generation,
+        // but an older record set can never be stamped with a newer access generation.
+        val accessScopedSnapshot = captureAccessScopedPhotoSnapshot(photoIndex, accessGenerationGate)
+        val records = accessScopedSnapshot.records
         val searchResult = runSearch(
             query = input.query,
             records = records,
@@ -202,7 +205,7 @@ class MainViewModel @Inject constructor(
                 ),
             )
         }
-        maybeRefreshMemoryStories(records)
+        maybeRefreshMemoryStories(accessScopedSnapshot)
 
         Pager(
             config = PagingConfig(
@@ -305,11 +308,13 @@ class MainViewModel @Inject constructor(
             )
         }
 
-        if (accessModeChanged) {
+        val modeTransitionGeneration = if (accessModeChanged) {
             // A mode transition is a known visibility-boundary change. Invalidate memory
             // publication immediately. Repeated Limited -> Limited resumes defer generation
             // invalidation until the selected-ID probe proves that membership actually changed.
             invalidateAccessDerivedMemories()
+        } else {
+            null
         }
 
         if (!granted) {
@@ -317,8 +322,10 @@ class MainViewModel @Inject constructor(
             // durable rows so a later regrant can restore user/intelligence fields safely.
             permissionReconcileJob?.cancel()
             permissionReconcileJob = viewModelScope.launch {
+                val publicationGeneration = modeTransitionGeneration ?: accessGenerationGate.current()
                 indexCommitCoordinator.withCommit {
                     photoIndex.setRecords(emptyList())
+                    accessGenerationGate.markPublished(publicationGeneration)
                 }
                 latestSearchResultIds = emptyList()
                 latestVisibleResultIds = emptyList()
@@ -329,7 +336,7 @@ class MainViewModel @Inject constructor(
 
         if (!hasInitializedIndex) {
             hasInitializedIndex = true
-            initializeIndex()
+            initializeIndex(modeTransitionGeneration ?: accessGenerationGate.current())
             return
         }
 
@@ -343,7 +350,10 @@ class MainViewModel @Inject constructor(
                     uiState.update { it.copy(isIndexing = true, searchReady = false) }
                 }
                 try {
-                    syncMediaStoreIncremental(forceFullSync = accessModeChanged)
+                    syncMediaStoreIncremental(
+                        forceFullSync = accessModeChanged,
+                        accessGenerationHint = modeTransitionGeneration,
+                    )
                     // Archive candidate count is visible from the home surface even when the
                     // Archive sheet is closed, so permission reselection must clamp Archive state
                     // on every reconciliation, not only while the sheet is open.
@@ -1016,7 +1026,7 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    private fun initializeIndex() {
+    private fun initializeIndex(accessGeneration: Long) {
         viewModelScope.launch {
             uiState.update {
                 it.copy(
@@ -1048,9 +1058,13 @@ class MainViewModel @Inject constructor(
                         photoIndex.setRecords(visiblePersisted)
                     }
                 }
+                accessGenerationGate.markPublished(accessGeneration)
             }
 
-            syncMediaStoreIncremental(forceFullSync = photoIndex.snapshot().isEmpty())
+            syncMediaStoreIncremental(
+                forceFullSync = photoIndex.snapshot().isEmpty(),
+                accessGenerationHint = accessGeneration,
+            )
 
             uiState.update {
                 it.copy(
@@ -1222,7 +1236,10 @@ class MainViewModel @Inject constructor(
         mediaObserver = observer
     }
 
-    private suspend fun syncMediaStoreIncremental(forceFullSync: Boolean) {
+    private suspend fun syncMediaStoreIncremental(
+        forceFullSync: Boolean,
+        accessGenerationHint: Long? = null,
+    ) {
         withContext(Dispatchers.IO) {
             val existing = photoIndex.snapshot()
             val currentVersion = mediaStoreScanner.currentMediaStoreVersion()
@@ -1239,6 +1256,7 @@ class MainViewModel @Inject constructor(
                     currentGeneration = currentGeneration,
                     lastVersion = lastVersion,
                     lastGeneration = lastGeneration,
+                    accessGenerationHint = accessGenerationHint,
                 )
                 persistMediaStoreSyncState(currentVersion, currentGeneration)
                 return@withContext
@@ -1247,7 +1265,10 @@ class MainViewModel @Inject constructor(
             val shouldFullSync = forceFullSync || existing.isEmpty() ||
                 lastVersion == null || currentVersion != lastVersion
             if (shouldFullSync) {
-                rebuildEntireIndex(existing)
+                rebuildEntireIndex(
+                    existing = existing,
+                    accessGeneration = accessGenerationHint ?: accessGenerationGate.current(),
+                )
                 persistMediaStoreSyncState(currentVersion, currentGeneration)
                 return@withContext
             }
@@ -1271,6 +1292,7 @@ class MainViewModel @Inject constructor(
         currentGeneration: Long?,
         lastVersion: String?,
         lastGeneration: Long?,
+        accessGenerationHint: Long?,
     ) {
         val accessiblePhotoIds = mediaStoreScanner.scanAllIds()
         val publishedPhotoIds = existing.asSequence().map { record -> record.id }.toHashSet()
@@ -1285,25 +1307,39 @@ class MainViewModel @Inject constructor(
         if (!visibilityChanged && !metadataMayHaveChanged) {
             // Common resume path for an unchanged selected-photo grant: one lightweight ID query,
             // no EXIF/geocoding reconstruction, no index publication, and no search loading reset.
+            accessGenerationHint?.let(accessGenerationGate::markPublished)
             return
         }
 
+        val accessGeneration = when {
+            accessGenerationHint != null -> accessGenerationHint
+            visibilityChanged -> {
+                // The mode can remain Limited while Android's selected membership changes. Advance
+                // only after the selected-ID probe proves membership actually changed.
+                invalidateAccessDerivedMemories()
+            }
+            else -> accessGenerationGate.current()
+        }
+
         if (visibilityChanged) {
-            // The mode can remain Limited while Android's selected membership changes. Advance
-            // the access generation only after that change is proven so unchanged resumes do not
-            // invalidate valid memories or trigger redundant curation.
-            invalidateAccessDerivedMemories()
             // Fail closed as soon as the current grant is known. Revoked rows remain durable in
             // Room but disappear from every in-memory/search/memory surface before any slower
-            // metadata reconciliation for newly granted or changed rows.
-            val stillAccessible = existing.filter { record -> record.id in accessiblePhotoIds }
-            if (!publishedRecordsEquivalent(existing, stillAccessible)) {
-                indexCommitCoordinator.withCommit {
-                    withContext(Dispatchers.Default) {
-                        photoIndex.setRecords(stillAccessible)
-                    }
-                }
-            }
+            // metadata reconciliation for newly granted or changed rows. Read the retained rows
+            // from Room inside the commit boundary so a newer favorite/OCR commit cannot be
+            // overwritten by the stale [existing] snapshot.
+            val stillAccessibleIds = existing.asSequence()
+                .map { record -> record.id }
+                .filter { id -> id in accessiblePhotoIds }
+                .toList()
+            commitLimitedAccessReconciliation(
+                indexCommitCoordinator = indexCommitCoordinator,
+                indexPersistence = indexPersistence,
+                photoIndex = photoIndex,
+                accessGenerationGate = accessGenerationGate,
+                accessGeneration = accessGeneration,
+                visibleIds = stillAccessibleIds,
+                rebuiltRecords = emptyList(),
+            )
         }
 
         val allRaw = mediaStoreScanner.scanAll()
@@ -1319,7 +1355,6 @@ class MainViewModel @Inject constructor(
         } else {
             currentlyPublished + retainedRegranted
         }
-        val reusableById = reusableRecords.associateBy { record -> record.id }
         val changedRaw = changedRawPhotosForReconcile(allRaw, reusableRecords)
         val rebuiltById = if (changedRaw.isNotEmpty()) {
             indexBuilder.buildIndexFromRaw(changedRaw)
@@ -1329,26 +1364,25 @@ class MainViewModel @Inject constructor(
             emptyMap()
         }
 
-        indexCommitCoordinator.withCommit {
-            if (rebuiltById.isNotEmpty()) {
-                indexPersistence.upsertAll(rebuiltById.values.toList())
-            }
-            val nextVisible = allRaw.mapNotNull { raw ->
-                rebuiltById[raw.id] ?: reusableById[raw.id]
-            }
-            if (!publishedRecordsEquivalent(photoIndex.snapshot(), nextVisible)) {
-                withContext(Dispatchers.Default) {
-                    photoIndex.setRecords(nextVisible)
-                }
-            }
-        }
+        commitLimitedAccessReconciliation(
+            indexCommitCoordinator = indexCommitCoordinator,
+            indexPersistence = indexPersistence,
+            photoIndex = photoIndex,
+            accessGenerationGate = accessGenerationGate,
+            accessGeneration = accessGeneration,
+            visibleIds = allRaw.map { raw -> raw.id },
+            rebuiltRecords = rebuiltById.values.toList(),
+        )
 
         if (rebuiltById.isNotEmpty()) {
             TaggingWorker.enqueueLibraryMaintenance(context)
         }
     }
 
-    private suspend fun rebuildEntireIndex(existing: List<PhotoRecord>) {
+    private suspend fun rebuildEntireIndex(
+        existing: List<PhotoRecord>,
+        accessGeneration: Long,
+    ) {
         val rebuilt = indexBuilder.buildIndex { processed, total ->
             if (total <= 0) return@buildIndex
             uiState.update {
@@ -1370,6 +1404,7 @@ class MainViewModel @Inject constructor(
                 indexPersistence.load()
             }
             photoIndex.setRecords(committed)
+            accessGenerationGate.markPublished(accessGeneration)
         }
     }
 
@@ -1524,28 +1559,27 @@ class MainViewModel @Inject constructor(
             currentIndex >= windowSize - VIEWER_WINDOW_RECENTER_THRESHOLD - 1
     }
 
-    private fun maybeRefreshMemoryStories(records: List<PhotoRecord>) {
-        val identity = System.identityHashCode(records)
-        val accessGeneration = accessGenerationGate.current()
+    private fun maybeRefreshMemoryStories(snapshot: AccessScopedPhotoSnapshot) {
+        val identity = System.identityHashCode(snapshot.records)
         if (
             identity == lastMemoryRecordsIdentity &&
-            accessGeneration == lastMemoryAccessGeneration
+            snapshot.accessGeneration == lastMemoryAccessGeneration
         ) {
             return
         }
         lastMemoryRecordsIdentity = identity
-        lastMemoryAccessGeneration = accessGeneration
+        lastMemoryAccessGeneration = snapshot.accessGeneration
         memoryRefreshRequests.trySend(
             MemoryRefreshRequest(
-                records = records,
-                accessGeneration = accessGeneration,
+                records = snapshot.records,
+                accessGeneration = snapshot.accessGeneration,
             ),
         )
     }
 
-    private fun invalidateAccessDerivedMemories() {
-        synchronized(memoryPublicationLock) {
-            accessGenerationGate.advance()
+    private fun invalidateAccessDerivedMemories(): Long {
+        return synchronized(memoryPublicationLock) {
+            val nextGeneration = accessGenerationGate.advance()
             lastMemoryRecordsIdentity = 0
             lastMemoryAccessGeneration = -1L
             uiState.update { state ->
@@ -1558,6 +1592,7 @@ class MainViewModel @Inject constructor(
             // the same lock used by memory publication so an obsolete worker cannot race this
             // reset and republish retained-but-ungranted story IDs.
             OnThisDayWidgetProvider.cacheStory(context, null)
+            nextGeneration
         }
     }
 
@@ -1807,11 +1842,80 @@ class MainViewModel @Inject constructor(
 internal class AccessGenerationGate {
     private val generation = AtomicLong(0L)
 
+    @Volatile
+    private var publishedGeneration: Long = 0L
+
     fun current(): Long = generation.get()
+
+    fun published(): Long = publishedGeneration
 
     fun advance(): Long = generation.incrementAndGet()
 
     fun isCurrent(candidate: Long): Boolean = generation.get() == candidate
+
+    fun markPublished(candidate: Long): Boolean {
+        if (!isCurrent(candidate)) return false
+        // Always stamp the generation that authorized this publication; never read a newer
+        // generation here, because a newer access change may have happened while setRecords()
+        // was suspended.
+        publishedGeneration = candidate
+        return isCurrent(candidate)
+    }
+}
+
+internal data class AccessScopedPhotoSnapshot(
+    val records: List<PhotoRecord>,
+    val accessGeneration: Long,
+)
+
+internal fun captureAccessScopedPhotoSnapshot(
+    photoIndex: PhotoIndex,
+    accessGenerationGate: AccessGenerationGate,
+): AccessScopedPhotoSnapshot {
+    // Read the publication stamp before the snapshot. If publication races this capture, a newer
+    // record set can inherit an older stamp and be conservatively rejected, but stale records can
+    // never inherit a newer access stamp.
+    val accessGeneration = accessGenerationGate.published()
+    return AccessScopedPhotoSnapshot(
+        records = photoIndex.snapshot(),
+        accessGeneration = accessGeneration,
+    )
+}
+
+internal suspend fun commitLimitedAccessReconciliation(
+    indexCommitCoordinator: IndexCommitCoordinator,
+    indexPersistence: IndexPersistence,
+    photoIndex: PhotoIndex,
+    accessGenerationGate: AccessGenerationGate,
+    accessGeneration: Long,
+    visibleIds: List<Long>,
+    rebuiltRecords: List<PhotoRecord>,
+): List<PhotoRecord> {
+    return indexCommitCoordinator.withCommit {
+        if (!accessGenerationGate.isCurrent(accessGeneration)) {
+            return@withCommit photoIndex.snapshot()
+        }
+
+        if (rebuiltRecords.isNotEmpty()) {
+            indexPersistence.upsertAll(rebuiltRecords)
+        }
+
+        // The authoritative publication source is Room *inside* the same commit boundary. This
+        // preserves a favorite/OCR/ML commit that may have landed after reconciliation captured
+        // its initial in-memory snapshot.
+        val committedVisible = indexPersistence.getByIdsOrdered(visibleIds)
+        if (!accessGenerationGate.isCurrent(accessGeneration)) {
+            return@withCommit photoIndex.snapshot()
+        }
+
+        if (!publishedRecordsEquivalent(photoIndex.snapshot(), committedVisible)) {
+            withContext(Dispatchers.Default) {
+                photoIndex.setRecords(committedVisible)
+            }
+        }
+        accessGenerationGate.markPublished(accessGeneration)
+        committedVisible
+    }
 }
 
 internal fun visiblePersistedRecordsForAccess(
