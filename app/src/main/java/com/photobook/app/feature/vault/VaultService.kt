@@ -5,7 +5,6 @@ import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Matrix
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -17,6 +16,7 @@ import androidx.security.crypto.MasterKey
 import com.photobook.app.data.db.VaultDao
 import com.photobook.app.data.db.VaultEntity
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.util.BitmapOrientation
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -760,43 +760,13 @@ class VaultService @Inject constructor(
                 ExifInterface.ORIENTATION_UNDEFINED,
             )
         }
-        val upright = orientBitmap(decoded, orientation)
+        val upright = BitmapOrientation.upright(decoded, orientation)
         if (upright == null) {
             decoded.recycle()
             return null
         }
         if (upright !== decoded) decoded.recycle()
         return upright
-    }
-
-    private fun orientBitmap(source: Bitmap, orientation: Int): Bitmap? {
-        if (
-            orientation == ExifInterface.ORIENTATION_NORMAL ||
-            orientation == ExifInterface.ORIENTATION_UNDEFINED
-        ) {
-            return source
-        }
-        val matrix = Matrix().apply {
-            when (orientation) {
-                ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> preScale(-1f, 1f)
-                ExifInterface.ORIENTATION_ROTATE_180 -> postRotate(180f)
-                ExifInterface.ORIENTATION_FLIP_VERTICAL -> preScale(1f, -1f)
-                ExifInterface.ORIENTATION_TRANSPOSE -> {
-                    preScale(-1f, 1f)
-                    postRotate(270f)
-                }
-                ExifInterface.ORIENTATION_ROTATE_90 -> postRotate(90f)
-                ExifInterface.ORIENTATION_TRANSVERSE -> {
-                    preScale(-1f, 1f)
-                    postRotate(90f)
-                }
-                ExifInterface.ORIENTATION_ROTATE_270 -> postRotate(270f)
-                else -> return null
-            }
-        }
-        return runCatching {
-            Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
-        }.getOrNull()
     }
 
     private fun isLowRamDevice(): Boolean {
