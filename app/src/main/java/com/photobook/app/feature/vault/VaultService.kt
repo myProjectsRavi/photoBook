@@ -1,5 +1,6 @@
 package com.photobook.app.feature.vault
 
+import android.app.ActivityManager
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
@@ -8,12 +9,14 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import androidx.exifinterface.media.ExifInterface
 import androidx.security.crypto.EncryptedFile
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.photobook.app.data.db.VaultDao
 import com.photobook.app.data.db.VaultEntity
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.util.BitmapOrientation
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -223,6 +226,37 @@ class VaultService @Inject constructor(
                 trimPreviewCache()
             }
             uri
+        }
+    }
+
+    /**
+     * Executes [block] against a bounded, upright bitmap decoded directly from authenticated Vault
+     * ciphertext. No plaintext file or preview is used as the search source and the bitmap never
+     * escapes this call.
+     */
+    suspend fun <T> withOwnedSearchBitmap(
+        itemId: String,
+        session: VaultCryptoSession,
+        block: suspend (Bitmap) -> T,
+    ): T? = withContext(Dispatchers.IO) {
+        migrateLegacyItemsIfNeeded()
+        migrateLegacyCiphertextIfNeeded(session)
+        val entity = vaultDao.getVaultItemById(itemId) ?: return@withContext null
+        val bitmap = decodeUprightVaultBitmap(
+            entity = entity,
+            session = session,
+            maxEdge = if (isLowRamDevice()) VAULT_SEARCH_LOW_RAM_MAX_EDGE_PX else VAULT_SEARCH_MAX_EDGE_PX,
+            maxPixels = if (isLowRamDevice()) VAULT_SEARCH_LOW_RAM_MAX_PIXELS else VAULT_SEARCH_MAX_PIXELS,
+            config = Bitmap.Config.ARGB_8888,
+        ) ?: return@withContext null
+
+        try {
+            currentCoroutineContext().ensureActive()
+            block(bitmap)
+        } finally {
+            if (!bitmap.isRecycled) {
+                bitmap.recycle()
+            }
         }
     }
 
@@ -494,13 +528,13 @@ class VaultService @Inject constructor(
                 return@runCatching null
             }
 
-            val options = BitmapFactory.Options().apply {
-                inPreferredConfig = Bitmap.Config.RGB_565
-                inSampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, PREVIEW_MAX_EDGE_PX)
-            }
-            val bitmap = openVaultInput(entity, session).use { input ->
-                BitmapFactory.decodeStream(input, null, options)
-            } ?: return@runCatching null
+            val bitmap = decodeUprightVaultBitmap(
+                entity = entity,
+                session = session,
+                maxEdge = PREVIEW_MAX_EDGE_PX,
+                maxPixels = PREVIEW_MAX_PIXELS,
+                config = Bitmap.Config.RGB_565,
+            ) ?: return@runCatching null
             if (previewCacheGeneration.get() != expectedPreviewGeneration) {
                 bitmap.recycle()
                 return@runCatching null
@@ -690,16 +724,72 @@ class VaultService @Inject constructor(
         }
     }
 
-    private fun calculateInSampleSize(width: Int, height: Int, maxEdge: Int): Int {
-        var sampleSize = 1
-        var sampledWidth = width
-        var sampledHeight = height
-        while (sampledWidth / 2 >= maxEdge || sampledHeight / 2 >= maxEdge) {
-            sampleSize *= 2
-            sampledWidth /= 2
-            sampledHeight /= 2
+    private fun decodeUprightVaultBitmap(
+        entity: VaultEntity,
+        session: VaultCryptoSession,
+        maxEdge: Int,
+        maxPixels: Int,
+        config: Bitmap.Config,
+    ): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        openVaultInput(entity, session).use { input ->
+            BitmapFactory.decodeStream(input, null, bounds)
         }
-        return sampleSize.coerceAtLeast(1)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+        val options = BitmapFactory.Options().apply {
+            inPreferredConfig = config
+            inSampleSize = calculateInSampleSize(
+                width = bounds.outWidth,
+                height = bounds.outHeight,
+                maxEdge = maxEdge,
+                maxPixels = maxPixels,
+            )
+        }
+        val decoded = openVaultInput(entity, session).use { input ->
+            BitmapFactory.decodeStream(input, null, options)
+        } ?: return null
+        if (decoded.isRecycled || decoded.width <= 0 || decoded.height <= 0) {
+            if (!decoded.isRecycled) decoded.recycle()
+            return null
+        }
+
+        val orientation = openVaultInput(entity, session).use { input ->
+            ExifInterface(input).getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_UNDEFINED,
+            )
+        }
+        val upright = BitmapOrientation.upright(decoded, orientation)
+        if (upright == null) {
+            decoded.recycle()
+            return null
+        }
+        if (upright !== decoded) decoded.recycle()
+        return upright
+    }
+
+    private fun isLowRamDevice(): Boolean {
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        return activityManager?.isLowRamDevice == true
+    }
+
+    private fun calculateInSampleSize(
+        width: Int,
+        height: Int,
+        maxEdge: Int,
+        maxPixels: Int,
+    ): Int {
+        var sampleSize = 1
+        while (true) {
+            val sampledWidth = (width / sampleSize).coerceAtLeast(1)
+            val sampledHeight = (height / sampleSize).coerceAtLeast(1)
+            val withinEdge = sampledWidth <= maxEdge && sampledHeight <= maxEdge
+            val withinPixels = sampledWidth.toLong() * sampledHeight.toLong() <= maxPixels.toLong()
+            if (withinEdge && withinPixels) return sampleSize
+            if (sampleSize >= MAX_BITMAP_SAMPLE_SIZE) return sampleSize
+            sampleSize *= 2
+        }
     }
 
     private suspend fun migrateLegacyItemsIfNeeded() {
@@ -779,6 +869,12 @@ class VaultService @Inject constructor(
         private const val VAULT_PREVIEW_DIR = "vault_preview"
         private const val INSERT_CONFLICT = -1L
         private const val PREVIEW_MAX_EDGE_PX = 960
+        private const val PREVIEW_MAX_PIXELS = 1_000_000
+        private const val VAULT_SEARCH_MAX_EDGE_PX = 1600
+        private const val VAULT_SEARCH_LOW_RAM_MAX_EDGE_PX = 1280
+        private const val VAULT_SEARCH_MAX_PIXELS = 2_000_000
+        private const val VAULT_SEARCH_LOW_RAM_MAX_PIXELS = 1_200_000
+        private const val MAX_BITMAP_SAMPLE_SIZE = 128
         private const val PREVIEW_JPEG_QUALITY = 82
         private const val MAX_PREVIEW_CACHE_FILES = 48
         private const val DB_QUERY_BATCH_SIZE = 200

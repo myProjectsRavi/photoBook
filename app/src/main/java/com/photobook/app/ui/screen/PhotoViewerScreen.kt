@@ -7,6 +7,7 @@ import android.os.Build
 import android.net.Uri
 import android.provider.MediaStore
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
@@ -52,6 +53,7 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AssistChip
@@ -73,6 +75,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -111,7 +114,14 @@ import com.photobook.app.feature.copytext.ExtractedTextResult
 import com.photobook.app.feature.copytext.OnDevicePhotoTextExtractor
 import com.photobook.app.feature.copytext.PhotoTextCopyCoordinator
 import com.photobook.app.feature.copytext.PreviewSeed
+import com.photobook.app.feature.phototextsearch.PhotoTextCoordinateMapper
+import com.photobook.app.feature.phototextsearch.PhotoTextLayout
+import com.photobook.app.feature.phototextsearch.PhotoTextSearchController
+import com.photobook.app.feature.phototextsearch.SearchOccurrence
+import com.photobook.app.feature.phototextsearch.mediaStorePhotoTextLayoutSource
 import com.photobook.app.ml.BundledOnDeviceIntelligence
+import com.photobook.app.ui.component.PhotoTextSearchControls
+import com.photobook.app.ui.component.PhotoTextSearchOverlay
 import com.photobook.app.feature.duplicates.BestShotRecommendation
 import com.photobook.app.feature.duplicates.BurstBestShotPicker
 import com.photobook.app.feature.editor.CropPreset
@@ -145,6 +155,7 @@ fun PhotoViewerScreen(
     onMoveToVault: (PhotoRecord) -> Unit,
     onShareAsPdf: (PhotoRecord) -> Unit,
     reelsEnabled: Boolean = false,
+    initialSearchRequested: Boolean = false,
 ) {
     if (photos.isEmpty()) return
 
@@ -152,6 +163,18 @@ fun PhotoViewerScreen(
     val clipboardManager = LocalClipboardManager.current
     val haptics = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
+    val photoTextLayoutSource = remember(context.applicationContext) {
+        mediaStorePhotoTextLayoutSource(context.applicationContext)
+    }
+    val photoTextSearchController = remember(photoTextLayoutSource, coroutineScope) {
+        PhotoTextSearchController(
+            source = photoTextLayoutSource,
+            scope = coroutineScope,
+        )
+    }
+    val photoTextSearchState by photoTextSearchController.state.collectAsState()
+    var searchRevealRequest by remember { mutableStateOf(0L) }
+    var initialSearchConsumed by remember { mutableStateOf(false) }
     val safeStart = startIndex.coerceIn(0, photos.lastIndex)
     val pagerState = rememberPagerState(initialPage = safeStart, pageCount = { photos.size })
     val activePhoto = photos.getOrNull(pagerState.currentPage)
@@ -427,6 +450,12 @@ fun PhotoViewerScreen(
 
     LaunchedEffect(pagerState.currentPage) {
         val active = photos.getOrNull(pagerState.currentPage) ?: return@LaunchedEffect
+        photoTextSearchController.activate(active.id, active.uriString)
+        if (initialSearchRequested && !initialSearchConsumed) {
+            initialSearchConsumed = true
+            showControls = true
+            photoTextSearchController.open()
+        }
         onPageChanged(active.id)
         val activeId = active.id
         bestShotRecommendation = withContext(Dispatchers.Default) {
@@ -450,13 +479,20 @@ fun PhotoViewerScreen(
     DisposableEffect(Unit) {
         onDispose {
             copyTextCoordinator.cancelActiveRequest()
+            photoTextSearchController.dispose()
         }
+    }
+
+    BackHandler(enabled = photoTextSearchState.isOpen) {
+        photoTextSearchController.close()
+        showControls = true
     }
 
     Dialog(
         onDismissRequest = {
             dismissCopySheet()
             dismissExifSheet()
+            photoTextSearchController.close()
             onDismiss()
         },
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -467,7 +503,9 @@ fun PhotoViewerScreen(
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 // ===== Main Pager (fills entire screen) =====
-                val pagerScrollEnabled = currentPageZoom <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON
+                val pagerScrollEnabled =
+                    currentPageZoom <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON &&
+                        !photoTextSearchState.isOpen
                 if (reelsEnabled) {
                     // Instagram Reels-style vertical browsing: swipe up = next photo.
                     VerticalPager(
@@ -481,10 +519,28 @@ fun PhotoViewerScreen(
                                 photo = photo,
                                 isActive = page == pagerState.currentPage,
                                 reelsEnabled = true,
+                                searchLayout = if (page == pagerState.currentPage) {
+                                    photoTextSearchState.layout
+                                } else {
+                                    null
+                                },
+                                searchMatches = if (page == pagerState.currentPage) {
+                                    photoTextSearchState.matches
+                                } else {
+                                    emptyList()
+                                },
+                                searchActiveMatchIndex = photoTextSearchState.activeMatchIndex,
+                                searchOpen = photoTextSearchState.isOpen && page == pagerState.currentPage,
+                                searchRevealRequest = searchRevealRequest,
                                 onZoomChanged = { currentPageZoom = it },
-                                onSingleTap = { showControls = !showControls },
+                                onSingleTap = {
+                                    if (!photoTextSearchState.isOpen) {
+                                        showControls = !showControls
+                                    }
+                                },
                                 onDismiss = {
                                     dismissCopySheet()
+                                    photoTextSearchController.close()
                                     onDismiss()
                                 },
                             )
@@ -502,10 +558,28 @@ fun PhotoViewerScreen(
                                 photo = photo,
                                 isActive = page == pagerState.currentPage,
                                 reelsEnabled = false,
+                                searchLayout = if (page == pagerState.currentPage) {
+                                    photoTextSearchState.layout
+                                } else {
+                                    null
+                                },
+                                searchMatches = if (page == pagerState.currentPage) {
+                                    photoTextSearchState.matches
+                                } else {
+                                    emptyList()
+                                },
+                                searchActiveMatchIndex = photoTextSearchState.activeMatchIndex,
+                                searchOpen = photoTextSearchState.isOpen && page == pagerState.currentPage,
+                                searchRevealRequest = searchRevealRequest,
                                 onZoomChanged = { currentPageZoom = it },
-                                onSingleTap = { showControls = !showControls },
+                                onSingleTap = {
+                                    if (!photoTextSearchState.isOpen) {
+                                        showControls = !showControls
+                                    }
+                                },
                                 onDismiss = {
                                     dismissCopySheet()
+                                    photoTextSearchController.close()
                                     onDismiss()
                                 },
                             )
@@ -515,7 +589,7 @@ fun PhotoViewerScreen(
 
                 // ===== Controls overlay (tap to show/hide) =====
                 AnimatedVisibility(
-                    visible = showControls,
+                    visible = showControls || photoTextSearchState.isOpen,
                     enter = fadeIn(),
                     exit = fadeOut(),
                     modifier = Modifier.fillMaxSize(),
@@ -565,6 +639,25 @@ fun PhotoViewerScreen(
                                     shape = RoundedCornerShape(28.dp),
                                 ) {
                                     IconButton(
+                                        modifier = Modifier.size(48.dp),
+                                        onClick = {
+                                            showControls = true
+                                            photoTextSearchController.open()
+                                        },
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Search,
+                                            contentDescription = stringResource(R.string.viewer_search_text),
+                                            tint = Color.White,
+                                            modifier = Modifier.size(24.dp),
+                                        )
+                                    }
+                                }
+                                Surface(
+                                    color = Color(0x44FFFFFF),
+                                    shape = RoundedCornerShape(28.dp),
+                                ) {
+                                    IconButton(
                                         modifier = Modifier.size(42.dp),
                                         onClick = { shareActivePhoto() },
                                     ) {
@@ -576,6 +669,29 @@ fun PhotoViewerScreen(
                                         )
                                     }
                                 }
+                            }
+
+                            if (photoTextSearchState.isOpen) {
+                                PhotoTextSearchControls(
+                                    state = photoTextSearchState,
+                                    onQueryChange = photoTextSearchController::setQuery,
+                                    onPrevious = {
+                                        photoTextSearchController.previousMatch()
+                                        searchRevealRequest += 1L
+                                    },
+                                    onNext = {
+                                        photoTextSearchController.nextMatch()
+                                        searchRevealRequest += 1L
+                                    },
+                                    onShowMatch = {
+                                        searchRevealRequest += 1L
+                                    },
+                                    onRetry = photoTextSearchController::retry,
+                                    onClose = {
+                                        photoTextSearchController.close()
+                                        showControls = true
+                                    },
+                                )
                             }
                         }
 
@@ -1620,6 +1736,11 @@ private fun PhotoPage(
     photo: PhotoRecord,
     isActive: Boolean,
     reelsEnabled: Boolean,
+    searchLayout: PhotoTextLayout?,
+    searchMatches: List<SearchOccurrence>,
+    searchActiveMatchIndex: Int,
+    searchOpen: Boolean,
+    searchRevealRequest: Long,
     onZoomChanged: (Float) -> Unit,
     onSingleTap: () -> Unit,
     onDismiss: () -> Unit,
@@ -1667,6 +1788,51 @@ private fun PhotoPage(
         val y = target.y.coerceIn(-maxY, maxY)
         // Guard against any NaN/Infinity ever reaching graphicsLayer.
         return Offset(if (x.isFinite()) x else 0f, if (y.isFinite()) y else 0f)
+    }
+
+    LaunchedEffect(
+        searchRevealRequest,
+        searchActiveMatchIndex,
+        searchLayout,
+        containerSize,
+        isActive,
+    ) {
+        if (
+            searchRevealRequest <= 0L ||
+            !isActive ||
+            containerSize.width <= 0 ||
+            containerSize.height <= 0
+        ) {
+            return@LaunchedEffect
+        }
+        val layout = searchLayout ?: return@LaunchedEffect
+        val occurrence = searchMatches.getOrNull(searchActiveMatchIndex) ?: return@LaunchedEffect
+        val elementsById = layout.elements.associateBy { element -> element.id }
+        val points = occurrence.elementIds
+            .flatMap { id -> elementsById[id]?.corners.orEmpty() }
+            .map { point ->
+                PhotoTextCoordinateMapper.mapToFitViewport(
+                    point = point,
+                    uprightWidth = layout.uprightWidth,
+                    uprightHeight = layout.uprightHeight,
+                    viewportWidth = containerSize.width.toFloat(),
+                    viewportHeight = containerSize.height.toFloat(),
+                )
+            }
+        if (points.isNotEmpty() && scale > MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) {
+            val target = Offset(
+                x = points.sumOf { it.x.toDouble() }.div(points.size).toFloat(),
+                y = points.sumOf { it.y.toDouble() }.div(points.size).toFloat(),
+            )
+            val center = containerSize.centerOffset()
+            offset = clampOffset(
+                Offset(
+                    x = (center.x - target.x) * scale,
+                    y = (center.y - target.y) * scale,
+                ),
+                scale,
+            )
+        }
     }
 
     val bgAlpha = if (isSwipingToDismiss && containerSize.height > 0) {
@@ -1732,8 +1898,8 @@ private fun PhotoPage(
                     )
                 }
                 // Vertical Swipe-to-dismiss gesture (only active when not zoomed in and reels mode is off)
-                .pointerInput(photo.id, isActive, reelsEnabled) {
-                    if (!isActive || reelsEnabled) return@pointerInput
+                .pointerInput(photo.id, isActive, reelsEnabled, searchOpen) {
+                    if (!isActive || reelsEnabled || searchOpen) return@pointerInput
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
                         animationJob.value?.cancel()
@@ -1843,6 +2009,22 @@ private fun PhotoPage(
                     translationY = offset.y + swipeDragY
                 },
         )
+
+        if (searchOpen && searchLayout != null && searchMatches.isNotEmpty()) {
+            PhotoTextSearchOverlay(
+                layout = searchLayout,
+                matches = searchMatches,
+                activeMatchIndex = searchActiveMatchIndex,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = scale * dragScale
+                        scaleY = scale * dragScale
+                        translationX = offset.x
+                        translationY = offset.y + swipeDragY
+                    },
+            )
+        }
     }
 }
 

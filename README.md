@@ -18,6 +18,14 @@ PhotoBook is a private, offline-first Android photo manager for fast local searc
 - Local ranking improves result order without changing search eligibility. OCR phrase matches, filename/folder matches, ML tags, location, favorites, token coverage, and recency all contribute to ordering.
 - Android 14 limited photo access is treated as a first-class mode. The UI shows when only selected media is accessible and offers a way to add more photos.
 
+### Search Inside a Photo
+
+- The full-screen photo viewer, Reel viewer, Memory route, and authenticated Vault preview can run an explicit one-photo OCR pass and search recognized English text or numbers without leaving the device.
+- Search is literal and case-insensitive for ASCII letters, preserves digits, leading zeros, punctuation, and diacritics, supports phrases within an OCR block, and highlights every recognized occurrence with yellow polygons over the source image.
+- OCR geometry is memory-only, bounded, tied to the current photo/request/access state, and never persisted to Room, preferences, logs, SavedState, or the original media.
+- Opening the feature is explicit. Typing reuses the already-recognized layout and does not rerun OCR. Reels paging pauses while in-photo search is open.
+- Vault search reads a bounded upright bitmap directly from authenticated encrypted input and never creates a plaintext search file.
+
 ### Smart Albums
 
 - Smart Albums are virtual, instant filters built from existing local metadata. They do not create duplicate files, new media folders, or a new database table.
@@ -74,7 +82,7 @@ PhotoBook must stay lightweight. The current Gradle gates are:
 
 - `verifyApkSize`: every generated APK must be <= 30 MB.
 - `verifyReleaseBundleSize`: release AAB output must be <= 20 MB.
-- `compileSdk` and `targetSdk` are 36 for the current Play requirement. Source-controlled release truth is `versionCode = 23`, `versionName = "2.0.16"`; Play Console consumption is an external preflight, not a repository fact.
+- `compileSdk` and `targetSdk` are 36 for the current Play requirement. Source-controlled release truth is `versionCode = 24`, `versionName = "2.0.17"`; Play Console consumption is an external preflight, not a repository fact.
 - Release builds use R8 with the optimized Android defaults and resource shrinking (`isMinifyEnabled = true`, `isShrinkResources = true`) to reduce memory, code, and resource overhead without changing the debug build.
 
 CI runs the same verification command used locally:
