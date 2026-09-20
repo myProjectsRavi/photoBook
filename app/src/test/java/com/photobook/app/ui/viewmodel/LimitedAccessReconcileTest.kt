@@ -1,10 +1,12 @@
 package com.photobook.app.ui.viewmodel
 
 import com.google.common.truth.Truth.assertThat
+import com.photobook.app.data.index.PhotoIndex
 import com.photobook.app.data.model.IntelligenceStatus
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.data.model.RawPhotoData
 import com.photobook.app.util.PermissionUtils
+import kotlinx.coroutines.runBlocking
 import org.junit.Test
 
 class LimitedAccessReconcileTest {
@@ -59,6 +61,28 @@ class LimitedAccessReconcileTest {
         )
 
         assertThat(result.map { it.id }).containsExactly(2L, 3L).inOrder()
+    }
+
+    @Test
+    fun snapshotCapturedBeforeRevocation_keepsOriginalAccessGenerationWhenEnqueuedLater() = runBlocking {
+        val gate = AccessGenerationGate()
+        val index = PhotoIndex()
+        val visibleBeforeRevocation = photo(11L)
+        index.setRecords(listOf(visibleBeforeRevocation))
+        assertThat(gate.markPublished(gate.current())).isTrue()
+
+        // Production captures the access stamp together with the immutable PhotoIndex snapshot.
+        val capturedBeforeRevocation = captureAccessScopedPhotoSnapshot(index, gate)
+
+        // Access changes after snapshot capture but before that snapshot is enqueued for curation.
+        val revocationGeneration = gate.advance()
+        index.setRecords(emptyList())
+        assertThat(gate.markPublished(revocationGeneration)).isTrue()
+
+        assertThat(capturedBeforeRevocation.records.map { it.id })
+            .containsExactly(visibleBeforeRevocation.id)
+        assertThat(capturedBeforeRevocation.accessGeneration).isNotEqualTo(revocationGeneration)
+        assertThat(gate.isCurrent(capturedBeforeRevocation.accessGeneration)).isFalse()
     }
 
     @Test
