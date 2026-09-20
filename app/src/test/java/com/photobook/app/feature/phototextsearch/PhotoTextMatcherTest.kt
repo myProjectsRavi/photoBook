@@ -78,7 +78,7 @@ class PhotoTextMatcherTest {
     @Test
     fun repeatedOccurrences_areNonOverlappingAndDeterministic() {
         runBlocking {
-            val blocks = matcher.buildBlocks(layout(element(1, 0, 0, "PAN and company pan")))
+            val blocks = matcher.buildBlocks(layout(element(1, 0, 0, "PAN receipt pan")))
 
             val hits = matcher.find(blocks, matcher.normalizeQuery("pan"))
 
