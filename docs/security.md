@@ -7,7 +7,8 @@ PhotoBook is local-first by construction. The app has no app-level `INTERNET` pe
 - The bundled ML Kit image-labeling model, compact image heuristics, Android's local face detector, and LiteRT 1.4.1 run in-process. LiteRT's bundled native libraries are 16 KB ELF-aligned; the Food Archive gate requires semantic food plus prepared/served/packaged context and applies a live-subject veto; color or a generic legacy tag cannot classify a person, animal, bird, pet, or wildlife photo as Food.
 - Room migration 11-to-12 resets only the derived ML/Food decision state for reevaluation while retaining user-visible tags and OCR, avoiding stale or overly broad archive classifications after upgrade.
 - QR transfer uses ZXing's QR-only decoder and validates transfer ID, frame count, chunk length, byte size, SHA-256, MIME type, filename, duplicate/late frames, four-session limit, and two-minute session lifetime.
-- Latin OCR currently has a deterministic capability-unavailable result because the available bundled model exceeds the hard size gates. It never contacts a service or marks a photo processed when unavailable.
+- Latin OCR is bundled and verified offline. In-photo search reuses that application-scoped OCR boundary, keeps geometry/query state in memory only, serializes native OCR admission, and rejects stale request/photo/access results. It never contacts a service or downloads a model.
+- Authenticated Vault in-photo search decodes a bounded upright bitmap directly from encrypted input in memory. It does not use a persistent plaintext export, and its search controller/query/layout are destroyed when the Vault preview or Vault session closes.
 
 ## Media and destructive actions
 
