@@ -324,6 +324,9 @@ class MainViewModel @Inject constructor(
             permissionReconcileJob = viewModelScope.launch {
                 val publicationGeneration = modeTransitionGeneration ?: accessGenerationGate.current()
                 indexCommitCoordinator.withCommit {
+                    if (!accessGenerationGate.isCurrent(publicationGeneration)) {
+                        return@withCommit
+                    }
                     photoIndex.setRecords(emptyList())
                     accessGenerationGate.markPublished(publicationGeneration)
                 }
@@ -1051,6 +1054,9 @@ class MainViewModel @Inject constructor(
                     accessMode = accessMode,
                     accessiblePhotoIds = accessiblePhotoIds,
                 )
+                if (!accessGenerationGate.isCurrent(accessGeneration)) {
+                    return@withCommit
+                }
                 if (visiblePersisted.isNotEmpty()) {
                     // Never publish retained-but-currently-ungranted Room rows during cold start.
                     // Full-index publication sorts the visible library and rebuilds lookup state.
@@ -1241,6 +1247,7 @@ class MainViewModel @Inject constructor(
         accessGenerationHint: Long? = null,
     ) {
         withContext(Dispatchers.IO) {
+            val syncAccessGeneration = accessGenerationHint ?: accessGenerationGate.current()
             val existing = photoIndex.snapshot()
             val currentVersion = mediaStoreScanner.currentMediaStoreVersion()
             val currentGeneration = mediaStoreScanner.currentGenerationOrNull()
@@ -1267,7 +1274,7 @@ class MainViewModel @Inject constructor(
             if (shouldFullSync) {
                 rebuildEntireIndex(
                     existing = existing,
-                    accessGeneration = accessGenerationHint ?: accessGenerationGate.current(),
+                    accessGeneration = syncAccessGeneration,
                 )
                 persistMediaStoreSyncState(currentVersion, currentGeneration)
                 return@withContext
@@ -1275,13 +1282,13 @@ class MainViewModel @Inject constructor(
 
             if (lastGeneration != null && currentGeneration != null) {
                 if (currentGeneration > lastGeneration) {
-                    processGenerationDelta(existing, lastGeneration)
+                    processGenerationDelta(existing, lastGeneration, syncAccessGeneration)
                 }
                 persistMediaStoreSyncState(currentVersion, currentGeneration)
                 return@withContext
             }
 
-            processLegacyDelta(existing)
+            processLegacyDelta(existing, syncAccessGeneration)
             persistMediaStoreSyncState(currentVersion, currentGeneration)
         }
     }
@@ -1391,6 +1398,9 @@ class MainViewModel @Inject constructor(
         }.preservingIntelligence(existing)
 
         indexCommitCoordinator.withCommit {
+            if (!accessGenerationGate.isCurrent(accessGeneration)) {
+                return@withCommit
+            }
             val limitedAccess = uiState.value.photoAccessMode == PermissionUtils.PhotoAccessMode.Limited
             val committed = if (limitedAccess) {
                 // A limited grant is a visibility boundary, not deletion. Keep previously granted
@@ -1411,23 +1421,28 @@ class MainViewModel @Inject constructor(
     private suspend fun processGenerationDelta(
         existing: List<PhotoRecord>,
         lastGeneration: Long,
+        accessGeneration: Long,
     ) {
         val changedRaw = mediaStoreScanner.scanChangedSince(lastGeneration)
         val allMediaIds = mediaStoreScanner.scanAllIds()
-        applyDelta(existing, changedRaw, allMediaIds)
+        applyDelta(existing, changedRaw, allMediaIds, accessGeneration)
     }
 
-    private suspend fun processLegacyDelta(existing: List<PhotoRecord>) {
+    private suspend fun processLegacyDelta(
+        existing: List<PhotoRecord>,
+        accessGeneration: Long,
+    ) {
         val allRaw = mediaStoreScanner.scanAll()
         val changedRaw = changedRawPhotosForLegacySync(allRaw, existing)
         val allMediaIds = allRaw.asSequence().map { raw -> raw.id }.toSet()
-        applyDelta(existing, changedRaw, allMediaIds)
+        applyDelta(existing, changedRaw, allMediaIds, accessGeneration)
     }
 
     private suspend fun applyDelta(
         existing: List<PhotoRecord>,
         changedRaw: List<RawPhotoData>,
         allMediaIds: Set<Long>,
+        accessGeneration: Long,
     ) {
         val existingById = existing.associateBy { record -> record.id }
         val removedIds = existingById.keys - allMediaIds
@@ -1443,6 +1458,9 @@ class MainViewModel @Inject constructor(
         }
 
         indexCommitCoordinator.withCommit {
+            if (!accessGenerationGate.isCurrent(accessGeneration)) {
+                return@withCommit
+            }
             if (changedRebuilt.isNotEmpty()) {
                 indexPersistence.upsertAll(changedRebuilt)
             }
@@ -1450,7 +1468,11 @@ class MainViewModel @Inject constructor(
                 indexPersistence.removeByIds(removedIds)
             }
             val committed = indexPersistence.load()
+            if (!accessGenerationGate.isCurrent(accessGeneration)) {
+                return@withCommit
+            }
             photoIndex.setRecords(committed)
+            accessGenerationGate.markPublished(accessGeneration)
         }
 
         TaggingWorker.enqueueLibraryMaintenance(context)
