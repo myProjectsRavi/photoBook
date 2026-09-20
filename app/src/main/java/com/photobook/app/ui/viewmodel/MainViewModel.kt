@@ -121,6 +121,7 @@ class MainViewModel @Inject constructor(
         val viewerStartIndex: Int? = null,
         val viewerPhotos: List<PhotoRecord> = emptyList(),
         val viewerUsesVisibleWindow: Boolean = false,
+        val viewerInitialSearchRequested: Boolean = false,
         val reelsStartIndex: Int? = null,
         val reelsPhotos: List<PhotoRecord> = emptyList(),
         val storyViewerTitle: String = "",
@@ -488,6 +489,13 @@ class MainViewModel @Inject constructor(
     }
 
     fun onPhotoClicked(photo: PhotoRecord) {
+        openPhoto(photo = photo, initialSearchRequested = false)
+    }
+
+    private fun openPhoto(
+        photo: PhotoRecord,
+        initialSearchRequested: Boolean,
+    ) {
         var openedViewer = false
         viewModelScope.launch {
             val viewerWindow = withContext(Dispatchers.Default) {
@@ -509,6 +517,7 @@ class MainViewModel @Inject constructor(
                             viewerStartIndex = viewerWindow.startIndex,
                             viewerPhotos = viewerWindow.photos,
                             viewerUsesVisibleWindow = true,
+                            viewerInitialSearchRequested = initialSearchRequested,
                         )
                     }
                 }
@@ -669,6 +678,7 @@ class MainViewModel @Inject constructor(
                 viewerStartIndex = null,
                 viewerPhotos = emptyList(),
                 viewerUsesVisibleWindow = false,
+                viewerInitialSearchRequested = false,
             )
         }
     }
@@ -706,7 +716,12 @@ class MainViewModel @Inject constructor(
 
     fun openStoryPhoto(photo: PhotoRecord) {
         closeStoryViewer()
-        onPhotoClicked(photo)
+        openPhoto(photo = photo, initialSearchRequested = false)
+    }
+
+    fun searchStoryPhoto(photo: PhotoRecord) {
+        closeStoryViewer()
+        openPhoto(photo = photo, initialSearchRequested = true)
     }
 
     fun openArchives() {
