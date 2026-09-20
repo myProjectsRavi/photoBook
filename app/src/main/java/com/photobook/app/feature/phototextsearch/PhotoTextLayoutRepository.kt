@@ -40,9 +40,12 @@ class MediaStorePhotoTextLayoutSource @Inject constructor(
             val uri = runCatching { Uri.parse(source.uriString) }.getOrNull()
                 ?: return@withContext PhotoTextLayoutLoadResult.Unavailable
 
+            // Media metadata is advisory, not the authority for whether the photo is readable.
+            // Some OEM/document providers can open the image bytes but omit one or more MediaStore
+            // columns from an item query. Treating that as deletion caused valid photos to surface as
+            // "no longer available" before OCR even started.
             val before = readSourceStamp(uri)
-                ?: return@withContext PhotoTextLayoutLoadResult.Unavailable
-            if (before.mediaId != source.photoId) {
+            if (before?.mediaId != null && before.mediaId != source.photoId) {
                 return@withContext PhotoTextLayoutLoadResult.Unavailable
             }
 
@@ -69,16 +72,25 @@ class MediaStorePhotoTextLayoutSource @Inject constructor(
                 null
             } catch (_: LinkageError) {
                 null
-            } ?: return@withContext PhotoTextLayoutLoadResult.Unavailable
+            } ?: return@withContext if (isSourceReadable(uri)) {
+                PhotoTextLayoutLoadResult.Failed
+            } else {
+                PhotoTextLayoutLoadResult.Unavailable
+            }
 
             try {
                 val result = localOcrEngine.recognizeLayout(owned.bitmap)
                 currentCoroutineContext().ensureActive()
 
                 val after = readSourceStamp(uri)
-                    ?: return@withContext PhotoTextLayoutLoadResult.Unavailable
-                if (after.mediaId != source.photoId || before != after) {
+                if (after?.mediaId != null && after.mediaId != source.photoId) {
+                    return@withContext PhotoTextLayoutLoadResult.Unavailable
+                }
+                if (before != null && after != null && before != after) {
                     return@withContext PhotoTextLayoutLoadResult.Failed
+                }
+                if (after == null && !isSourceReadable(uri)) {
+                    return@withContext PhotoTextLayoutLoadResult.Unavailable
                 }
 
                 val layout = result.getOrNull()
@@ -104,24 +116,24 @@ class MediaStorePhotoTextLayoutSource @Inject constructor(
 
             resolver.query(uri, projection, null, null, null)?.use { cursor ->
                 if (!cursor.moveToFirst()) return null
-                val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID))
-                val size = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE))
-                val modified = cursor.getLong(
-                    cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_MODIFIED),
-                )
+                val id = cursor.longOrNull(MediaStore.Images.Media._ID)
+                val size = cursor.longOrNull(MediaStore.Images.Media.SIZE)
+                val modified = cursor.longOrNull(MediaStore.Images.Media.DATE_MODIFIED)
                 val generation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    cursor.getLong(
-                        cursor.getColumnIndexOrThrow(MediaStore.Images.Media.GENERATION_MODIFIED),
-                    )
+                    cursor.longOrNull(MediaStore.Images.Media.GENERATION_MODIFIED)
                 } else {
                     null
                 }
-                SourceStamp(
-                    mediaId = id,
-                    generationModified = generation,
-                    dateModifiedSeconds = modified,
-                    byteSize = size,
-                )
+                if (id == null && size == null && modified == null && generation == null) {
+                    null
+                } else {
+                    SourceStamp(
+                        mediaId = id,
+                        generationModified = generation,
+                        dateModifiedSeconds = modified,
+                        byteSize = size,
+                    )
+                }
             }
         } catch (_: SecurityException) {
             null
@@ -129,6 +141,21 @@ class MediaStorePhotoTextLayoutSource @Inject constructor(
             null
         } catch (_: Exception) {
             null
+        }
+    }
+
+    private fun android.database.Cursor.longOrNull(columnName: String): Long? {
+        val index = getColumnIndex(columnName)
+        return if (index >= 0 && !isNull(index)) getLong(index) else null
+    }
+
+    private fun isSourceReadable(uri: Uri): Boolean {
+        return try {
+            context.contentResolver.openInputStream(uri)?.use { true } ?: false
+        } catch (_: SecurityException) {
+            false
+        } catch (_: Exception) {
+            false
         }
     }
 
@@ -211,10 +238,10 @@ class MediaStorePhotoTextLayoutSource @Inject constructor(
     }
 
     private data class SourceStamp(
-        val mediaId: Long,
+        val mediaId: Long?,
         val generationModified: Long?,
-        val dateModifiedSeconds: Long,
-        val byteSize: Long,
+        val dateModifiedSeconds: Long?,
+        val byteSize: Long?,
     )
 
     private class OwnedUprightBitmap(
