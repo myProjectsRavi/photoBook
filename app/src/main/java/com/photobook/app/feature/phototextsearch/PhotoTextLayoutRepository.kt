@@ -9,6 +9,8 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import androidx.exifinterface.media.ExifInterface
+import com.photobook.app.feature.vault.VaultCryptoSession
+import com.photobook.app.feature.vault.VaultService
 import com.photobook.app.ml.BundledOnDeviceIntelligence
 import com.photobook.app.ml.LocalOcrEngine
 import dagger.hilt.EntryPoint
@@ -273,10 +275,59 @@ class MediaStorePhotoTextLayoutSource @Inject constructor(
     }
 }
 
+class VaultPhotoTextLayoutSource(
+    private val vaultService: VaultService,
+    private val sessionProvider: () -> VaultCryptoSession?,
+    private val localOcrEngine: LocalOcrEngine,
+    private val onDeviceIntelligence: BundledOnDeviceIntelligence,
+) : PhotoTextLayoutSource {
+
+    override suspend fun load(source: PhotoTextSourceKey): PhotoTextLayoutLoadResult {
+        val session = sessionProvider() ?: return PhotoTextLayoutLoadResult.Unavailable
+        val ready = try {
+            onDeviceIntelligence.ensureReady(needsMl = false, needsOcr = true).ocrReady
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            false
+        } catch (_: LinkageError) {
+            false
+        }
+        if (!ready) return PhotoTextLayoutLoadResult.Failed
+
+        return try {
+            val result = vaultService.withOwnedSearchBitmap(
+                itemId = source.uriString,
+                session = session,
+            ) { bitmap ->
+                localOcrEngine.recognizeLayout(bitmap)
+            } ?: return PhotoTextLayoutLoadResult.Unavailable
+
+            currentCoroutineContext().ensureActive()
+            if (sessionProvider() !== session) {
+                return PhotoTextLayoutLoadResult.Unavailable
+            }
+
+            result.getOrNull()?.let(PhotoTextLayoutLoadResult::Success)
+                ?: PhotoTextLayoutLoadResult.Failed
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: SecurityException) {
+            PhotoTextLayoutLoadResult.Unavailable
+        } catch (_: Exception) {
+            PhotoTextLayoutLoadResult.Failed
+        } catch (_: LinkageError) {
+            PhotoTextLayoutLoadResult.Failed
+        }
+    }
+}
+
 @EntryPoint
 @InstallIn(SingletonComponent::class)
 internal interface PhotoTextSearchEntryPoint {
     fun mediaStorePhotoTextLayoutSource(): MediaStorePhotoTextLayoutSource
+    fun localOcrEngine(): LocalOcrEngine
+    fun bundledOnDeviceIntelligence(): BundledOnDeviceIntelligence
 }
 
 fun mediaStorePhotoTextLayoutSource(context: Context): MediaStorePhotoTextLayoutSource {
@@ -284,4 +335,22 @@ fun mediaStorePhotoTextLayoutSource(context: Context): MediaStorePhotoTextLayout
         context.applicationContext,
         PhotoTextSearchEntryPoint::class.java,
     ).mediaStorePhotoTextLayoutSource()
+}
+
+
+fun vaultPhotoTextLayoutSource(
+    context: Context,
+    vaultService: VaultService,
+    sessionProvider: () -> VaultCryptoSession?,
+): VaultPhotoTextLayoutSource {
+    val entryPoint = EntryPointAccessors.fromApplication(
+        context.applicationContext,
+        PhotoTextSearchEntryPoint::class.java,
+    )
+    return VaultPhotoTextLayoutSource(
+        vaultService = vaultService,
+        sessionProvider = sessionProvider,
+        localOcrEngine = entryPoint.localOcrEngine(),
+        onDeviceIntelligence = entryPoint.bundledOnDeviceIntelligence(),
+    )
 }
