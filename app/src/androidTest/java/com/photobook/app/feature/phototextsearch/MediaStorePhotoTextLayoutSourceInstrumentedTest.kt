@@ -94,15 +94,15 @@ class MediaStorePhotoTextLayoutSourceInstrumentedTest {
                 valid is PhotoTextLayoutLoadResult.Success,
             )
 
-            val mismatched = source().load(
+            val mismatchedRecordId = source().load(
                 PhotoTextSourceKey(
                     photoId = mediaId + 1L,
                     uriString = uri.toString(),
                 ),
             )
             assertTrue(
-                "An authoritative MediaStore ID mismatch must still be rejected",
-                mismatched is PhotoTextLayoutLoadResult.Unavailable,
+                "Search must follow the URI currently displayed even if a persisted record ID is stale",
+                mismatchedRecordId is PhotoTextLayoutLoadResult.Success,
             )
         } finally {
             runCatching { resolver.delete(uri, null, null) }
