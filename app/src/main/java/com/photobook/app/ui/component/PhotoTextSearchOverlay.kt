@@ -2,6 +2,7 @@ package com.photobook.app.ui.component
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -19,15 +20,19 @@ fun PhotoTextSearchOverlay(
     activeMatchIndex: Int,
     modifier: Modifier = Modifier,
 ) {
-    Canvas(modifier = modifier) {
-        if (matches.isEmpty() || layout.elements.isEmpty()) return@Canvas
-        val byId = layout.elements.associateBy { element -> element.id }
-        val active = matches.getOrNull(activeMatchIndex)
-        val paintable = buildList {
+    val byId = remember(layout) {
+        layout.elements.associateBy { element -> element.id }
+    }
+    val active = matches.getOrNull(activeMatchIndex)
+    val paintable = remember(matches, active) {
+        buildList {
             matches.take(MAX_PAINTED_OCCURRENCES).forEach(::add)
             if (active != null && active !in this) add(active)
         }
+    }
 
+    Canvas(modifier = modifier) {
+        if (paintable.isEmpty() || byId.isEmpty()) return@Canvas
         paintable.forEach { occurrence ->
             val isActive = occurrence === active || occurrence == active
             occurrence.elementIds.forEach { elementId ->
