@@ -226,25 +226,25 @@ class MainViewModel @Inject constructor(
     private var mediaRebuildJob: Job? = null
     private var permissionReconcileJob: Job? = null
     private val accessGenerationGate = AccessGenerationGate()
+    private val memoryPublicationLock = Any()
     private val memoryRefreshRequests = Channel<MemoryRefreshRequest>(capacity = Channel.CONFLATED)
     private val memoryRefreshJob: Job = viewModelScope.launch(Dispatchers.Default) {
         for (request in memoryRefreshRequests) {
             val curated = memoryCurator.curate(request.records)
             val onThisDay = memoryCurator.curateOnThisDay(request.records)
-            if (!accessGenerationGate.isCurrent(request.accessGeneration)) {
-                continue
-            }
-            uiState.update { state ->
+            synchronized(memoryPublicationLock) {
                 if (!accessGenerationGate.isCurrent(request.accessGeneration)) {
-                    state
-                } else {
+                    return@synchronized
+                }
+                uiState.update { state ->
                     state.copy(
                         memoryStories = curated,
                         onThisDayStory = onThisDay,
                     )
                 }
-            }
-            if (accessGenerationGate.isCurrent(request.accessGeneration)) {
+                // Keep the generation check and widget cache write in the same publication
+                // critical section as access invalidation. Otherwise an access change could
+                // clear the widget between the check and this write, allowing stale IDs back in.
                 OnThisDayWidgetProvider.cacheStory(context, onThisDay)
             }
         }
@@ -309,8 +309,7 @@ class MainViewModel @Inject constructor(
             // A mode transition is a known visibility-boundary change. Invalidate memory
             // publication immediately. Repeated Limited -> Limited resumes defer generation
             // invalidation until the selected-ID probe proves that membership actually changed.
-            accessGenerationGate.advance()
-            clearAccessDerivedMemories()
+            invalidateAccessDerivedMemories()
         }
 
         if (!granted) {
@@ -1293,8 +1292,7 @@ class MainViewModel @Inject constructor(
             // The mode can remain Limited while Android's selected membership changes. Advance
             // the access generation only after that change is proven so unchanged resumes do not
             // invalidate valid memories or trigger redundant curation.
-            accessGenerationGate.advance()
-            clearAccessDerivedMemories()
+            invalidateAccessDerivedMemories()
             // Fail closed as soon as the current grant is known. Revoked rows remain durable in
             // Room but disappear from every in-memory/search/memory surface before any slower
             // metadata reconciliation for newly granted or changed rows.
@@ -1545,18 +1543,22 @@ class MainViewModel @Inject constructor(
         )
     }
 
-    private fun clearAccessDerivedMemories() {
-        lastMemoryRecordsIdentity = 0
-        lastMemoryAccessGeneration = -1L
-        uiState.update { state ->
-            state.copy(
-                memoryStories = emptyList(),
-                onThisDayStory = null,
-            )
+    private fun invalidateAccessDerivedMemories() {
+        synchronized(memoryPublicationLock) {
+            accessGenerationGate.advance()
+            lastMemoryRecordsIdentity = 0
+            lastMemoryAccessGeneration = -1L
+            uiState.update { state ->
+                state.copy(
+                    memoryStories = emptyList(),
+                    onThisDayStory = null,
+                )
+            }
+            // Widget metadata is derived from the same local visible set. Clear it while holding
+            // the same lock used by memory publication so an obsolete worker cannot race this
+            // reset and republish retained-but-ungranted story IDs.
+            OnThisDayWidgetProvider.cacheStory(context, null)
         }
-        // Widget metadata is derived from the same local visible set. Clear it before a new
-        // selected-photo generation is allowed to publish a replacement story.
-        OnThisDayWidgetProvider.cacheStory(context, null)
     }
 
     private suspend fun runSearch(
