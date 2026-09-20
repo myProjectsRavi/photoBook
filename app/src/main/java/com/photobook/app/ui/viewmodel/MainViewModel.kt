@@ -57,6 +57,7 @@ import com.photobook.app.worker.ArchiveScanWorker
 import com.photobook.app.worker.TrashPurgeWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
@@ -224,24 +225,40 @@ class MainViewModel @Inject constructor(
     private var mediaObserver: ContentObserver? = null
     private var mediaRebuildJob: Job? = null
     private var permissionReconcileJob: Job? = null
-    private val memoryRefreshRequests = Channel<List<PhotoRecord>>(capacity = Channel.CONFLATED)
+    private val accessGenerationGate = AccessGenerationGate()
+    private val memoryRefreshRequests = Channel<MemoryRefreshRequest>(capacity = Channel.CONFLATED)
     private val memoryRefreshJob: Job = viewModelScope.launch(Dispatchers.Default) {
-        for (records in memoryRefreshRequests) {
-            val curated = memoryCurator.curate(records)
-            val onThisDay = memoryCurator.curateOnThisDay(records)
-            uiState.update { state ->
-                state.copy(
-                    memoryStories = curated,
-                    onThisDayStory = onThisDay,
-                )
+        for (request in memoryRefreshRequests) {
+            val curated = memoryCurator.curate(request.records)
+            val onThisDay = memoryCurator.curateOnThisDay(request.records)
+            if (!accessGenerationGate.isCurrent(request.accessGeneration)) {
+                continue
             }
-            OnThisDayWidgetProvider.cacheStory(context, onThisDay)
+            uiState.update { state ->
+                if (!accessGenerationGate.isCurrent(request.accessGeneration)) {
+                    state
+                } else {
+                    state.copy(
+                        memoryStories = curated,
+                        onThisDayStory = onThisDay,
+                    )
+                }
+            }
+            if (accessGenerationGate.isCurrent(request.accessGeneration)) {
+                OnThisDayWidgetProvider.cacheStory(context, onThisDay)
+            }
         }
     }
     private var latestSearchResultIds: List<Long> = emptyList()
     private var latestVisibleResultIds: List<Long> = emptyList()
     private var lastMemoryRecordsIdentity: Int = 0
+    private var lastMemoryAccessGeneration: Long = -1L
     private var pendingStoryLaunch: PendingStoryLaunch? = null
+
+    private data class MemoryRefreshRequest(
+        val records: List<PhotoRecord>,
+        val accessGeneration: Long,
+    )
 
     private data class SearchFlowInput(
         val query: String,
@@ -278,12 +295,18 @@ class MainViewModel @Inject constructor(
         forceReconcile: Boolean = false,
     ) {
         val previousMode = uiState.value.photoAccessMode
+        val accessModeChanged = accessMode != previousMode
+        val shouldReconcile = forceReconcile || accessModeChanged
         val granted = accessMode != PermissionUtils.PhotoAccessMode.None
         uiState.update {
             it.copy(
                 hasPhotoPermission = granted,
                 photoAccessMode = accessMode,
             )
+        }
+
+        if (shouldReconcile) {
+            invalidateAccessDerivedMemories()
         }
 
         if (!granted) {
@@ -307,23 +330,30 @@ class MainViewModel @Inject constructor(
             return
         }
 
-        if (forceReconcile || accessMode != previousMode) {
+        if (shouldReconcile) {
             permissionReconcileJob?.cancel()
             permissionReconcileJob = viewModelScope.launch {
-                uiState.update { it.copy(isIndexing = true, searchReady = false) }
+                // A mode transition is a hard visibility boundary, so keep the blocking state.
+                // Repeated Limited -> Limited resumes stay interactive: the lightweight ID
+                // reconciliation below decides whether publication actually needs to change.
+                if (accessModeChanged) {
+                    uiState.update { it.copy(isIndexing = true, searchReady = false) }
+                }
                 try {
-                    syncMediaStoreIncremental(forceFullSync = true)
+                    syncMediaStoreIncremental(forceFullSync = accessModeChanged)
                     // Archive candidate count is visible from the home surface even when the
                     // Archive sheet is closed, so permission reselection must clamp Archive state
                     // on every reconciliation, not only while the sheet is open.
                     loadArchiveSummary(refreshCandidates = false)
                 } finally {
-                    uiState.update {
-                        it.copy(
-                            isIndexing = false,
-                            indexProgress = 1f,
-                            searchReady = true,
-                        )
+                    if (accessModeChanged) {
+                        uiState.update {
+                            it.copy(
+                                isIndexing = false,
+                                indexProgress = 1f,
+                                searchReady = true,
+                            )
+                        }
                     }
                 }
             }
@@ -995,12 +1025,24 @@ class MainViewModel @Inject constructor(
 
             indexCommitCoordinator.withCommit {
                 val persisted = indexPersistence.load()
-                if (persisted.isNotEmpty()) {
-                    // Full-index publication sorts the library, rebuilds ID lookup state, and rebuilds
-                    // keyword sets. Keep that O(n) CPU/allocation work off Main while serializing the
-                    // durable-load/publication boundary against background intelligence writers.
+                val accessMode = uiState.value.photoAccessMode
+                val accessiblePhotoIds = if (accessMode == PermissionUtils.PhotoAccessMode.Limited) {
+                    withContext(Dispatchers.IO) {
+                        mediaStoreScanner.scanAllIds()
+                    }
+                } else {
+                    null
+                }
+                val visiblePersisted = visiblePersistedRecordsForAccess(
+                    persisted = persisted,
+                    accessMode = accessMode,
+                    accessiblePhotoIds = accessiblePhotoIds,
+                )
+                if (visiblePersisted.isNotEmpty()) {
+                    // Never publish retained-but-currently-ungranted Room rows during cold start.
+                    // Full-index publication sorts the visible library and rebuilds lookup state.
                     withContext(Dispatchers.Default) {
-                        photoIndex.setRecords(persisted)
+                        photoIndex.setRecords(visiblePersisted)
                     }
                 }
             }
@@ -1187,7 +1229,19 @@ class MainViewModel @Inject constructor(
                 .takeIf { value -> value >= 0L }
 
             val limitedAccess = uiState.value.photoAccessMode == PermissionUtils.PhotoAccessMode.Limited
-            val shouldFullSync = forceFullSync || limitedAccess || existing.isEmpty() ||
+            if (limitedAccess) {
+                reconcileLimitedAccess(
+                    existing = existing,
+                    currentVersion = currentVersion,
+                    currentGeneration = currentGeneration,
+                    lastVersion = lastVersion,
+                    lastGeneration = lastGeneration,
+                )
+                persistMediaStoreSyncState(currentVersion, currentGeneration)
+                return@withContext
+            }
+
+            val shouldFullSync = forceFullSync || existing.isEmpty() ||
                 lastVersion == null || currentVersion != lastVersion
             if (shouldFullSync) {
                 rebuildEntireIndex(existing)
@@ -1195,7 +1249,7 @@ class MainViewModel @Inject constructor(
                 return@withContext
             }
 
-            if (!shouldFullSync && lastGeneration != null && currentGeneration != null) {
+            if (lastGeneration != null && currentGeneration != null) {
                 if (currentGeneration > lastGeneration) {
                     processGenerationDelta(existing, lastGeneration)
                 }
@@ -1203,10 +1257,87 @@ class MainViewModel @Inject constructor(
                 return@withContext
             }
 
-            if (!shouldFullSync) {
-                processLegacyDelta(existing)
-            }
+            processLegacyDelta(existing)
             persistMediaStoreSyncState(currentVersion, currentGeneration)
+        }
+    }
+
+    private suspend fun reconcileLimitedAccess(
+        existing: List<PhotoRecord>,
+        currentVersion: String,
+        currentGeneration: Long?,
+        lastVersion: String?,
+        lastGeneration: Long?,
+    ) {
+        val accessiblePhotoIds = mediaStoreScanner.scanAllIds()
+        val publishedPhotoIds = existing.asSequence().map { record -> record.id }.toHashSet()
+        val visibilityChanged = accessiblePhotoIds != publishedPhotoIds
+        val metadataMayHaveChanged =
+            lastVersion == null ||
+                currentVersion != lastVersion ||
+                lastGeneration == null ||
+                currentGeneration == null ||
+                currentGeneration > lastGeneration
+
+        if (!visibilityChanged && !metadataMayHaveChanged) {
+            // Common resume path for an unchanged selected-photo grant: one lightweight ID query,
+            // no EXIF/geocoding reconstruction, no index publication, and no search loading reset.
+            return
+        }
+
+        if (visibilityChanged) {
+            // Fail closed as soon as the current grant is known. Revoked rows remain durable in
+            // Room but disappear from every in-memory/search/memory surface before any slower
+            // metadata reconciliation for newly granted or changed rows.
+            val stillAccessible = existing.filter { record -> record.id in accessiblePhotoIds }
+            if (!publishedRecordsEquivalent(existing, stillAccessible)) {
+                indexCommitCoordinator.withCommit {
+                    withContext(Dispatchers.Default) {
+                        photoIndex.setRecords(stillAccessible)
+                    }
+                }
+            }
+        }
+
+        val allRaw = mediaStoreScanner.scanAll()
+        val currentlyPublished = photoIndex.snapshot()
+        val publishedById = currentlyPublished.associateBy { record -> record.id }
+        val missingVisibleIds = allRaw.asSequence()
+            .map { raw -> raw.id }
+            .filterNot { id -> id in publishedById }
+            .toList()
+        val retainedRegranted = indexPersistence.getByIdsOrdered(missingVisibleIds)
+        val reusableRecords = if (retainedRegranted.isEmpty()) {
+            currentlyPublished
+        } else {
+            currentlyPublished + retainedRegranted
+        }
+        val reusableById = reusableRecords.associateBy { record -> record.id }
+        val changedRaw = changedRawPhotosForReconcile(allRaw, reusableRecords)
+        val rebuiltById = if (changedRaw.isNotEmpty()) {
+            indexBuilder.buildIndexFromRaw(changedRaw)
+                .preservingIntelligence(reusableRecords)
+                .associateBy { record -> record.id }
+        } else {
+            emptyMap()
+        }
+
+        indexCommitCoordinator.withCommit {
+            if (rebuiltById.isNotEmpty()) {
+                indexPersistence.upsertAll(rebuiltById.values.toList())
+            }
+            val nextVisible = allRaw.mapNotNull { raw ->
+                rebuiltById[raw.id] ?: reusableById[raw.id]
+            }
+            if (!publishedRecordsEquivalent(photoIndex.snapshot(), nextVisible)) {
+                withContext(Dispatchers.Default) {
+                    photoIndex.setRecords(nextVisible)
+                }
+            }
+        }
+
+        if (rebuiltById.isNotEmpty()) {
+            TaggingWorker.enqueueLibraryMaintenance(context)
         }
     }
 
@@ -1287,25 +1418,7 @@ class MainViewModel @Inject constructor(
         allRaw: List<RawPhotoData>,
         existing: List<PhotoRecord>,
     ): List<RawPhotoData> {
-        if (allRaw.isEmpty()) return emptyList()
-        val existingById = existing.associateBy { record -> record.id }
-        return allRaw.filter { raw ->
-            val previous = existingById[raw.id] ?: return@filter true
-            rawDiffersFromRecord(raw, previous)
-        }
-    }
-
-    private fun rawDiffersFromRecord(raw: RawPhotoData, existing: PhotoRecord): Boolean {
-        return raw.uriString != existing.uriString ||
-            raw.filePath != existing.filePath ||
-            raw.fileName != existing.fileName ||
-            raw.dateAdded != existing.dateAdded ||
-            raw.fileSize != existing.fileSize ||
-            raw.width != existing.width ||
-            raw.height != existing.height ||
-            raw.mimeType != existing.mimeType ||
-            raw.folderName.lowercase() != existing.folderName ||
-            raw.folderPath.lowercase() != existing.folderPath
+        return changedRawPhotosForReconcile(allRaw, existing)
     }
 
     private fun persistMediaStoreSyncState(version: String, generation: Long?) {
@@ -1406,9 +1519,36 @@ class MainViewModel @Inject constructor(
 
     private fun maybeRefreshMemoryStories(records: List<PhotoRecord>) {
         val identity = System.identityHashCode(records)
-        if (identity == lastMemoryRecordsIdentity) return
+        val accessGeneration = accessGenerationGate.current()
+        if (
+            identity == lastMemoryRecordsIdentity &&
+            accessGeneration == lastMemoryAccessGeneration
+        ) {
+            return
+        }
         lastMemoryRecordsIdentity = identity
-        memoryRefreshRequests.trySend(records)
+        lastMemoryAccessGeneration = accessGeneration
+        memoryRefreshRequests.trySend(
+            MemoryRefreshRequest(
+                records = records,
+                accessGeneration = accessGeneration,
+            ),
+        )
+    }
+
+    private fun invalidateAccessDerivedMemories() {
+        accessGenerationGate.advance()
+        lastMemoryRecordsIdentity = 0
+        lastMemoryAccessGeneration = -1L
+        uiState.update { state ->
+            state.copy(
+                memoryStories = emptyList(),
+                onThisDayStory = null,
+            )
+        }
+        // Widget metadata is derived from the same local visible set. Clear it before a new
+        // selected-photo generation is allowed to publish a replacement story.
+        OnThisDayWidgetProvider.cacheStory(context, null)
     }
 
     private suspend fun runSearch(
@@ -1652,4 +1792,68 @@ class MainViewModel @Inject constructor(
         private const val REELS_ENABLED_KEY = "reels_enabled_v1"
         private val SEARCH_RUNTIME_STRATEGY = SearchRuntimeStrategy.V2
     }
+}
+
+internal class AccessGenerationGate {
+    private val generation = AtomicLong(0L)
+
+    fun current(): Long = generation.get()
+
+    fun advance(): Long = generation.incrementAndGet()
+
+    fun isCurrent(candidate: Long): Boolean = generation.get() == candidate
+}
+
+internal fun visiblePersistedRecordsForAccess(
+    persisted: List<PhotoRecord>,
+    accessMode: PermissionUtils.PhotoAccessMode,
+    accessiblePhotoIds: Set<Long>?,
+): List<PhotoRecord> {
+    return when (accessMode) {
+        PermissionUtils.PhotoAccessMode.Full -> persisted
+        PermissionUtils.PhotoAccessMode.Limited -> {
+            if (accessiblePhotoIds.isNullOrEmpty()) {
+                emptyList()
+            } else {
+                persisted.filter { record -> record.id in accessiblePhotoIds }
+            }
+        }
+        PermissionUtils.PhotoAccessMode.None -> emptyList()
+    }
+}
+
+internal fun changedRawPhotosForReconcile(
+    allRaw: List<RawPhotoData>,
+    reusableRecords: List<PhotoRecord>,
+): List<RawPhotoData> {
+    if (allRaw.isEmpty()) return emptyList()
+    val reusableById = reusableRecords.associateBy { record -> record.id }
+    return allRaw.filter { raw ->
+        val previous = reusableById[raw.id] ?: return@filter true
+        rawDiffersFromRecordForReconcile(raw, previous)
+    }
+}
+
+internal fun rawDiffersFromRecordForReconcile(
+    raw: RawPhotoData,
+    existing: PhotoRecord,
+): Boolean {
+    return raw.uriString != existing.uriString ||
+        raw.filePath != existing.filePath ||
+        raw.fileName != existing.fileName ||
+        raw.dateAdded != existing.dateAdded ||
+        raw.fileSize != existing.fileSize ||
+        raw.width != existing.width ||
+        raw.height != existing.height ||
+        raw.mimeType != existing.mimeType ||
+        raw.folderName.lowercase() != existing.folderName ||
+        raw.folderPath.lowercase() != existing.folderPath
+}
+
+internal fun publishedRecordsEquivalent(
+    current: List<PhotoRecord>,
+    next: List<PhotoRecord>,
+): Boolean {
+    if (current.size != next.size) return false
+    return current.indices.all { index -> current[index] == next[index] }
 }
