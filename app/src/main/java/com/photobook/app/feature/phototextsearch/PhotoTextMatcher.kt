@@ -7,7 +7,7 @@ class PhotoTextMatcher {
 
     fun normalizeQuery(raw: String): String = canonicalize(raw).trim()
 
-    fun buildBlocks(layout: PhotoTextLayout): List<SearchBlock> {
+    internal fun buildBlocks(layout: PhotoTextLayout): List<SearchBlock> {
         if (layout.elements.isEmpty()) return emptyList()
         val grouped = LinkedHashMap<Int, MutableList<TextElement>>()
         layout.elements.forEach { element ->
@@ -36,7 +36,7 @@ class PhotoTextMatcher {
         }
     }
 
-    suspend fun find(
+    internal suspend fun find(
         blocks: List<SearchBlock>,
         normalizedQuery: String,
     ): List<SearchOccurrence> {
