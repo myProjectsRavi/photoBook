@@ -21,6 +21,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -52,6 +53,7 @@ fun MemoryStoryViewerScreen(
     photos: List<PhotoRecord>,
     onDismiss: () -> Unit,
     onOpenPhoto: (PhotoRecord) -> Unit,
+    onSearchPhoto: (PhotoRecord) -> Unit,
 ) {
     if (photos.isEmpty()) return
     val coroutineScope = rememberCoroutineScope()
@@ -193,12 +195,26 @@ fun MemoryStoryViewerScreen(
                         style = MaterialTheme.typography.labelMedium,
                     )
                 }
-                IconButton(onClick = onDismiss) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = stringResource(R.string.viewer_close),
-                        tint = Color.White,
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = {
+                            photos.getOrNull(pagerState.currentPage)?.let(onSearchPhoto)
+                        },
+                        modifier = Modifier.size(48.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = stringResource(R.string.viewer_search_text),
+                            tint = Color.White,
+                        )
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = stringResource(R.string.viewer_close),
+                            tint = Color.White,
+                        )
+                    }
                 }
             }
         }
