@@ -1,5 +1,6 @@
 package com.photobook.app.ui.screen
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -17,6 +18,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -29,10 +31,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,7 +51,11 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.photobook.app.R
+import com.photobook.app.feature.phototextsearch.PhotoTextLayoutSource
+import com.photobook.app.feature.phototextsearch.PhotoTextSearchController
 import com.photobook.app.feature.vault.VaultItem
+import com.photobook.app.ui.component.PhotoTextSearchControls
+import com.photobook.app.ui.component.PhotoTextSearchOverlay
 import java.text.DateFormat
 import java.util.Date
 
@@ -59,6 +68,7 @@ fun VaultBottomSheet(
     onDismiss: () -> Unit,
     onRefresh: () -> Unit,
     onPreviewNeeded: (VaultItem) -> Unit,
+    photoTextLayoutSource: PhotoTextLayoutSource,
     onMoveOut: (VaultItem) -> Unit,
     onDelete: (VaultItem) -> Unit,
 ) {
@@ -144,6 +154,7 @@ fun VaultBottomSheet(
             item = item,
             isBusy = isBusy,
             onPreviewNeeded = { onPreviewNeeded(item) },
+            photoTextLayoutSource = photoTextLayoutSource,
             onDismiss = { previewItemId = null },
             onMoveOut = {
                 previewItemId = null
@@ -238,10 +249,27 @@ private fun VaultItemPreviewDialog(
     item: VaultItem,
     isBusy: Boolean,
     onPreviewNeeded: () -> Unit,
+    photoTextLayoutSource: PhotoTextLayoutSource,
     onDismiss: () -> Unit,
     onMoveOut: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val scope = rememberCoroutineScope()
+    val searchController = remember(photoTextLayoutSource, scope) {
+        PhotoTextSearchController(source = photoTextLayoutSource, scope = scope)
+    }
+    val searchState by searchController.state.collectAsState()
+
+    LaunchedEffect(item.id) {
+        searchController.activate(item.sourcePhotoId, item.id)
+    }
+    DisposableEffect(searchController) {
+        onDispose { searchController.dispose() }
+    }
+    BackHandler(enabled = searchState.isOpen) {
+        searchController.close()
+    }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -258,7 +286,12 @@ private fun VaultItemPreviewDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    IconButton(onClick = onDismiss) {
+                    IconButton(
+                        onClick = {
+                            searchController.close()
+                            onDismiss()
+                        },
+                    ) {
                         Icon(Icons.Default.Close, contentDescription = stringResource(R.string.viewer_close))
                     }
                     Text(
@@ -268,16 +301,55 @@ private fun VaultItemPreviewDialog(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
+                    IconButton(
+                        onClick = { searchController.open() },
+                        modifier = Modifier.size(48.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = stringResource(R.string.viewer_search_text),
+                        )
+                    }
                 }
-                VaultPreviewImage(
-                    item = item,
-                    contentScale = ContentScale.Fit,
-                    onPreviewError = onPreviewNeeded,
+
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
                         .background(Color.Black),
-                )
+                ) {
+                    VaultPreviewImage(
+                        item = item,
+                        contentScale = ContentScale.Fit,
+                        onPreviewError = onPreviewNeeded,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    if (
+                        searchState.isOpen &&
+                        searchState.layout != null &&
+                        searchState.matches.isNotEmpty()
+                    ) {
+                        PhotoTextSearchOverlay(
+                            layout = searchState.layout!!,
+                            matches = searchState.matches,
+                            activeMatchIndex = searchState.activeMatchIndex,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+
+                if (searchState.isOpen) {
+                    PhotoTextSearchControls(
+                        state = searchState,
+                        onQueryChange = searchController::setQuery,
+                        onPrevious = searchController::previousMatch,
+                        onNext = searchController::nextMatch,
+                        onShowMatch = { /* Fit mode keeps all search geometry visible. */ },
+                        onRetry = searchController::retry,
+                        onClose = searchController::close,
+                    )
+                }
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
