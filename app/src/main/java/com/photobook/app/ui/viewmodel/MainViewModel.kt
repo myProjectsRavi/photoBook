@@ -305,16 +305,12 @@ class MainViewModel @Inject constructor(
             )
         }
 
-        if (shouldReconcile) {
-            // Every permission reconciliation establishes a new publication generation so an
-            // in-flight memory curation job can never publish across an access boundary.
+        if (accessModeChanged) {
+            // A mode transition is a known visibility-boundary change. Invalidate memory
+            // publication immediately. Repeated Limited -> Limited resumes defer generation
+            // invalidation until the selected-ID probe proves that membership actually changed.
             accessGenerationGate.advance()
-            // A mode transition is known to change the visibility contract immediately. For a
-            // repeated Limited -> Limited resume we first compare the selected ID set below; if
-            // it is unchanged the existing memory cards remain valid and need not flicker away.
-            if (accessModeChanged) {
-                clearAccessDerivedMemories()
-            }
+            clearAccessDerivedMemories()
         }
 
         if (!granted) {
@@ -1294,6 +1290,10 @@ class MainViewModel @Inject constructor(
         }
 
         if (visibilityChanged) {
+            // The mode can remain Limited while Android's selected membership changes. Advance
+            // the access generation only after that change is proven so unchanged resumes do not
+            // invalidate valid memories or trigger redundant curation.
+            accessGenerationGate.advance()
             clearAccessDerivedMemories()
             // Fail closed as soon as the current grant is known. Revoked rows remain durable in
             // Room but disappear from every in-memory/search/memory surface before any slower
