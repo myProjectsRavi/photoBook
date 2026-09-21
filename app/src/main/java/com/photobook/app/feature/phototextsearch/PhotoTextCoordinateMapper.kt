@@ -34,8 +34,8 @@ object PhotoTextCoordinateMapper {
         val displayedHeight = imageHeight * fit
         val dx = (viewportWidth - displayedWidth) / 2f
         val dy = (viewportHeight - displayedHeight) / 2f
-        val unitX = point.x.takeIf(Float::isFinite)?.coerceIn(0f, 1f) ?: 0f
-        val unitY = point.y.takeIf(Float::isFinite)?.coerceIn(0f, 1f) ?: 0f
+        val unitX = point.x.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0f
+        val unitY = point.y.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0f
         return PixelPoint(
             x = dx + unitX * displayedWidth,
             y = dy + unitY * displayedHeight,
