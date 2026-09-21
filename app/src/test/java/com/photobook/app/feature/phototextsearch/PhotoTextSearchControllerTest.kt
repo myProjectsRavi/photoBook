@@ -62,6 +62,46 @@ class PhotoTextSearchControllerTest {
     }
 
     @Test
+    fun changedQueryClearsObsoleteMatchesUntilExactRevisionCompletes() = runBlocking {
+        val source = object : PhotoTextLayoutSource {
+            override suspend fun load(source: PhotoTextSourceKey): PhotoTextLayoutLoadResult {
+                return PhotoTextLayoutLoadResult.Success(layout("invoice receipt total"))
+            }
+        }
+        val controller = PhotoTextSearchController(source = source, scope = this)
+
+        controller.activate(1L, "content://photo/1")
+        controller.open()
+        waitUntil { controller.state.value.phase == PhotoTextSearchPhase.READY }
+
+        controller.setQuery("invoice")
+        waitUntil { controller.state.value.matches.isNotEmpty() }
+        assertThat(controller.state.value.isQueryPending).isFalse()
+
+        controller.setQuery("receipt")
+        val pending = controller.state.value
+        assertThat(pending.query).isEqualTo("receipt")
+        assertThat(pending.matches).isEmpty()
+        assertThat(pending.activeMatchIndex).isEqualTo(-1)
+        assertThat(pending.isQueryPending).isTrue()
+
+        waitUntil {
+            controller.state.value.query == "receipt" &&
+                controller.state.value.matches.isNotEmpty() &&
+                !controller.state.value.isQueryPending
+        }
+
+        controller.setQuery("missing")
+        val secondPending = controller.state.value
+        assertThat(secondPending.matches).isEmpty()
+        assertThat(secondPending.isQueryPending).isTrue()
+        waitUntil { controller.state.value.query == "missing" && !controller.state.value.isQueryPending }
+        assertThat(controller.state.value.matches).isEmpty()
+
+        controller.dispose()
+    }
+
+    @Test
     fun queryOver128CharactersIsRejectedWithoutSilentTruncation() = runBlocking {
         val controller = PhotoTextSearchController(
             source = object : PhotoTextLayoutSource {
