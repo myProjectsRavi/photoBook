@@ -2285,6 +2285,11 @@ private fun PhotoPage(
                 layout = searchLayout,
                 matches = searchMatches,
                 activeMatchIndex = searchActiveMatchIndex,
+                viewportScale = scale * dragScale,
+                viewportTranslation = Offset(
+                    x = offset.x,
+                    y = offset.y + swipeDragY,
+                ),
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
