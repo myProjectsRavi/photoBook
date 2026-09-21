@@ -644,7 +644,7 @@ fun PhotoViewerScreen(
                             }
                         }
 
-                        AnimatedVisibility(
+                        androidx.compose.animation.AnimatedVisibility(
                             visible = showControls && !photoTextSearchState.isOpen,
                             enter = fadeIn(),
                             exit = fadeOut(),
