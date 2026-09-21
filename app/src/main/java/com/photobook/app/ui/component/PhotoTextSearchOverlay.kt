@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Fill
@@ -18,6 +19,8 @@ fun PhotoTextSearchOverlay(
     matches: List<SearchOccurrence>,
     activeMatchIndex: Int,
     modifier: Modifier = Modifier,
+    viewportScale: Float = 1f,
+    viewportTranslation: Offset = Offset.Zero,
 ) {
     val byId = remember(layout) {
         layout.elements.associateBy { element -> element.id }
@@ -26,19 +29,11 @@ fun PhotoTextSearchOverlay(
     val activeIds = remember(active) {
         active?.elementIds.orEmpty().toSet()
     }
-    val drawableIds = remember(matches, active) {
-        val ids = LinkedHashSet<Int>()
-        matches.take(MAX_PAINTED_OCCURRENCES).forEach { occurrence ->
-            ids.addAll(occurrence.elementIds)
-        }
-        active?.elementIds?.let(ids::addAll)
-        ids.toList()
-    }
 
     Box(
         modifier = modifier.drawWithCache {
             if (
-                drawableIds.isEmpty() ||
+                matches.isEmpty() ||
                 byId.isEmpty() ||
                 size.width <= 0f ||
                 size.height <= 0f
@@ -46,8 +41,19 @@ fun PhotoTextSearchOverlay(
                 return@drawWithCache onDrawBehind { }
             }
 
-            val paths = drawableIds.mapNotNull { elementId ->
-                val element = byId[elementId] ?: return@mapNotNull null
+            val safeScale = viewportScale
+                .takeIf { it.isFinite() && it > 0f }
+                ?: 1f
+            val safeTranslation = Offset(
+                x = viewportTranslation.x.takeIf { it.isFinite() } ?: 0f,
+                y = viewportTranslation.y.takeIf { it.isFinite() } ?: 0f,
+            )
+            val viewportCenter = Offset(size.width / 2f, size.height / 2f)
+            val mappedById = HashMap<Int, MappedElement>()
+
+            fun mappedElement(elementId: Int): MappedElement? {
+                mappedById[elementId]?.let { return it }
+                val element = byId[elementId] ?: return null
                 val mapped = PhotoTextCoordinateMapper.mapPolygonToFitViewport(
                     corners = element.corners,
                     uprightWidth = layout.uprightWidth,
@@ -59,15 +65,7 @@ fun PhotoTextSearchOverlay(
                     mapped.size < 3 ||
                     mapped.any { point -> !point.x.isFinite() || !point.y.isFinite() }
                 ) {
-                    return@mapNotNull null
-                }
-
-                val minX = mapped.minOf { it.x }
-                val maxX = mapped.maxOf { it.x }
-                val minY = mapped.minOf { it.y }
-                val maxY = mapped.maxOf { it.y }
-                if (maxX < 0f || maxY < 0f || minX > size.width || minY > size.height) {
-                    return@mapNotNull null
+                    return null
                 }
 
                 val path = Path().apply {
@@ -75,7 +73,49 @@ fun PhotoTextSearchOverlay(
                     mapped.drop(1).forEach { point -> lineTo(point.x, point.y) }
                     close()
                 }
-                elementId to path
+                val transformedX = mapped.map { point ->
+                    viewportCenter.x +
+                        (point.x - viewportCenter.x) * safeScale +
+                        safeTranslation.x
+                }
+                val transformedY = mapped.map { point ->
+                    viewportCenter.y +
+                        (point.y - viewportCenter.y) * safeScale +
+                        safeTranslation.y
+                }
+                val result = MappedElement(
+                    id = elementId,
+                    path = path,
+                    transformedMinX = transformedX.min(),
+                    transformedMaxX = transformedX.max(),
+                    transformedMinY = transformedY.min(),
+                    transformedMaxY = transformedY.max(),
+                )
+                mappedById[elementId] = result
+                return result
+            }
+
+            fun isVisible(element: MappedElement): Boolean {
+                return element.transformedMaxX >= 0f &&
+                    element.transformedMaxY >= 0f &&
+                    element.transformedMinX <= size.width &&
+                    element.transformedMinY <= size.height
+            }
+
+            val chosenIds = LinkedHashSet<Int>()
+            var visibleOccurrenceCount = 0
+            for (occurrence in matches) {
+                if (visibleOccurrenceCount >= MAX_PAINTED_OCCURRENCES) break
+                val elements = occurrence.elementIds.mapNotNull(::mappedElement)
+                if (elements.any(::isVisible)) {
+                    occurrence.elementIds.forEach(chosenIds::add)
+                    visibleOccurrenceCount += 1
+                }
+            }
+            active?.elementIds?.forEach(chosenIds::add)
+
+            val paths = chosenIds.mapNotNull { elementId ->
+                mappedElement(elementId)?.let { element -> element.id to element.path }
             }
 
             onDrawBehind {
@@ -96,6 +136,15 @@ fun PhotoTextSearchOverlay(
         },
     )
 }
+
+private data class MappedElement(
+    val id: Int,
+    val path: Path,
+    val transformedMinX: Float,
+    val transformedMaxX: Float,
+    val transformedMinY: Float,
+    val transformedMaxY: Float,
+)
 
 private val HIGHLIGHT_COLOR = Color(0xFFFFEB3B)
 private const val HIGHLIGHT_ALPHA = 0.28f
