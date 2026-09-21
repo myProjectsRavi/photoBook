@@ -64,21 +64,29 @@ class PhotoTextSearchController(
     }
 
     fun setQuery(text: String) {
+        val previous = _state.value
+        if (text == previous.query) return
+
         queryRevision += 1L
+        matchJob?.cancel()
         val tooLong = text.length > MAX_QUERY_CHARACTERS
+        val shouldMatch =
+            !tooLong &&
+                text.isNotBlank() &&
+                previous.phase == PhotoTextSearchPhase.READY &&
+                previous.layout != null
+
         _state.update { current ->
             current.copy(
                 query = text,
                 queryTooLong = tooLong,
-                matches = if (tooLong || text.isBlank()) emptyList() else current.matches,
-                activeMatchIndex = if (tooLong || text.isBlank()) -1 else current.activeMatchIndex,
+                matches = emptyList(),
+                activeMatchIndex = -1,
+                isQueryPending = shouldMatch,
             )
         }
-        if (tooLong || text.isBlank()) {
-            matchJob?.cancel()
-            return
-        }
-        if (_state.value.phase == PhotoTextSearchPhase.READY) {
+
+        if (shouldMatch) {
             scheduleMatch()
         }
     }
@@ -132,6 +140,8 @@ class PhotoTextSearchController(
         _state.value = PhotoTextSearchState(
             phase = PhotoTextSearchPhase.PREPARING,
             query = preserveQuery,
+            queryTooLong = preserveQuery.length > MAX_QUERY_CHARACTERS,
+            isQueryPending = false,
         )
         slowJob?.cancel()
         slowJob = scope.launch {
@@ -164,6 +174,7 @@ class PhotoTextSearchController(
                 }
                 if (!isCurrent(request)) return
                 searchBlocks = blocks
+                val shouldMatch = _state.value.query.isNotBlank() && !_state.value.queryTooLong
                 _state.update {
                     it.copy(
                         phase = PhotoTextSearchPhase.READY,
@@ -171,9 +182,10 @@ class PhotoTextSearchController(
                         matches = emptyList(),
                         activeMatchIndex = -1,
                         isSlow = false,
+                        isQueryPending = shouldMatch,
                     )
                 }
-                if (_state.value.query.isNotBlank() && !_state.value.queryTooLong) {
+                if (shouldMatch) {
                     scheduleMatch()
                 }
             }
@@ -186,6 +198,7 @@ class PhotoTextSearchController(
                         matches = emptyList(),
                         activeMatchIndex = -1,
                         isSlow = false,
+                        isQueryPending = false,
                     )
                 }
             }
@@ -198,6 +211,7 @@ class PhotoTextSearchController(
                         matches = emptyList(),
                         activeMatchIndex = -1,
                         isSlow = false,
+                        isQueryPending = false,
                     )
                 }
             }
@@ -235,6 +249,7 @@ class PhotoTextSearchController(
                 it.copy(
                     matches = hits,
                     activeMatchIndex = if (hits.isEmpty()) -1 else 0,
+                    isQueryPending = false,
                 )
             }
         }
