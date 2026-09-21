@@ -349,6 +349,7 @@ private fun VaultItemPreviewDialog(
                         VaultPreviewImage(
                             item = item,
                             contentScale = ContentScale.Fit,
+                            contentDescription = if (searchState.isOpen) null else item.originalFileName,
                             onPreviewError = onPreviewNeeded,
                             modifier = Modifier.fillMaxSize(),
                         )
@@ -416,6 +417,7 @@ private fun VaultItemPreviewDialog(
 private fun VaultPreviewImage(
     item: VaultItem,
     contentScale: ContentScale,
+    contentDescription: String? = item.originalFileName,
     onPreviewError: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -434,7 +436,7 @@ private fun VaultPreviewImage(
     } else {
         AsyncImage(
             model = item.previewUri,
-            contentDescription = item.originalFileName,
+            contentDescription = contentDescription,
             contentScale = contentScale,
             onError = { onPreviewError() },
             modifier = modifier,
