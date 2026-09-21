@@ -462,8 +462,6 @@ private fun statusText(state: PhotoTextSearchState): String {
                         state.matches.size,
                     )
                 }
-                state.layout?.completeness == PhotoTextCompleteness.PARTIAL ->
-                    stringResource(R.string.viewer_search_partial)
                 else -> stringResource(R.string.viewer_search_no_match)
             }
         }
