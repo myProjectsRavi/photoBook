@@ -151,7 +151,9 @@ fun PhotoReelsScreen(
                             ) {
                                 AsyncImage(
                                     model = Uri.parse(photo.uriString),
-                                    contentDescription = photo.fileName,
+                                    contentDescription = if (
+                                        searchState.isOpen && page == pagerState.currentPage
+                                    ) null else photo.fileName,
                                     contentScale = if (
                                         searchState.isOpen &&
                                         page == pagerState.currentPage
