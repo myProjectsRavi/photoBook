@@ -108,11 +108,11 @@ fun PhotoTextSearchOverlay(
                 if (visibleOccurrenceCount >= MAX_PAINTED_OCCURRENCES) break
                 val elements = occurrence.elementIds.mapNotNull(::mappedElement)
                 if (elements.any(::isVisible)) {
-                    occurrence.elementIds.forEach(chosenIds::add)
+                    occurrence.elementIds.forEach { elementId -> chosenIds.add(elementId) }
                     visibleOccurrenceCount += 1
                 }
             }
-            active?.elementIds?.forEach(chosenIds::add)
+            active?.elementIds?.forEach { elementId -> chosenIds.add(elementId) }
 
             val paths = chosenIds.mapNotNull { elementId ->
                 mappedElement(elementId)?.let { element -> element.id to element.path }
