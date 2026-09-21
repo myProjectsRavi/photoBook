@@ -1891,6 +1891,7 @@ private fun PhotoPage(
     searchActiveMatchIndex: Int,
     searchOpen: Boolean,
     searchRevealRequest: Long,
+    onActiveMatchVisibilityChanged: (Boolean) -> Unit,
     onZoomChanged: (Float) -> Unit,
     onSingleTap: () -> Unit,
     onDismiss: () -> Unit,
@@ -1985,6 +1986,67 @@ private fun PhotoPage(
         }
     }
 
+    LaunchedEffect(
+        searchOpen,
+        searchLayout,
+        searchMatches,
+        searchActiveMatchIndex,
+        containerSize,
+        scale,
+        offset,
+        isActive,
+    ) {
+        if (
+            !searchOpen ||
+            !isActive ||
+            containerSize.width <= 0 ||
+            containerSize.height <= 0
+        ) {
+            onActiveMatchVisibilityChanged(true)
+            return@LaunchedEffect
+        }
+
+        val layout = searchLayout
+        val occurrence = searchMatches.getOrNull(searchActiveMatchIndex)
+        if (layout == null || occurrence == null) {
+            onActiveMatchVisibilityChanged(true)
+            return@LaunchedEffect
+        }
+
+        val elementsById = layout.elements.associateBy { element -> element.id }
+        val center = containerSize.centerOffset()
+        val transformed = occurrence.elementIds
+            .flatMap { id -> elementsById[id]?.corners.orEmpty() }
+            .map { point ->
+                val mapped = PhotoTextCoordinateMapper.mapToFitViewport(
+                    point = point,
+                    uprightWidth = layout.uprightWidth,
+                    uprightHeight = layout.uprightHeight,
+                    viewportWidth = containerSize.width.toFloat(),
+                    viewportHeight = containerSize.height.toFloat(),
+                )
+                Offset(
+                    x = center.x + (mapped.x - center.x) * scale + offset.x,
+                    y = center.y + (mapped.y - center.y) * scale + offset.y,
+                )
+            }
+            .filter { point -> point.x.isFinite() && point.y.isFinite() }
+
+        val visible = if (transformed.isEmpty()) {
+            true
+        } else {
+            val minX = transformed.minOf { it.x }
+            val maxX = transformed.maxOf { it.x }
+            val minY = transformed.minOf { it.y }
+            val maxY = transformed.maxOf { it.y }
+            maxX >= 0f &&
+                maxY >= 0f &&
+                minX <= containerSize.width.toFloat() &&
+                minY <= containerSize.height.toFloat()
+        }
+        onActiveMatchVisibilityChanged(visible)
+    }
+
     val bgAlpha = if (isSwipingToDismiss && containerSize.height > 0) {
         (1f - (kotlin.math.abs(swipeDragY) / containerSize.height.toFloat() * 1.6f)).coerceIn(0f, 1f)
     } else {
@@ -1994,6 +2056,7 @@ private fun PhotoPage(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .clipToBounds()
             .background(Color.Black.copy(alpha = bgAlpha)),
         contentAlignment = Alignment.Center,
     ) {
@@ -2009,7 +2072,64 @@ private fun PhotoPage(
             contentScale = ContentScale.Fit,
             modifier = Modifier
                 .fillMaxSize()
-                .onSizeChanged { containerSize = it }
+                .onSizeChanged { nextSize ->
+                    val previousSize = containerSize
+                    if (nextSize == previousSize) return@onSizeChanged
+
+                    val preserveCenter =
+                        previousSize.width > 0 &&
+                            previousSize.height > 0 &&
+                            nextSize.width > 0 &&
+                            nextSize.height > 0 &&
+                            scale > MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON
+
+                    if (!preserveCenter) {
+                        containerSize = nextSize
+                        if (scale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) {
+                            offset = Offset.Zero
+                        } else {
+                            offset = clampOffset(offset, scale)
+                        }
+                        return@onSizeChanged
+                    }
+
+                    val imageWidth =
+                        searchLayout?.uprightWidth?.takeIf { it > 0 } ?: photo.width.coerceAtLeast(1)
+                    val imageHeight =
+                        searchLayout?.uprightHeight?.takeIf { it > 0 } ?: photo.height.coerceAtLeast(1)
+                    val previousCenter = previousSize.centerOffset()
+                    val sourcePoint = PhotoTextCoordinateMapper.mapViewportPointToUnit(
+                        point = PixelPoint(
+                            x = previousCenter.x - offset.x / scale,
+                            y = previousCenter.y - offset.y / scale,
+                        ),
+                        uprightWidth = imageWidth,
+                        uprightHeight = imageHeight,
+                        viewportWidth = previousSize.width.toFloat(),
+                        viewportHeight = previousSize.height.toFloat(),
+                    )
+
+                    containerSize = nextSize
+                    if (sourcePoint == null) {
+                        offset = clampOffset(offset, scale)
+                    } else {
+                        val mapped = PhotoTextCoordinateMapper.mapToFitViewport(
+                            point = sourcePoint,
+                            uprightWidth = imageWidth,
+                            uprightHeight = imageHeight,
+                            viewportWidth = nextSize.width.toFloat(),
+                            viewportHeight = nextSize.height.toFloat(),
+                        )
+                        val nextCenter = nextSize.centerOffset()
+                        offset = clampOffset(
+                            Offset(
+                                x = (nextCenter.x - mapped.x) * scale,
+                                y = (nextCenter.y - mapped.y) * scale,
+                            ),
+                            scale,
+                        )
+                    }
+                }
                 // Taps: single tap toggles controls (always works, even when zoomed,
                 // guaranteeing the user can always reach the close button). Double tap
                 // smoothly zooms to/from the exact tap point.
