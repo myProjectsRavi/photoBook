@@ -2068,7 +2068,7 @@ private fun PhotoPage(
 
         AsyncImage(
             model = Uri.parse(photo.uriString),
-            contentDescription = photo.fileName,
+            contentDescription = if (searchOpen) null else photo.fileName,
             contentScale = ContentScale.Fit,
             modifier = Modifier
                 .fillMaxSize()
