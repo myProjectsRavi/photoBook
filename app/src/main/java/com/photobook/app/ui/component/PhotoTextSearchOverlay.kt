@@ -86,10 +86,10 @@ fun PhotoTextSearchOverlay(
                 val result = MappedElement(
                     id = elementId,
                     path = path,
-                    transformedMinX = transformedX.min(),
-                    transformedMaxX = transformedX.max(),
-                    transformedMinY = transformedY.min(),
-                    transformedMaxY = transformedY.max(),
+                    transformedMinX = transformedX.minOrNull() ?: return null,
+                    transformedMaxX = transformedX.maxOrNull() ?: return null,
+                    transformedMinY = transformedY.minOrNull() ?: return null,
+                    transformedMaxY = transformedY.maxOrNull() ?: return null,
                 )
                 mappedById[elementId] = result
                 return result
