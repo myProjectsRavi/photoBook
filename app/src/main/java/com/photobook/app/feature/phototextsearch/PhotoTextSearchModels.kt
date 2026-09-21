@@ -61,6 +61,7 @@ data class PhotoTextSearchState(
     val activeMatchIndex: Int = -1,
     val isSlow: Boolean = false,
     val queryTooLong: Boolean = false,
+    val isQueryPending: Boolean = false,
 ) {
     val isOpen: Boolean
         get() = phase != PhotoTextSearchPhase.CLOSED
