@@ -1,10 +1,10 @@
 package com.photobook.app.ui.screen
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
@@ -43,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
@@ -55,7 +56,9 @@ import com.photobook.app.R
 import com.photobook.app.feature.phototextsearch.PhotoTextLayoutSource
 import com.photobook.app.feature.phototextsearch.PhotoTextSearchController
 import com.photobook.app.feature.vault.VaultItem
-import com.photobook.app.ui.component.PhotoTextSearchControls
+import com.photobook.app.ui.component.PhotoTextSearchBackHandler
+import com.photobook.app.ui.component.PhotoTextSearchHeader
+import com.photobook.app.ui.component.PhotoTextSearchNavigation
 import com.photobook.app.ui.component.PhotoTextSearchOverlay
 import java.text.DateFormat
 import java.util.Date
@@ -267,9 +270,11 @@ private fun VaultItemPreviewDialog(
     DisposableEffect(searchController) {
         onDispose { searchController.dispose() }
     }
-    BackHandler(enabled = searchState.isOpen) {
-        searchController.close()
-    }
+
+    PhotoTextSearchBackHandler(
+        enabled = searchState.isOpen,
+        onClose = searchController::close,
+    )
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -279,103 +284,128 @@ private fun VaultItemPreviewDialog(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background,
         ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    IconButton(
-                        onClick = {
-                            searchController.close()
-                            onDismiss()
-                        },
-                    ) {
-                        Icon(Icons.Default.Close, contentDescription = stringResource(R.string.viewer_close))
-                    }
-                    Text(
-                        text = item.originalFileName,
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    IconButton(
-                        onClick = { searchController.open() },
-                        modifier = Modifier.size(48.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = stringResource(R.string.viewer_search_text),
-                        )
-                    }
-                }
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val compactSearchChrome =
+                    searchState.isOpen && maxHeight < 320.dp && maxWidth >= 600.dp
+                val requestInitialFocus = maxHeight >= 480.dp
 
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .background(Color.Black),
-                ) {
-                    VaultPreviewImage(
-                        item = item,
-                        contentScale = ContentScale.Fit,
-                        onPreviewError = onPreviewNeeded,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                    if (
-                        searchState.isOpen &&
-                        searchState.layout != null &&
-                        searchState.matches.isNotEmpty()
+                Column(modifier = Modifier.fillMaxSize()) {
+                    if (searchState.isOpen) {
+                        PhotoTextSearchHeader(
+                            state = searchState,
+                            onQueryChange = searchController::setQuery,
+                            onPrevious = searchController::previousMatch,
+                            onNext = searchController::nextMatch,
+                            onShowMatch = { },
+                            onRetry = searchController::retry,
+                            onClose = searchController::close,
+                            showMatchAction = false,
+                            compactNavigation = compactSearchChrome,
+                            requestInitialFocus = requestInitialFocus,
+                        )
+                    } else {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            IconButton(
+                                onClick = onDismiss,
+                                modifier = Modifier.size(48.dp),
+                            ) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = stringResource(R.string.viewer_close),
+                                )
+                            }
+                            Text(
+                                text = item.originalFileName,
+                                style = MaterialTheme.typography.titleSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            IconButton(
+                                onClick = { searchController.open() },
+                                modifier = Modifier.size(48.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = stringResource(R.string.viewer_search_text),
+                                )
+                            }
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .clipToBounds()
+                            .background(Color.Black),
                     ) {
-                        PhotoTextSearchOverlay(
-                            layout = searchState.layout!!,
-                            matches = searchState.matches,
-                            activeMatchIndex = searchState.activeMatchIndex,
+                        VaultPreviewImage(
+                            item = item,
+                            contentScale = ContentScale.Fit,
+                            contentDescription = if (searchState.isOpen) null else item.originalFileName,
+                            onPreviewError = onPreviewNeeded,
                             modifier = Modifier.fillMaxSize(),
                         )
+                        if (
+                            searchState.isOpen &&
+                            searchState.layout != null &&
+                            searchState.matches.isNotEmpty()
+                        ) {
+                            PhotoTextSearchOverlay(
+                                layout = searchState.layout!!,
+                                matches = searchState.matches,
+                                activeMatchIndex = searchState.activeMatchIndex,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
                     }
-                }
 
-                if (searchState.isOpen) {
-                    PhotoTextSearchControls(
-                        state = searchState,
-                        onQueryChange = searchController::setQuery,
-                        onPrevious = searchController::previousMatch,
-                        onNext = searchController::nextMatch,
-                        onShowMatch = { /* Fit mode keeps all search geometry visible. */ },
-                        onRetry = searchController::retry,
-                        onClose = searchController::close,
-                    )
-                }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    TextButton(
-                        onClick = onDismiss,
-                        enabled = !isBusy,
-                    ) {
-                        Text(text = stringResource(R.string.vault_keep_in_vault))
-                    }
-                    Button(
-                        onClick = onMoveOut,
-                        enabled = !isBusy,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Text(text = stringResource(R.string.vault_move_out))
-                    }
-                    TextButton(
-                        onClick = onDelete,
-                        enabled = !isBusy,
-                    ) {
-                        Text(text = stringResource(R.string.vault_delete))
+                    if (searchState.isOpen) {
+                        if (!compactSearchChrome) {
+                            PhotoTextSearchNavigation(
+                                state = searchState,
+                                onPrevious = searchController::previousMatch,
+                                onNext = searchController::nextMatch,
+                                onShowMatch = { },
+                                onRetry = searchController::retry,
+                                showMatchAction = false,
+                            )
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            TextButton(
+                                onClick = onDismiss,
+                                enabled = !isBusy,
+                            ) {
+                                Text(text = stringResource(R.string.vault_keep_in_vault))
+                            }
+                            Button(
+                                onClick = onMoveOut,
+                                enabled = !isBusy,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(text = stringResource(R.string.vault_move_out))
+                            }
+                            TextButton(
+                                onClick = onDelete,
+                                enabled = !isBusy,
+                            ) {
+                                Text(text = stringResource(R.string.vault_delete))
+                            }
+                        }
                     }
                 }
             }
@@ -387,6 +417,7 @@ private fun VaultItemPreviewDialog(
 private fun VaultPreviewImage(
     item: VaultItem,
     contentScale: ContentScale,
+    contentDescription: String? = item.originalFileName,
     onPreviewError: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -405,7 +436,7 @@ private fun VaultPreviewImage(
     } else {
         AsyncImage(
             model = item.previewUri,
-            contentDescription = item.originalFileName,
+            contentDescription = contentDescription,
             contentScale = contentScale,
             onError = { onPreviewError() },
             modifier = modifier,

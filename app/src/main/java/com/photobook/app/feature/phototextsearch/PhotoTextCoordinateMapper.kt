@@ -34,9 +34,53 @@ object PhotoTextCoordinateMapper {
         val displayedHeight = imageHeight * fit
         val dx = (viewportWidth - displayedWidth) / 2f
         val dy = (viewportHeight - displayedHeight) / 2f
+        val unitX = point.x.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0f
+        val unitY = point.y.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 0f
         return PixelPoint(
-            x = dx + point.x.coerceIn(0f, 1f) * displayedWidth,
-            y = dy + point.y.coerceIn(0f, 1f) * displayedHeight,
+            x = dx + unitX * displayedWidth,
+            y = dy + unitY * displayedHeight,
+        )
+    }
+
+    fun mapViewportPointToUnit(
+        point: PixelPoint,
+        uprightWidth: Int,
+        uprightHeight: Int,
+        viewportWidth: Float,
+        viewportHeight: Float,
+    ): UnitPoint? {
+        if (
+            uprightWidth <= 0 ||
+            uprightHeight <= 0 ||
+            viewportWidth <= 0f ||
+            viewportHeight <= 0f ||
+            !point.x.isFinite() ||
+            !point.y.isFinite()
+        ) {
+            return null
+        }
+
+        val imageWidth = uprightWidth.toFloat()
+        val imageHeight = uprightHeight.toFloat()
+        val fit = min(viewportWidth / imageWidth, viewportHeight / imageHeight)
+        val displayedWidth = imageWidth * fit
+        val displayedHeight = imageHeight * fit
+        if (
+            fit <= 0f ||
+            !fit.isFinite() ||
+            displayedWidth <= 0f ||
+            displayedHeight <= 0f ||
+            !displayedWidth.isFinite() ||
+            !displayedHeight.isFinite()
+        ) {
+            return null
+        }
+
+        val dx = (viewportWidth - displayedWidth) / 2f
+        val dy = (viewportHeight - displayedHeight) / 2f
+        return UnitPoint(
+            x = ((point.x - dx) / displayedWidth).coerceIn(0f, 1f),
+            y = ((point.y - dy) / displayedHeight).coerceIn(0f, 1f),
         )
     }
 

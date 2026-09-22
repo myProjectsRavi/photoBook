@@ -20,6 +20,44 @@ class PhotoTextCoordinateMapperTest {
     }
 
     @Test
+    fun fitMapping_roundTripsViewportCenterForResizePreservation() {
+        val unit = UnitPoint(0.62f, 0.41f)
+        val mapped = PhotoTextCoordinateMapper.mapToFitViewport(
+            point = unit,
+            uprightWidth = 1600,
+            uprightHeight = 900,
+            viewportWidth = 1080f,
+            viewportHeight = 1200f,
+        )
+
+        val roundTrip = PhotoTextCoordinateMapper.mapViewportPointToUnit(
+            point = mapped,
+            uprightWidth = 1600,
+            uprightHeight = 900,
+            viewportWidth = 1080f,
+            viewportHeight = 1200f,
+        )
+
+        assertThat(roundTrip).isNotNull()
+        assertThat(roundTrip!!.x).isWithin(0.0001f).of(unit.x)
+        assertThat(roundTrip.y).isWithin(0.0001f).of(unit.y)
+    }
+
+    @Test
+    fun nonFiniteUnitPoint_withValidViewport_isSanitized() {
+        val mapped = PhotoTextCoordinateMapper.mapToFitViewport(
+            point = UnitPoint(Float.NaN, Float.POSITIVE_INFINITY),
+            uprightWidth = 100,
+            uprightHeight = 100,
+            viewportWidth = 500f,
+            viewportHeight = 500f,
+        )
+
+        assertThat(mapped.x.isFinite()).isTrue()
+        assertThat(mapped.y.isFinite()).isTrue()
+    }
+
+    @Test
     fun invalidViewport_neverProducesNan() {
         val mapped = PhotoTextCoordinateMapper.mapToFitViewport(
             point = UnitPoint(Float.NaN, Float.POSITIVE_INFINITY),

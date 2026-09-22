@@ -7,7 +7,6 @@ import android.os.Build
 import android.net.Uri
 import android.provider.MediaStore
 import android.widget.Toast
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
@@ -86,6 +85,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.graphics.Color
@@ -116,11 +116,14 @@ import com.photobook.app.feature.copytext.PhotoTextCopyCoordinator
 import com.photobook.app.feature.copytext.PreviewSeed
 import com.photobook.app.feature.phototextsearch.PhotoTextCoordinateMapper
 import com.photobook.app.feature.phototextsearch.PhotoTextLayout
+import com.photobook.app.feature.phototextsearch.PixelPoint
 import com.photobook.app.feature.phototextsearch.PhotoTextSearchController
 import com.photobook.app.feature.phototextsearch.SearchOccurrence
 import com.photobook.app.feature.phototextsearch.mediaStorePhotoTextLayoutSource
 import com.photobook.app.ml.BundledOnDeviceIntelligence
-import com.photobook.app.ui.component.PhotoTextSearchControls
+import com.photobook.app.ui.component.PhotoTextSearchBackHandler
+import com.photobook.app.ui.component.PhotoTextSearchHeader
+import com.photobook.app.ui.component.PhotoTextSearchNavigation
 import com.photobook.app.ui.component.PhotoTextSearchOverlay
 import com.photobook.app.feature.duplicates.BestShotRecommendation
 import com.photobook.app.feature.duplicates.BurstBestShotPicker
@@ -174,6 +177,7 @@ fun PhotoViewerScreen(
     }
     val photoTextSearchState by photoTextSearchController.state.collectAsState()
     var searchRevealRequest by remember { mutableStateOf(0L) }
+    var activeSearchMatchVisible by remember { mutableStateOf(true) }
     var initialSearchConsumed by remember { mutableStateOf(false) }
     val safeStart = startIndex.coerceIn(0, photos.lastIndex)
     val pagerState = rememberPagerState(initialPage = safeStart, pageCount = { photos.size })
@@ -483,10 +487,13 @@ fun PhotoViewerScreen(
         }
     }
 
-    BackHandler(enabled = photoTextSearchState.isOpen) {
-        photoTextSearchController.close()
-        showControls = true
-    }
+    PhotoTextSearchBackHandler(
+        enabled = photoTextSearchState.isOpen,
+        onClose = {
+            photoTextSearchController.close()
+            showControls = true
+        },
+    )
 
     Dialog(
         onDismissRequest = {
@@ -501,305 +508,448 @@ fun PhotoViewerScreen(
             modifier = Modifier.fillMaxSize(),
             color = Color.Black,
         ) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                // ===== Main Pager (fills entire screen) =====
-                val pagerScrollEnabled =
-                    currentPageZoom <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON &&
-                        !photoTextSearchState.isOpen
-                if (reelsEnabled) {
-                    // Instagram Reels-style vertical browsing: swipe up = next photo.
-                    VerticalPager(
-                        state = pagerState,
-                        key = { page -> photos.getOrNull(page)?.id ?: page.toLong() },
-                        userScrollEnabled = pagerScrollEnabled,
-                        modifier = Modifier.fillMaxSize(),
-                    ) { page ->
-                        photos.getOrNull(page)?.let { photo ->
-                            PhotoPage(
-                                photo = photo,
-                                isActive = page == pagerState.currentPage,
-                                reelsEnabled = true,
-                                searchLayout = if (page == pagerState.currentPage) {
-                                    photoTextSearchState.layout
-                                } else {
-                                    null
-                                },
-                                searchMatches = if (page == pagerState.currentPage) {
-                                    photoTextSearchState.matches
-                                } else {
-                                    emptyList()
-                                },
-                                searchActiveMatchIndex = photoTextSearchState.activeMatchIndex,
-                                searchOpen = photoTextSearchState.isOpen && page == pagerState.currentPage,
-                                searchRevealRequest = searchRevealRequest,
-                                onZoomChanged = { currentPageZoom = it },
-                                onSingleTap = {
-                                    if (!photoTextSearchState.isOpen) {
-                                        showControls = !showControls
-                                    }
-                                },
-                                onDismiss = {
-                                    dismissCopySheet()
-                                    photoTextSearchController.close()
-                                    onDismiss()
-                                },
-                            )
-                        }
-                    }
-                } else {
-                    HorizontalPager(
-                        state = pagerState,
-                        key = { page -> photos.getOrNull(page)?.id ?: page.toLong() },
-                        userScrollEnabled = pagerScrollEnabled,
-                        modifier = Modifier.fillMaxSize(),
-                    ) { page ->
-                        photos.getOrNull(page)?.let { photo ->
-                            PhotoPage(
-                                photo = photo,
-                                isActive = page == pagerState.currentPage,
-                                reelsEnabled = false,
-                                searchLayout = if (page == pagerState.currentPage) {
-                                    photoTextSearchState.layout
-                                } else {
-                                    null
-                                },
-                                searchMatches = if (page == pagerState.currentPage) {
-                                    photoTextSearchState.matches
-                                } else {
-                                    emptyList()
-                                },
-                                searchActiveMatchIndex = photoTextSearchState.activeMatchIndex,
-                                searchOpen = photoTextSearchState.isOpen && page == pagerState.currentPage,
-                                searchRevealRequest = searchRevealRequest,
-                                onZoomChanged = { currentPageZoom = it },
-                                onSingleTap = {
-                                    if (!photoTextSearchState.isOpen) {
-                                        showControls = !showControls
-                                    }
-                                },
-                                onDismiss = {
-                                    dismissCopySheet()
-                                    photoTextSearchController.close()
-                                    onDismiss()
-                                },
-                            )
-                        }
-                    }
-                }
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val compactSearchChrome =
+                    photoTextSearchState.isOpen && maxHeight < 320.dp && maxWidth >= 600.dp
+                val requestInitialFocus = maxHeight >= 480.dp
 
-                // ===== Controls overlay (tap to show/hide) =====
-                AnimatedVisibility(
-                    visible = showControls || photoTextSearchState.isOpen,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.SpaceBetween,
+                Column(modifier = Modifier.fillMaxSize()) {
+                    if (photoTextSearchState.isOpen) {
+                        PhotoTextSearchHeader(
+                            state = photoTextSearchState,
+                            onQueryChange = photoTextSearchController::setQuery,
+                            onPrevious = {
+                                photoTextSearchController.previousMatch()
+                                searchRevealRequest += 1L
+                            },
+                            onNext = {
+                                photoTextSearchController.nextMatch()
+                                searchRevealRequest += 1L
+                            },
+                            onShowMatch = { searchRevealRequest += 1L },
+                            onRetry = photoTextSearchController::retry,
+                            onClose = {
+                                photoTextSearchController.close()
+                                showControls = true
+                            },
+                            showMatchAction =
+                                photoTextSearchState.matches.isNotEmpty() &&
+                                    !activeSearchMatchVisible,
+                            compactNavigation = compactSearchChrome,
+                            requestInitialFocus = requestInitialFocus,
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .clipToBounds(),
                     ) {
-                        // Top bar
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(Color(0x88000000))
-                                .padding(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                        ) {
-                            Surface(
-                                color = Color(0x22FFFFFF),
-                                shape = RoundedCornerShape(28.dp),
-                            ) {
-                                IconButton(
-                                    modifier = Modifier.size(42.dp),
-                                    onClick = {
-                                        dismissCopySheet()
-                                        onDismiss()
-                                    },
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = stringResource(R.string.viewer_close),
-                                        tint = Color.White,
+                        val pagerScrollEnabled =
+                            currentPageZoom <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON &&
+                                !photoTextSearchState.isOpen
+
+                        if (reelsEnabled) {
+                            VerticalPager(
+                                state = pagerState,
+                                key = { page -> photos.getOrNull(page)?.id ?: page.toLong() },
+                                userScrollEnabled = pagerScrollEnabled,
+                                modifier = Modifier.fillMaxSize(),
+                            ) { page ->
+                                photos.getOrNull(page)?.let { photo ->
+                                    PhotoPage(
+                                        photo = photo,
+                                        isActive = page == pagerState.currentPage,
+                                        reelsEnabled = true,
+                                        searchLayout = if (page == pagerState.currentPage) {
+                                            photoTextSearchState.layout
+                                        } else {
+                                            null
+                                        },
+                                        searchMatches = if (page == pagerState.currentPage) {
+                                            photoTextSearchState.matches
+                                        } else {
+                                            emptyList()
+                                        },
+                                        searchActiveMatchIndex = photoTextSearchState.activeMatchIndex,
+                                        searchOpen =
+                                            photoTextSearchState.isOpen &&
+                                                page == pagerState.currentPage,
+                                        searchRevealRequest = searchRevealRequest,
+                                        onActiveMatchVisibilityChanged = { visible ->
+                                            if (page == pagerState.currentPage) {
+                                                activeSearchMatchVisible = visible
+                                            }
+                                        },
+                                        onZoomChanged = { currentPageZoom = it },
+                                        onSingleTap = {
+                                            if (!photoTextSearchState.isOpen) {
+                                                showControls = !showControls
+                                            }
+                                        },
+                                        onDismiss = {
+                                            dismissCopySheet()
+                                            photoTextSearchController.close()
+                                            onDismiss()
+                                        },
                                     )
                                 }
                             }
-                            Text(
-                                text = stringResource(
-                                    R.string.viewer_index,
-                                    pagerState.currentPage.coerceIn(0, photos.lastIndex) + 1,
-                                    photos.size,
-                                ),
-                                color = Color.White,
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Surface(
-                                    color = Color(0x44FFFFFF),
-                                    shape = RoundedCornerShape(28.dp),
-                                ) {
-                                    IconButton(
-                                        modifier = Modifier.size(48.dp),
-                                        onClick = {
-                                            showControls = true
-                                            photoTextSearchController.open()
+                        } else {
+                            HorizontalPager(
+                                state = pagerState,
+                                key = { page -> photos.getOrNull(page)?.id ?: page.toLong() },
+                                userScrollEnabled = pagerScrollEnabled,
+                                modifier = Modifier.fillMaxSize(),
+                            ) { page ->
+                                photos.getOrNull(page)?.let { photo ->
+                                    PhotoPage(
+                                        photo = photo,
+                                        isActive = page == pagerState.currentPage,
+                                        reelsEnabled = false,
+                                        searchLayout = if (page == pagerState.currentPage) {
+                                            photoTextSearchState.layout
+                                        } else {
+                                            null
                                         },
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Search,
-                                            contentDescription = stringResource(R.string.viewer_search_text),
-                                            tint = Color.White,
-                                            modifier = Modifier.size(24.dp),
-                                        )
-                                    }
+                                        searchMatches = if (page == pagerState.currentPage) {
+                                            photoTextSearchState.matches
+                                        } else {
+                                            emptyList()
+                                        },
+                                        searchActiveMatchIndex = photoTextSearchState.activeMatchIndex,
+                                        searchOpen =
+                                            photoTextSearchState.isOpen &&
+                                                page == pagerState.currentPage,
+                                        searchRevealRequest = searchRevealRequest,
+                                        onActiveMatchVisibilityChanged = { visible ->
+                                            if (page == pagerState.currentPage) {
+                                                activeSearchMatchVisible = visible
+                                            }
+                                        },
+                                        onZoomChanged = { currentPageZoom = it },
+                                        onSingleTap = {
+                                            if (!photoTextSearchState.isOpen) {
+                                                showControls = !showControls
+                                            }
+                                        },
+                                        onDismiss = {
+                                            dismissCopySheet()
+                                            photoTextSearchController.close()
+                                            onDismiss()
+                                        },
+                                    )
                                 }
-                                Surface(
-                                    color = Color(0x44FFFFFF),
-                                    shape = RoundedCornerShape(28.dp),
-                                ) {
-                                    IconButton(
-                                        modifier = Modifier.size(42.dp),
-                                        onClick = { shareActivePhoto() },
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Share,
-                                            contentDescription = stringResource(R.string.viewer_share),
-                                            tint = Color.White,
-                                            modifier = Modifier.size(24.dp),
-                                        )
-                                    }
-                                }
-                            }
-
-                            if (photoTextSearchState.isOpen) {
-                                PhotoTextSearchControls(
-                                    state = photoTextSearchState,
-                                    onQueryChange = photoTextSearchController::setQuery,
-                                    onPrevious = {
-                                        photoTextSearchController.previousMatch()
-                                        searchRevealRequest += 1L
-                                    },
-                                    onNext = {
-                                        photoTextSearchController.nextMatch()
-                                        searchRevealRequest += 1L
-                                    },
-                                    onShowMatch = {
-                                        searchRevealRequest += 1L
-                                    },
-                                    onRetry = photoTextSearchController::retry,
-                                    onClose = {
-                                        photoTextSearchController.close()
-                                        showControls = true
-                                    },
-                                )
                             }
                         }
 
-                        // Bottom section: action buttons + info
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(Color(0x88000000)),
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = showControls && !photoTextSearchState.isOpen,
+                            enter = fadeIn(),
+                            exit = fadeOut(),
+                            modifier = Modifier.fillMaxSize(),
                         ) {
-                            // Action buttons bar
-                            run {
-                                val active = photos.getOrNull(pagerState.currentPage) ?: return@run
+                            Column(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.SpaceBetween,
+                            ) {
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState())
-                                        .padding(horizontal = 18.dp, vertical = 4.dp),
+                                        .background(Color(0x88000000))
+                                        .padding(8.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
                                 ) {
-                                    Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
-                                        IconButton(modifier = Modifier.size(42.dp), onClick = { onToggleFavorite(active.id) }) {
+                                    Surface(
+                                        color = Color(0x22FFFFFF),
+                                        shape = RoundedCornerShape(28.dp),
+                                    ) {
+                                        IconButton(
+                                            modifier = Modifier.size(42.dp),
+                                            onClick = {
+                                                dismissCopySheet()
+                                                onDismiss()
+                                            },
+                                        ) {
                                             Icon(
-                                                imageVector = if (active.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                                contentDescription = stringResource(R.string.viewer_favorite),
-                                                tint = if (active.isFavorite) Color(0xFFFF6B6B) else Color.White,
-                                                modifier = Modifier.size(22.dp),
+                                                imageVector = Icons.Default.Close,
+                                                contentDescription = stringResource(R.string.viewer_close),
+                                                tint = Color.White,
                                             )
                                         }
                                     }
-                                    Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
-                                        IconButton(modifier = Modifier.size(42.dp), onClick = ::openExifSheet) {
-                                            Icon(Icons.Default.Info, contentDescription = stringResource(R.string.viewer_metadata), tint = Color.White, modifier = Modifier.size(22.dp))
-                                        }
-                                    }
-                                    Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
-                                        IconButton(modifier = Modifier.size(42.dp), onClick = ::openEditorSheet) {
-                                            Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.viewer_edit_photo), tint = Color.White, modifier = Modifier.size(22.dp))
-                                        }
-                                    }
-                                    Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
-                                        IconButton(modifier = Modifier.size(42.dp), onClick = { onShareAsPdf(active) }) {
-                                            Icon(Icons.Default.PictureAsPdf, contentDescription = stringResource(R.string.viewer_share_as_pdf), tint = Color.White, modifier = Modifier.size(22.dp))
-                                        }
-                                    }
-                                    Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
-                                        IconButton(modifier = Modifier.size(42.dp), onClick = ::startCopyAllTextFlow) {
-                                            Icon(Icons.Default.ContentCopy, contentDescription = stringResource(R.string.viewer_copy_all_text), tint = Color.White, modifier = Modifier.size(22.dp))
-                                        }
-                                    }
-                                    Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
-                                        IconButton(
-                                            modifier = Modifier.size(42.dp),
-                                            onClick = { onMoveToVault(active) },
+                                    Text(
+                                        text = stringResource(
+                                            R.string.viewer_index,
+                                            pagerState.currentPage.coerceIn(0, photos.lastIndex) + 1,
+                                            photos.size,
+                                        ),
+                                        color = Color.White,
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Surface(
+                                            color = Color(0x44FFFFFF),
+                                            shape = RoundedCornerShape(28.dp),
                                         ) {
-                                            Icon(Icons.Default.Lock, contentDescription = stringResource(R.string.viewer_move_to_vault), tint = Color.White, modifier = Modifier.size(22.dp))
+                                            IconButton(
+                                                modifier = Modifier.size(48.dp),
+                                                onClick = {
+                                                    showControls = true
+                                                    activeSearchMatchVisible = true
+                                                    photoTextSearchController.open()
+                                                },
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Search,
+                                                    contentDescription = stringResource(
+                                                        R.string.viewer_search_text,
+                                                    ),
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(24.dp),
+                                                )
+                                            }
                                         }
-                                    }
-                                    Surface(color = Color(0x22FFFFFF), shape = RoundedCornerShape(28.dp)) {
-                                        IconButton(modifier = Modifier.size(42.dp), onClick = { onMoveToTrash(active) }) {
-                                            Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.viewer_move_to_trash), tint = Color.White, modifier = Modifier.size(22.dp))
+                                        Surface(
+                                            color = Color(0x44FFFFFF),
+                                            shape = RoundedCornerShape(28.dp),
+                                        ) {
+                                            IconButton(
+                                                modifier = Modifier.size(42.dp),
+                                                onClick = { shareActivePhoto() },
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Share,
+                                                    contentDescription = stringResource(
+                                                        R.string.viewer_share,
+                                                    ),
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(24.dp),
+                                                )
+                                            }
                                         }
                                     }
                                 }
-                            }
 
-                            // Photo info
-                            run {
-                                val active = photos.getOrNull(pagerState.currentPage) ?: return@run
-                                val noLocation = stringResource(R.string.no_location)
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                        .background(Color(0x88000000)),
                                 ) {
-                                    Text(
-                                        text = active.fileName,
-                                        color = Color.White,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                    )
-                                    Text(
-                                        text = stringResource(
-                                            R.string.viewer_meta,
-                                            active.width,
-                                            active.height,
-                                            (active.fileSize / 1024).toInt(),
-                                            active.folderName,
-                                        ),
-                                        color = Color.LightGray,
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
-                                    val location = listOfNotNull(active.city, active.state, active.country)
-                                        .joinToString()
-                                        .ifBlank { noLocation }
-                                    Text(
-                                        text = location,
-                                        color = Color.LightGray,
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
-                                    Text(
-                                        text = stringResource(R.string.viewer_swipe_hint),
-                                        color = Color(0xFFD6D6D6),
-                                        style = MaterialTheme.typography.labelSmall,
-                                    )
+                                    run {
+                                        val active =
+                                            photos.getOrNull(pagerState.currentPage) ?: return@run
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .horizontalScroll(rememberScrollState())
+                                                .padding(horizontal = 18.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        ) {
+                                            Surface(
+                                                color = Color(0x22FFFFFF),
+                                                shape = RoundedCornerShape(28.dp),
+                                            ) {
+                                                IconButton(
+                                                    modifier = Modifier.size(42.dp),
+                                                    onClick = { onToggleFavorite(active.id) },
+                                                ) {
+                                                    Icon(
+                                                        imageVector = if (active.isFavorite) {
+                                                            Icons.Default.Favorite
+                                                        } else {
+                                                            Icons.Default.FavoriteBorder
+                                                        },
+                                                        contentDescription = stringResource(
+                                                            R.string.viewer_favorite,
+                                                        ),
+                                                        tint = if (active.isFavorite) {
+                                                            Color(0xFFFF6B6B)
+                                                        } else {
+                                                            Color.White
+                                                        },
+                                                        modifier = Modifier.size(22.dp),
+                                                    )
+                                                }
+                                            }
+                                            Surface(
+                                                color = Color(0x22FFFFFF),
+                                                shape = RoundedCornerShape(28.dp),
+                                            ) {
+                                                IconButton(
+                                                    modifier = Modifier.size(42.dp),
+                                                    onClick = ::openExifSheet,
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.Info,
+                                                        contentDescription = stringResource(
+                                                            R.string.viewer_metadata,
+                                                        ),
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(22.dp),
+                                                    )
+                                                }
+                                            }
+                                            Surface(
+                                                color = Color(0x22FFFFFF),
+                                                shape = RoundedCornerShape(28.dp),
+                                            ) {
+                                                IconButton(
+                                                    modifier = Modifier.size(42.dp),
+                                                    onClick = ::openEditorSheet,
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.Edit,
+                                                        contentDescription = stringResource(
+                                                            R.string.viewer_edit_photo,
+                                                        ),
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(22.dp),
+                                                    )
+                                                }
+                                            }
+                                            Surface(
+                                                color = Color(0x22FFFFFF),
+                                                shape = RoundedCornerShape(28.dp),
+                                            ) {
+                                                IconButton(
+                                                    modifier = Modifier.size(42.dp),
+                                                    onClick = { onShareAsPdf(active) },
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.PictureAsPdf,
+                                                        contentDescription = stringResource(
+                                                            R.string.viewer_share_as_pdf,
+                                                        ),
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(22.dp),
+                                                    )
+                                                }
+                                            }
+                                            Surface(
+                                                color = Color(0x22FFFFFF),
+                                                shape = RoundedCornerShape(28.dp),
+                                            ) {
+                                                IconButton(
+                                                    modifier = Modifier.size(42.dp),
+                                                    onClick = ::startCopyAllTextFlow,
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.ContentCopy,
+                                                        contentDescription = stringResource(
+                                                            R.string.viewer_copy_all_text,
+                                                        ),
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(22.dp),
+                                                    )
+                                                }
+                                            }
+                                            Surface(
+                                                color = Color(0x22FFFFFF),
+                                                shape = RoundedCornerShape(28.dp),
+                                            ) {
+                                                IconButton(
+                                                    modifier = Modifier.size(42.dp),
+                                                    onClick = { onMoveToVault(active) },
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.Lock,
+                                                        contentDescription = stringResource(
+                                                            R.string.viewer_move_to_vault,
+                                                        ),
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(22.dp),
+                                                    )
+                                                }
+                                            }
+                                            Surface(
+                                                color = Color(0x22FFFFFF),
+                                                shape = RoundedCornerShape(28.dp),
+                                            ) {
+                                                IconButton(
+                                                    modifier = Modifier.size(42.dp),
+                                                    onClick = { onMoveToTrash(active) },
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.Delete,
+                                                        contentDescription = stringResource(
+                                                            R.string.viewer_move_to_trash,
+                                                        ),
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(22.dp),
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    run {
+                                        val active =
+                                            photos.getOrNull(pagerState.currentPage) ?: return@run
+                                        val noLocation = stringResource(R.string.no_location)
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(12.dp),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                                        ) {
+                                            Text(
+                                                text = active.fileName,
+                                                color = Color.White,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                            )
+                                            Text(
+                                                text = stringResource(
+                                                    R.string.viewer_meta,
+                                                    active.width,
+                                                    active.height,
+                                                    (active.fileSize / 1024).toInt(),
+                                                    active.folderName,
+                                                ),
+                                                color = Color.LightGray,
+                                                style = MaterialTheme.typography.bodySmall,
+                                            )
+                                            val location = listOfNotNull(
+                                                active.city,
+                                                active.state,
+                                                active.country,
+                                            ).joinToString().ifBlank { noLocation }
+                                            Text(
+                                                text = location,
+                                                color = Color.LightGray,
+                                                style = MaterialTheme.typography.bodySmall,
+                                            )
+                                            Text(
+                                                text = stringResource(R.string.viewer_swipe_hint),
+                                                color = Color(0xFFD6D6D6),
+                                                style = MaterialTheme.typography.labelSmall,
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
+                    }
+
+                    if (photoTextSearchState.isOpen && !compactSearchChrome) {
+                        PhotoTextSearchNavigation(
+                            state = photoTextSearchState,
+                            onPrevious = {
+                                photoTextSearchController.previousMatch()
+                                searchRevealRequest += 1L
+                            },
+                            onNext = {
+                                photoTextSearchController.nextMatch()
+                                searchRevealRequest += 1L
+                            },
+                            onShowMatch = { searchRevealRequest += 1L },
+                            onRetry = photoTextSearchController::retry,
+                            showMatchAction =
+                                photoTextSearchState.matches.isNotEmpty() &&
+                                    !activeSearchMatchVisible,
+                        )
                     }
                 }
             }
@@ -1741,6 +1891,7 @@ private fun PhotoPage(
     searchActiveMatchIndex: Int,
     searchOpen: Boolean,
     searchRevealRequest: Long,
+    onActiveMatchVisibilityChanged: (Boolean) -> Unit,
     onZoomChanged: (Float) -> Unit,
     onSingleTap: () -> Unit,
     onDismiss: () -> Unit,
@@ -1835,6 +1986,67 @@ private fun PhotoPage(
         }
     }
 
+    LaunchedEffect(
+        searchOpen,
+        searchLayout,
+        searchMatches,
+        searchActiveMatchIndex,
+        containerSize,
+        scale,
+        offset,
+        isActive,
+    ) {
+        if (
+            !searchOpen ||
+            !isActive ||
+            containerSize.width <= 0 ||
+            containerSize.height <= 0
+        ) {
+            onActiveMatchVisibilityChanged(true)
+            return@LaunchedEffect
+        }
+
+        val layout = searchLayout
+        val occurrence = searchMatches.getOrNull(searchActiveMatchIndex)
+        if (layout == null || occurrence == null) {
+            onActiveMatchVisibilityChanged(true)
+            return@LaunchedEffect
+        }
+
+        val elementsById = layout.elements.associateBy { element -> element.id }
+        val center = containerSize.centerOffset()
+        val transformed = occurrence.elementIds
+            .flatMap { id -> elementsById[id]?.corners.orEmpty() }
+            .map { point ->
+                val mapped = PhotoTextCoordinateMapper.mapToFitViewport(
+                    point = point,
+                    uprightWidth = layout.uprightWidth,
+                    uprightHeight = layout.uprightHeight,
+                    viewportWidth = containerSize.width.toFloat(),
+                    viewportHeight = containerSize.height.toFloat(),
+                )
+                Offset(
+                    x = center.x + (mapped.x - center.x) * scale + offset.x,
+                    y = center.y + (mapped.y - center.y) * scale + offset.y,
+                )
+            }
+            .filter { point -> point.x.isFinite() && point.y.isFinite() }
+
+        val visible = if (transformed.isEmpty()) {
+            true
+        } else {
+            val minX = transformed.minOf { it.x }
+            val maxX = transformed.maxOf { it.x }
+            val minY = transformed.minOf { it.y }
+            val maxY = transformed.maxOf { it.y }
+            maxX >= 0f &&
+                maxY >= 0f &&
+                minX <= containerSize.width.toFloat() &&
+                minY <= containerSize.height.toFloat()
+        }
+        onActiveMatchVisibilityChanged(visible)
+    }
+
     val bgAlpha = if (isSwipingToDismiss && containerSize.height > 0) {
         (1f - (kotlin.math.abs(swipeDragY) / containerSize.height.toFloat() * 1.6f)).coerceIn(0f, 1f)
     } else {
@@ -1844,6 +2056,7 @@ private fun PhotoPage(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .clipToBounds()
             .background(Color.Black.copy(alpha = bgAlpha)),
         contentAlignment = Alignment.Center,
     ) {
@@ -1855,11 +2068,68 @@ private fun PhotoPage(
 
         AsyncImage(
             model = Uri.parse(photo.uriString),
-            contentDescription = photo.fileName,
+            contentDescription = if (searchOpen) null else photo.fileName,
             contentScale = ContentScale.Fit,
             modifier = Modifier
                 .fillMaxSize()
-                .onSizeChanged { containerSize = it }
+                .onSizeChanged { nextSize ->
+                    val previousSize = containerSize
+                    if (nextSize == previousSize) return@onSizeChanged
+
+                    val preserveCenter =
+                        previousSize.width > 0 &&
+                            previousSize.height > 0 &&
+                            nextSize.width > 0 &&
+                            nextSize.height > 0 &&
+                            scale > MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON
+
+                    if (!preserveCenter) {
+                        containerSize = nextSize
+                        if (scale <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON) {
+                            offset = Offset.Zero
+                        } else {
+                            offset = clampOffset(offset, scale)
+                        }
+                        return@onSizeChanged
+                    }
+
+                    val imageWidth =
+                        searchLayout?.uprightWidth?.takeIf { it > 0 } ?: photo.width.coerceAtLeast(1)
+                    val imageHeight =
+                        searchLayout?.uprightHeight?.takeIf { it > 0 } ?: photo.height.coerceAtLeast(1)
+                    val previousCenter = previousSize.centerOffset()
+                    val sourcePoint = PhotoTextCoordinateMapper.mapViewportPointToUnit(
+                        point = PixelPoint(
+                            x = previousCenter.x - offset.x / scale,
+                            y = previousCenter.y - offset.y / scale,
+                        ),
+                        uprightWidth = imageWidth,
+                        uprightHeight = imageHeight,
+                        viewportWidth = previousSize.width.toFloat(),
+                        viewportHeight = previousSize.height.toFloat(),
+                    )
+
+                    containerSize = nextSize
+                    if (sourcePoint == null) {
+                        offset = clampOffset(offset, scale)
+                    } else {
+                        val mapped = PhotoTextCoordinateMapper.mapToFitViewport(
+                            point = sourcePoint,
+                            uprightWidth = imageWidth,
+                            uprightHeight = imageHeight,
+                            viewportWidth = nextSize.width.toFloat(),
+                            viewportHeight = nextSize.height.toFloat(),
+                        )
+                        val nextCenter = nextSize.centerOffset()
+                        offset = clampOffset(
+                            Offset(
+                                x = (nextCenter.x - mapped.x) * scale,
+                                y = (nextCenter.y - mapped.y) * scale,
+                            ),
+                            scale,
+                        )
+                    }
+                }
                 // Taps: single tap toggles controls (always works, even when zoomed,
                 // guaranteeing the user can always reach the close button). Double tap
                 // smoothly zooms to/from the exact tap point.
@@ -2015,6 +2285,11 @@ private fun PhotoPage(
                 layout = searchLayout,
                 matches = searchMatches,
                 activeMatchIndex = searchActiveMatchIndex,
+                viewportScale = scale * dragScale,
+                viewportTranslation = Offset(
+                    x = offset.x,
+                    y = offset.y + swipeDragY,
+                ),
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
