@@ -487,23 +487,30 @@ fun PhotoViewerScreen(
         }
     }
 
-    PhotoTextSearchBackHandler(
-        enabled = photoTextSearchState.isOpen,
-        onClose = {
-            photoTextSearchController.close()
-            showControls = true
-        },
-    )
-
     Dialog(
         onDismissRequest = {
-            dismissCopySheet()
-            dismissExifSheet()
-            photoTextSearchController.close()
-            onDismiss()
+            if (photoTextSearchState.isOpen) {
+                photoTextSearchController.close()
+                showControls = true
+            } else {
+                dismissCopySheet()
+                dismissExifSheet()
+                onDismiss()
+            }
         },
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = !photoTextSearchState.isOpen,
+        ),
     ) {
+        PhotoTextSearchBackHandler(
+            enabled = photoTextSearchState.isOpen,
+            onClose = {
+                photoTextSearchController.close()
+                showControls = true
+            },
+        )
+
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = Color.Black,
@@ -1906,6 +1913,9 @@ private fun PhotoPage(
     var scale by remember(photo.id) { mutableStateOf(MIN_VIEWER_ZOOM) }
     var offset by remember(photo.id) { mutableStateOf(Offset.Zero) }
     val animationJob = remember(photo.id) { mutableStateOf<Job?>(null) }
+    var lastConsumedSearchRevealRequest by remember(photo.id, searchOpen) {
+        mutableStateOf(searchRevealRequest)
+    }
 
     // Swipe-to-dismiss states
     var swipeDragY by remember(photo.id) { mutableStateOf(0f) }
@@ -1947,10 +1957,21 @@ private fun PhotoPage(
         searchLayout,
         containerSize,
         isActive,
+        searchOpen,
     ) {
         if (
-            searchRevealRequest <= 0L ||
+            !searchOpen ||
             !isActive ||
+            searchRevealRequest <= lastConsumedSearchRevealRequest
+        ) {
+            return@LaunchedEffect
+        }
+
+        // Consume the explicit navigation request before consulting layout/viewport state.
+        // Query publication, IME resize, rotation, or later layout changes must never replay it.
+        lastConsumedSearchRevealRequest = searchRevealRequest
+
+        if (
             containerSize.width <= 0 ||
             containerSize.height <= 0
         ) {
