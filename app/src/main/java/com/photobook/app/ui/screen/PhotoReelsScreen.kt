@@ -93,18 +93,24 @@ fun PhotoReelsScreen(
         onDispose { searchController.dispose() }
     }
 
-    PhotoTextSearchBackHandler(
-        enabled = searchState.isOpen,
-        onClose = searchController::close,
-    )
-
     Dialog(
         onDismissRequest = {
-            searchController.close()
-            onDismiss()
+            if (searchState.isOpen) {
+                searchController.close()
+            } else {
+                onDismiss()
+            }
         },
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = !searchState.isOpen,
+        ),
     ) {
+        PhotoTextSearchBackHandler(
+            enabled = searchState.isOpen,
+            onClose = searchController::close,
+        )
+
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
