@@ -1913,8 +1913,8 @@ private fun PhotoPage(
     var scale by remember(photo.id) { mutableStateOf(MIN_VIEWER_ZOOM) }
     var offset by remember(photo.id) { mutableStateOf(Offset.Zero) }
     val animationJob = remember(photo.id) { mutableStateOf<Job?>(null) }
-    var lastConsumedSearchRevealRequest by remember(photo.id, searchOpen) {
-        mutableStateOf(searchRevealRequest)
+    val searchRevealRequestGate = remember(photo.id, searchOpen) {
+        PhotoSearchRevealRequestGate(initialConsumedRequest = searchRevealRequest)
     }
 
     // Swipe-to-dismiss states
@@ -1962,15 +1962,13 @@ private fun PhotoPage(
         if (
             !searchOpen ||
             !isActive ||
-            searchRevealRequest <= lastConsumedSearchRevealRequest
+            !searchRevealRequestGate.consume(searchRevealRequest)
         ) {
             return@LaunchedEffect
         }
 
-        // Consume the explicit navigation request before consulting layout/viewport state.
+        // The explicit command is consumed before consulting layout/viewport state.
         // Query publication, IME resize, rotation, or later layout changes must never replay it.
-        lastConsumedSearchRevealRequest = searchRevealRequest
-
         if (
             containerSize.width <= 0 ||
             containerSize.height <= 0
