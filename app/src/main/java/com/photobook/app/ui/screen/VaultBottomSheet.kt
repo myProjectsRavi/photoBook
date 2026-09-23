@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -293,7 +294,11 @@ private fun VaultItemPreviewDialog(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background,
         ) {
-            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .imePadding(),
+            ) {
                 val compactSearchChrome =
                     searchState.isOpen && maxHeight < 320.dp && maxWidth >= 600.dp
                 val requestInitialFocus = maxHeight >= 480.dp
