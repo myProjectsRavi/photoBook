@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
@@ -515,7 +516,11 @@ fun PhotoViewerScreen(
             modifier = Modifier.fillMaxSize(),
             color = Color.Black,
         ) {
-            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .imePadding(),
+            ) {
                 val compactSearchChrome =
                     photoTextSearchState.isOpen && maxHeight < 320.dp && maxWidth >= 600.dp
                 val requestInitialFocus = maxHeight >= 480.dp
