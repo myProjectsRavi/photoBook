@@ -271,15 +271,24 @@ private fun VaultItemPreviewDialog(
         onDispose { searchController.dispose() }
     }
 
-    PhotoTextSearchBackHandler(
-        enabled = searchState.isOpen,
-        onClose = searchController::close,
-    )
-
     Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        onDismissRequest = {
+            if (searchState.isOpen) {
+                searchController.close()
+            } else {
+                onDismiss()
+            }
+        },
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = !searchState.isOpen,
+        ),
     ) {
+        PhotoTextSearchBackHandler(
+            enabled = searchState.isOpen,
+            onClose = searchController::close,
+        )
+
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background,
