@@ -117,6 +117,7 @@ import com.photobook.app.feature.copytext.PhotoTextCopyCoordinator
 import com.photobook.app.feature.copytext.PreviewSeed
 import com.photobook.app.feature.phototextsearch.PhotoTextCoordinateMapper
 import com.photobook.app.feature.phototextsearch.PhotoTextLayout
+import com.photobook.app.feature.phototextsearch.PhotoTextLayoutSource
 import com.photobook.app.feature.phototextsearch.PixelPoint
 import com.photobook.app.feature.phototextsearch.PhotoTextSearchController
 import com.photobook.app.feature.phototextsearch.SearchOccurrence
@@ -160,6 +161,7 @@ fun PhotoViewerScreen(
     onShareAsPdf: (PhotoRecord) -> Unit,
     reelsEnabled: Boolean = false,
     initialSearchRequested: Boolean = false,
+    photoTextLayoutSourceOverride: PhotoTextLayoutSource? = null,
 ) {
     if (photos.isEmpty()) return
 
@@ -167,9 +169,10 @@ fun PhotoViewerScreen(
     val clipboardManager = LocalClipboardManager.current
     val haptics = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
-    val photoTextLayoutSource = remember(context.applicationContext) {
+    val defaultPhotoTextLayoutSource = remember(context.applicationContext) {
         mediaStorePhotoTextLayoutSource(context.applicationContext)
     }
+    val photoTextLayoutSource = photoTextLayoutSourceOverride ?: defaultPhotoTextLayoutSource
     val photoTextSearchController = remember(photoTextLayoutSource, coroutineScope) {
         PhotoTextSearchController(
             source = photoTextLayoutSource,
