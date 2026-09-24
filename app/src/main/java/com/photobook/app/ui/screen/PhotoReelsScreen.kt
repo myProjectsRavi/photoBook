@@ -50,6 +50,7 @@ import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.photobook.app.R
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.feature.phototextsearch.PhotoTextLayoutSource
 import com.photobook.app.feature.phototextsearch.PhotoTextSearchController
 import com.photobook.app.feature.phototextsearch.mediaStorePhotoTextLayoutSource
 import com.photobook.app.ui.component.PhotoTextSearchBackHandler
@@ -70,14 +71,16 @@ fun PhotoReelsScreen(
     onDismiss: () -> Unit,
     onToggleFavorite: (Long) -> Unit,
     onSharePhoto: (PhotoRecord) -> Unit,
+    photoTextLayoutSourceOverride: PhotoTextLayoutSource? = null,
 ) {
     if (photos.isEmpty()) return
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val textSource = remember(context.applicationContext) {
+    val defaultTextSource = remember(context.applicationContext) {
         mediaStorePhotoTextLayoutSource(context.applicationContext)
     }
+    val textSource = photoTextLayoutSourceOverride ?: defaultTextSource
     val searchController = remember(textSource, scope) {
         PhotoTextSearchController(source = textSource, scope = scope)
     }
