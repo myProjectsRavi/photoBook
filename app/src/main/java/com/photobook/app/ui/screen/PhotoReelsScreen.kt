@@ -10,8 +10,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -53,7 +55,6 @@ import com.photobook.app.feature.phototextsearch.PhotoTextLayoutSource
 import com.photobook.app.feature.phototextsearch.PhotoTextSearchController
 import com.photobook.app.feature.phototextsearch.mediaStorePhotoTextLayoutSource
 import com.photobook.app.ui.component.PhotoTextSearchBackHandler
-import com.photobook.app.ui.component.PhotoTextSearchDialogImeResizeEffect
 import com.photobook.app.ui.component.PhotoTextSearchHeader
 import com.photobook.app.ui.component.PhotoTextSearchNavigation
 import com.photobook.app.ui.component.PhotoTextSearchOverlay
@@ -108,9 +109,9 @@ fun PhotoReelsScreen(
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
             dismissOnBackPress = !searchState.isOpen,
+            decorFitsSystemWindows = false,
         ),
     ) {
-        PhotoTextSearchDialogImeResizeEffect()
         PhotoTextSearchBackHandler(
             enabled = searchState.isOpen,
             onClose = searchController::close,
@@ -119,6 +120,8 @@ fun PhotoReelsScreen(
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
+                .systemBarsPadding()
+                .imePadding()
                 .background(Color.Black),
         ) {
             val compactSearchChrome =
