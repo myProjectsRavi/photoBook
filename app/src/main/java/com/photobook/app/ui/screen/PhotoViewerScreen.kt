@@ -123,7 +123,7 @@ import com.photobook.app.feature.phototextsearch.SearchOccurrence
 import com.photobook.app.feature.phototextsearch.mediaStorePhotoTextLayoutSource
 import com.photobook.app.ml.BundledOnDeviceIntelligence
 import com.photobook.app.ui.component.PhotoTextSearchBackHandler
-import com.photobook.app.ui.component.PhotoTextSearchDialogImeResizeEffect
+import com.photobook.app.ui.component.rememberPhotoTextSearchDialogImeState
 import com.photobook.app.ui.component.PhotoTextSearchHeader
 import com.photobook.app.ui.component.PhotoTextSearchNavigation
 import com.photobook.app.ui.component.PhotoTextSearchOverlay
@@ -507,9 +507,10 @@ fun PhotoViewerScreen(
             dismissOnBackPress = !photoTextSearchState.isOpen,
         ),
     ) {
-        PhotoTextSearchDialogImeResizeEffect()
+        val photoTextSearchImeState = rememberPhotoTextSearchDialogImeState()
         PhotoTextSearchBackHandler(
             enabled = photoTextSearchState.isOpen,
+            imeVisible = photoTextSearchImeState.isVisible,
             onClose = {
                 photoTextSearchController.close()
                 showControls = true
@@ -521,7 +522,9 @@ fun PhotoViewerScreen(
             color = Color.Black,
         ) {
             BoxWithConstraints(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = photoTextSearchImeState.bottomPadding),
             ) {
                 val compactSearchChrome =
                     photoTextSearchState.isOpen && maxHeight < 320.dp && maxWidth >= 600.dp

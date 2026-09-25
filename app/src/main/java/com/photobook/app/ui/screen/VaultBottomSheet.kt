@@ -57,7 +57,7 @@ import com.photobook.app.feature.phototextsearch.PhotoTextLayoutSource
 import com.photobook.app.feature.phototextsearch.PhotoTextSearchController
 import com.photobook.app.feature.vault.VaultItem
 import com.photobook.app.ui.component.PhotoTextSearchBackHandler
-import com.photobook.app.ui.component.PhotoTextSearchDialogImeResizeEffect
+import com.photobook.app.ui.component.rememberPhotoTextSearchDialogImeState
 import com.photobook.app.ui.component.PhotoTextSearchHeader
 import com.photobook.app.ui.component.PhotoTextSearchNavigation
 import com.photobook.app.ui.component.PhotoTextSearchOverlay
@@ -285,9 +285,10 @@ private fun VaultItemPreviewDialog(
             dismissOnBackPress = !searchState.isOpen,
         ),
     ) {
-        PhotoTextSearchDialogImeResizeEffect()
+        val photoTextSearchImeState = rememberPhotoTextSearchDialogImeState()
         PhotoTextSearchBackHandler(
             enabled = searchState.isOpen,
+            imeVisible = photoTextSearchImeState.isVisible,
             onClose = searchController::close,
         )
 
@@ -296,7 +297,9 @@ private fun VaultItemPreviewDialog(
             color = MaterialTheme.colorScheme.background,
         ) {
             BoxWithConstraints(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = photoTextSearchImeState.bottomPadding),
             ) {
                 val compactSearchChrome =
                     searchState.isOpen && maxHeight < 320.dp && maxWidth >= 600.dp
