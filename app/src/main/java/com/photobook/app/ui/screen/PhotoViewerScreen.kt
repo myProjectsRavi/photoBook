@@ -33,10 +33,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -125,6 +123,7 @@ import com.photobook.app.feature.phototextsearch.SearchOccurrence
 import com.photobook.app.feature.phototextsearch.mediaStorePhotoTextLayoutSource
 import com.photobook.app.ml.BundledOnDeviceIntelligence
 import com.photobook.app.ui.component.PhotoTextSearchBackHandler
+import com.photobook.app.ui.component.PhotoTextSearchDialogImeResizeEffect
 import com.photobook.app.ui.component.PhotoTextSearchHeader
 import com.photobook.app.ui.component.PhotoTextSearchNavigation
 import com.photobook.app.ui.component.PhotoTextSearchOverlay
@@ -506,9 +505,9 @@ fun PhotoViewerScreen(
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
             dismissOnBackPress = !photoTextSearchState.isOpen,
-            decorFitsSystemWindows = false,
         ),
     ) {
+        PhotoTextSearchDialogImeResizeEffect()
         PhotoTextSearchBackHandler(
             enabled = photoTextSearchState.isOpen,
             onClose = {
@@ -522,10 +521,7 @@ fun PhotoViewerScreen(
             color = Color.Black,
         ) {
             BoxWithConstraints(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .systemBarsPadding()
-                    .imePadding(),
+                modifier = Modifier.fillMaxSize(),
             ) {
                 val compactSearchChrome =
                     photoTextSearchState.isOpen && maxHeight < 320.dp && maxWidth >= 600.dp

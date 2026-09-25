@@ -11,10 +11,8 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -59,6 +57,7 @@ import com.photobook.app.feature.phototextsearch.PhotoTextLayoutSource
 import com.photobook.app.feature.phototextsearch.PhotoTextSearchController
 import com.photobook.app.feature.vault.VaultItem
 import com.photobook.app.ui.component.PhotoTextSearchBackHandler
+import com.photobook.app.ui.component.PhotoTextSearchDialogImeResizeEffect
 import com.photobook.app.ui.component.PhotoTextSearchHeader
 import com.photobook.app.ui.component.PhotoTextSearchNavigation
 import com.photobook.app.ui.component.PhotoTextSearchOverlay
@@ -284,9 +283,9 @@ private fun VaultItemPreviewDialog(
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
             dismissOnBackPress = !searchState.isOpen,
-            decorFitsSystemWindows = false,
         ),
     ) {
+        PhotoTextSearchDialogImeResizeEffect()
         PhotoTextSearchBackHandler(
             enabled = searchState.isOpen,
             onClose = searchController::close,
@@ -297,10 +296,7 @@ private fun VaultItemPreviewDialog(
             color = MaterialTheme.colorScheme.background,
         ) {
             BoxWithConstraints(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .systemBarsPadding()
-                    .imePadding(),
+                modifier = Modifier.fillMaxSize(),
             ) {
                 val compactSearchChrome =
                     searchState.isOpen && maxHeight < 320.dp && maxWidth >= 600.dp
