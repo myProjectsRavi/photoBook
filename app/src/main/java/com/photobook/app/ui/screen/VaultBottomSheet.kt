@@ -319,6 +319,16 @@ private fun VaultItemPreviewDialog(
                             compactNavigation = compactSearchChrome,
                             requestInitialFocus = requestInitialFocus,
                         )
+                        if (!compactSearchChrome) {
+                            PhotoTextSearchNavigation(
+                                state = searchState,
+                                onPrevious = searchController::previousMatch,
+                                onNext = searchController::nextMatch,
+                                onShowMatch = { },
+                                onRetry = searchController::retry,
+                                showMatchAction = false,
+                            )
+                        }
                     } else {
                         Row(
                             modifier = Modifier
@@ -383,18 +393,7 @@ private fun VaultItemPreviewDialog(
                         }
                     }
 
-                    if (searchState.isOpen) {
-                        if (!compactSearchChrome) {
-                            PhotoTextSearchNavigation(
-                                state = searchState,
-                                onPrevious = searchController::previousMatch,
-                                onNext = searchController::nextMatch,
-                                onShowMatch = { },
-                                onRetry = searchController::retry,
-                                showMatchAction = false,
-                            )
-                        }
-                    } else {
+                    if (!searchState.isOpen) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()

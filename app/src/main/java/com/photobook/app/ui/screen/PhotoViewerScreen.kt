@@ -555,6 +555,24 @@ fun PhotoViewerScreen(
                             compactNavigation = compactSearchChrome,
                             requestInitialFocus = requestInitialFocus,
                         )
+                        if (!compactSearchChrome) {
+                            PhotoTextSearchNavigation(
+                                state = photoTextSearchState,
+                                onPrevious = {
+                                    photoTextSearchController.previousMatch()
+                                    searchRevealRequest += 1L
+                                },
+                                onNext = {
+                                    photoTextSearchController.nextMatch()
+                                    searchRevealRequest += 1L
+                                },
+                                onShowMatch = { searchRevealRequest += 1L },
+                                onRetry = photoTextSearchController::retry,
+                                showMatchAction =
+                                    photoTextSearchState.matches.isNotEmpty() &&
+                                        !activeSearchMatchVisible,
+                            )
+                        }
                     }
 
                     Box(
@@ -950,24 +968,6 @@ fun PhotoViewerScreen(
                         }
                     }
 
-                    if (photoTextSearchState.isOpen && !compactSearchChrome) {
-                        PhotoTextSearchNavigation(
-                            state = photoTextSearchState,
-                            onPrevious = {
-                                photoTextSearchController.previousMatch()
-                                searchRevealRequest += 1L
-                            },
-                            onNext = {
-                                photoTextSearchController.nextMatch()
-                                searchRevealRequest += 1L
-                            },
-                            onShowMatch = { searchRevealRequest += 1L },
-                            onRetry = photoTextSearchController::retry,
-                            showMatchAction =
-                                photoTextSearchState.matches.isNotEmpty() &&
-                                    !activeSearchMatchVisible,
-                        )
-                    }
                 }
             }
         }

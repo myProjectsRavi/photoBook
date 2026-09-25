@@ -141,6 +141,16 @@ fun PhotoReelsScreen(
                         compactNavigation = compactSearchChrome,
                         requestInitialFocus = requestInitialFocus,
                     )
+                    if (!compactSearchChrome) {
+                        PhotoTextSearchNavigation(
+                            state = searchState,
+                            onPrevious = searchController::previousMatch,
+                            onNext = searchController::nextMatch,
+                            onShowMatch = { },
+                            onRetry = searchController::retry,
+                            showMatchAction = false,
+                        )
+                    }
                 }
 
                 Box(
@@ -348,16 +358,6 @@ fun PhotoReelsScreen(
                     }
                 }
 
-                if (searchState.isOpen && !compactSearchChrome) {
-                    PhotoTextSearchNavigation(
-                        state = searchState,
-                        onPrevious = searchController::previousMatch,
-                        onNext = searchController::nextMatch,
-                        onShowMatch = { },
-                        onRetry = searchController::retry,
-                        showMatchAction = false,
-                    )
-                }
             }
         }
     }
