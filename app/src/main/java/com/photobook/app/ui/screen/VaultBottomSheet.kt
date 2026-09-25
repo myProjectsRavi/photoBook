@@ -57,6 +57,7 @@ import com.photobook.app.feature.phototextsearch.PhotoTextLayoutSource
 import com.photobook.app.feature.phototextsearch.PhotoTextSearchController
 import com.photobook.app.feature.vault.VaultItem
 import com.photobook.app.ui.component.PhotoTextSearchBackHandler
+import com.photobook.app.ui.component.rememberPhotoTextSearchDialogImeState
 import com.photobook.app.ui.component.PhotoTextSearchHeader
 import com.photobook.app.ui.component.PhotoTextSearchNavigation
 import com.photobook.app.ui.component.PhotoTextSearchOverlay
@@ -271,20 +272,35 @@ private fun VaultItemPreviewDialog(
         onDispose { searchController.dispose() }
     }
 
-    PhotoTextSearchBackHandler(
-        enabled = searchState.isOpen,
-        onClose = searchController::close,
-    )
-
     Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        onDismissRequest = {
+            if (searchState.isOpen) {
+                searchController.close()
+            } else {
+                onDismiss()
+            }
+        },
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = !searchState.isOpen,
+        ),
     ) {
+        val photoTextSearchImeState = rememberPhotoTextSearchDialogImeState()
+        PhotoTextSearchBackHandler(
+            enabled = searchState.isOpen,
+            imeVisible = photoTextSearchImeState.isVisible,
+            onClose = searchController::close,
+        )
+
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background,
         ) {
-            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = photoTextSearchImeState.bottomPadding),
+            ) {
                 val compactSearchChrome =
                     searchState.isOpen && maxHeight < 320.dp && maxWidth >= 600.dp
                 val requestInitialFocus = maxHeight >= 480.dp
@@ -303,6 +319,16 @@ private fun VaultItemPreviewDialog(
                             compactNavigation = compactSearchChrome,
                             requestInitialFocus = requestInitialFocus,
                         )
+                        if (!compactSearchChrome) {
+                            PhotoTextSearchNavigation(
+                                state = searchState,
+                                onPrevious = searchController::previousMatch,
+                                onNext = searchController::nextMatch,
+                                onShowMatch = { },
+                                onRetry = searchController::retry,
+                                showMatchAction = false,
+                            )
+                        }
                     } else {
                         Row(
                             modifier = Modifier
@@ -367,18 +393,7 @@ private fun VaultItemPreviewDialog(
                         }
                     }
 
-                    if (searchState.isOpen) {
-                        if (!compactSearchChrome) {
-                            PhotoTextSearchNavigation(
-                                state = searchState,
-                                onPrevious = searchController::previousMatch,
-                                onNext = searchController::nextMatch,
-                                onShowMatch = { },
-                                onRetry = searchController::retry,
-                                showMatchAction = false,
-                            )
-                        }
-                    } else {
+                    if (!searchState.isOpen) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()

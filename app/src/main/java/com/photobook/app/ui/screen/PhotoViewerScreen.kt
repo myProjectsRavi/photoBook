@@ -116,12 +116,14 @@ import com.photobook.app.feature.copytext.PhotoTextCopyCoordinator
 import com.photobook.app.feature.copytext.PreviewSeed
 import com.photobook.app.feature.phototextsearch.PhotoTextCoordinateMapper
 import com.photobook.app.feature.phototextsearch.PhotoTextLayout
+import com.photobook.app.feature.phototextsearch.PhotoTextLayoutSource
 import com.photobook.app.feature.phototextsearch.PixelPoint
 import com.photobook.app.feature.phototextsearch.PhotoTextSearchController
 import com.photobook.app.feature.phototextsearch.SearchOccurrence
 import com.photobook.app.feature.phototextsearch.mediaStorePhotoTextLayoutSource
 import com.photobook.app.ml.BundledOnDeviceIntelligence
 import com.photobook.app.ui.component.PhotoTextSearchBackHandler
+import com.photobook.app.ui.component.rememberPhotoTextSearchDialogImeState
 import com.photobook.app.ui.component.PhotoTextSearchHeader
 import com.photobook.app.ui.component.PhotoTextSearchNavigation
 import com.photobook.app.ui.component.PhotoTextSearchOverlay
@@ -159,6 +161,7 @@ fun PhotoViewerScreen(
     onShareAsPdf: (PhotoRecord) -> Unit,
     reelsEnabled: Boolean = false,
     initialSearchRequested: Boolean = false,
+    photoTextLayoutSourceOverride: PhotoTextLayoutSource? = null,
 ) {
     if (photos.isEmpty()) return
 
@@ -166,9 +169,10 @@ fun PhotoViewerScreen(
     val clipboardManager = LocalClipboardManager.current
     val haptics = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
-    val photoTextLayoutSource = remember(context.applicationContext) {
+    val defaultPhotoTextLayoutSource = remember(context.applicationContext) {
         mediaStorePhotoTextLayoutSource(context.applicationContext)
     }
+    val photoTextLayoutSource = photoTextLayoutSourceOverride ?: defaultPhotoTextLayoutSource
     val photoTextSearchController = remember(photoTextLayoutSource, coroutineScope) {
         PhotoTextSearchController(
             source = photoTextLayoutSource,
@@ -487,28 +491,41 @@ fun PhotoViewerScreen(
         }
     }
 
-    PhotoTextSearchBackHandler(
-        enabled = photoTextSearchState.isOpen,
-        onClose = {
-            photoTextSearchController.close()
-            showControls = true
-        },
-    )
-
     Dialog(
         onDismissRequest = {
-            dismissCopySheet()
-            dismissExifSheet()
-            photoTextSearchController.close()
-            onDismiss()
+            if (photoTextSearchState.isOpen) {
+                photoTextSearchController.close()
+                showControls = true
+            } else {
+                dismissCopySheet()
+                dismissExifSheet()
+                onDismiss()
+            }
         },
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = !photoTextSearchState.isOpen,
+        ),
     ) {
+        val photoTextSearchImeState = rememberPhotoTextSearchDialogImeState()
+        PhotoTextSearchBackHandler(
+            enabled = photoTextSearchState.isOpen,
+            imeVisible = photoTextSearchImeState.isVisible,
+            onClose = {
+                photoTextSearchController.close()
+                showControls = true
+            },
+        )
+
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = Color.Black,
         ) {
-            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = photoTextSearchImeState.bottomPadding),
+            ) {
                 val compactSearchChrome =
                     photoTextSearchState.isOpen && maxHeight < 320.dp && maxWidth >= 600.dp
                 val requestInitialFocus = maxHeight >= 480.dp
@@ -538,6 +555,24 @@ fun PhotoViewerScreen(
                             compactNavigation = compactSearchChrome,
                             requestInitialFocus = requestInitialFocus,
                         )
+                        if (!compactSearchChrome) {
+                            PhotoTextSearchNavigation(
+                                state = photoTextSearchState,
+                                onPrevious = {
+                                    photoTextSearchController.previousMatch()
+                                    searchRevealRequest += 1L
+                                },
+                                onNext = {
+                                    photoTextSearchController.nextMatch()
+                                    searchRevealRequest += 1L
+                                },
+                                onShowMatch = { searchRevealRequest += 1L },
+                                onRetry = photoTextSearchController::retry,
+                                showMatchAction =
+                                    photoTextSearchState.matches.isNotEmpty() &&
+                                        !activeSearchMatchVisible,
+                            )
+                        }
                     }
 
                     Box(
@@ -933,24 +968,6 @@ fun PhotoViewerScreen(
                         }
                     }
 
-                    if (photoTextSearchState.isOpen && !compactSearchChrome) {
-                        PhotoTextSearchNavigation(
-                            state = photoTextSearchState,
-                            onPrevious = {
-                                photoTextSearchController.previousMatch()
-                                searchRevealRequest += 1L
-                            },
-                            onNext = {
-                                photoTextSearchController.nextMatch()
-                                searchRevealRequest += 1L
-                            },
-                            onShowMatch = { searchRevealRequest += 1L },
-                            onRetry = photoTextSearchController::retry,
-                            showMatchAction =
-                                photoTextSearchState.matches.isNotEmpty() &&
-                                    !activeSearchMatchVisible,
-                        )
-                    }
                 }
             }
         }
@@ -1906,6 +1923,9 @@ private fun PhotoPage(
     var scale by remember(photo.id) { mutableStateOf(MIN_VIEWER_ZOOM) }
     var offset by remember(photo.id) { mutableStateOf(Offset.Zero) }
     val animationJob = remember(photo.id) { mutableStateOf<Job?>(null) }
+    val searchRevealRequestGate = remember(photo.id, searchOpen) {
+        PhotoSearchRevealRequestGate(initialConsumedRequest = searchRevealRequest)
+    }
 
     // Swipe-to-dismiss states
     var swipeDragY by remember(photo.id) { mutableStateOf(0f) }
@@ -1947,10 +1967,19 @@ private fun PhotoPage(
         searchLayout,
         containerSize,
         isActive,
+        searchOpen,
     ) {
         if (
-            searchRevealRequest <= 0L ||
+            !searchOpen ||
             !isActive ||
+            !searchRevealRequestGate.consume(searchRevealRequest)
+        ) {
+            return@LaunchedEffect
+        }
+
+        // The explicit command is consumed before consulting layout/viewport state.
+        // Query publication, IME resize, rotation, or later layout changes must never replay it.
+        if (
             containerSize.width <= 0 ||
             containerSize.height <= 0
         ) {

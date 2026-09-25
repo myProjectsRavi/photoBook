@@ -49,9 +49,11 @@ import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.photobook.app.R
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.feature.phototextsearch.PhotoTextLayoutSource
 import com.photobook.app.feature.phototextsearch.PhotoTextSearchController
 import com.photobook.app.feature.phototextsearch.mediaStorePhotoTextLayoutSource
 import com.photobook.app.ui.component.PhotoTextSearchBackHandler
+import com.photobook.app.ui.component.rememberPhotoTextSearchDialogImeState
 import com.photobook.app.ui.component.PhotoTextSearchHeader
 import com.photobook.app.ui.component.PhotoTextSearchNavigation
 import com.photobook.app.ui.component.PhotoTextSearchOverlay
@@ -69,14 +71,16 @@ fun PhotoReelsScreen(
     onDismiss: () -> Unit,
     onToggleFavorite: (Long) -> Unit,
     onSharePhoto: (PhotoRecord) -> Unit,
+    photoTextLayoutSourceOverride: PhotoTextLayoutSource? = null,
 ) {
     if (photos.isEmpty()) return
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val textSource = remember(context.applicationContext) {
+    val defaultTextSource = remember(context.applicationContext) {
         mediaStorePhotoTextLayoutSource(context.applicationContext)
     }
+    val textSource = photoTextLayoutSourceOverride ?: defaultTextSource
     val searchController = remember(textSource, scope) {
         PhotoTextSearchController(source = textSource, scope = scope)
     }
@@ -93,21 +97,30 @@ fun PhotoReelsScreen(
         onDispose { searchController.dispose() }
     }
 
-    PhotoTextSearchBackHandler(
-        enabled = searchState.isOpen,
-        onClose = searchController::close,
-    )
-
     Dialog(
         onDismissRequest = {
-            searchController.close()
-            onDismiss()
+            if (searchState.isOpen) {
+                searchController.close()
+            } else {
+                onDismiss()
+            }
         },
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = !searchState.isOpen,
+        ),
     ) {
+        val photoTextSearchImeState = rememberPhotoTextSearchDialogImeState()
+        PhotoTextSearchBackHandler(
+            enabled = searchState.isOpen,
+            imeVisible = photoTextSearchImeState.isVisible,
+            onClose = searchController::close,
+        )
+
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
+                .padding(bottom = photoTextSearchImeState.bottomPadding)
                 .background(Color.Black),
         ) {
             val compactSearchChrome =
@@ -128,6 +141,16 @@ fun PhotoReelsScreen(
                         compactNavigation = compactSearchChrome,
                         requestInitialFocus = requestInitialFocus,
                     )
+                    if (!compactSearchChrome) {
+                        PhotoTextSearchNavigation(
+                            state = searchState,
+                            onPrevious = searchController::previousMatch,
+                            onNext = searchController::nextMatch,
+                            onShowMatch = { },
+                            onRetry = searchController::retry,
+                            showMatchAction = false,
+                        )
+                    }
                 }
 
                 Box(
@@ -335,16 +358,6 @@ fun PhotoReelsScreen(
                     }
                 }
 
-                if (searchState.isOpen && !compactSearchChrome) {
-                    PhotoTextSearchNavigation(
-                        state = searchState,
-                        onPrevious = searchController::previousMatch,
-                        onNext = searchController::nextMatch,
-                        onShowMatch = { },
-                        onRetry = searchController::retry,
-                        showMatchAction = false,
-                    )
-                }
             }
         }
     }
