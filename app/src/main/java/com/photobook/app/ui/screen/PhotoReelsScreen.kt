@@ -40,6 +40,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -57,6 +60,7 @@ import com.photobook.app.ui.component.rememberPhotoTextSearchDialogImeState
 import com.photobook.app.ui.component.PhotoTextSearchHeader
 import com.photobook.app.ui.component.PhotoTextSearchNavigation
 import com.photobook.app.ui.component.PhotoTextSearchOverlay
+import com.photobook.app.ui.component.PHOTO_TEXT_SEARCH_VIEWPORT_TEST_TAG
 
 /**
  * Instagram Reels-style vertical photo browser.
@@ -157,7 +161,9 @@ fun PhotoReelsScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .clipToBounds(),
+                        .clipToBounds()
+                        .semantics { testTagsAsResourceId = true }
+                        .testTag(PHOTO_TEXT_SEARCH_VIEWPORT_TEST_TAG),
                 ) {
                     VerticalPager(
                         state = pagerState,
