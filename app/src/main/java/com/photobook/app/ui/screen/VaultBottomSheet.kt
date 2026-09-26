@@ -13,10 +13,8 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -67,6 +65,7 @@ import com.photobook.app.ui.component.PhotoTextSearchBackHandler
 import com.photobook.app.ui.component.PhotoTextSearchHeader
 import com.photobook.app.ui.component.PhotoTextSearchNavigation
 import com.photobook.app.ui.component.PhotoTextSearchOverlay
+import com.photobook.app.ui.component.photoTextSearchDialogPadding
 import com.photobook.app.ui.component.PHOTO_TEXT_SEARCH_VIEWPORT_TEST_TAG
 import java.text.DateFormat
 import java.util.Date
@@ -305,8 +304,7 @@ private fun VaultItemPreviewDialog(
             BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxSize()
-                    .systemBarsPadding()
-                    .imePadding(),
+                    .padding(photoTextSearchDialogPadding()),
             ) {
                 val compactSearchChrome =
                     searchState.isOpen && maxHeight < 320.dp && maxWidth >= 600.dp
