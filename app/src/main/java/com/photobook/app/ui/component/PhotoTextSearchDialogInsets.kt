@@ -58,7 +58,10 @@ fun photoTextSearchDialogPadding(): PaddingValues {
             val rootInsets = ViewCompat.getRootWindowInsets(view)
             val safeType =
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
-            val safeInsets = rootInsets?.getInsets(safeType)
+            // Navigation bars can become not-visible/reparented while the IME owns the bottom
+            // system area. The stable bar geometry is still needed because Type.ime() in this
+            // dialog reports only the keyboard portion above that bar.
+            val safeInsets = rootInsets?.getInsetsIgnoringVisibility(safeType)
             val imeType = WindowInsetsCompat.Type.ime()
             val imeVisible = rootInsets?.isVisible(imeType) == true
             val imeInsets = rootInsets?.getInsets(imeType)
@@ -142,14 +145,16 @@ internal fun resolvePhotoTextSearchDialogOcclusionPx(
         return PhotoTextSearchDialogOcclusionPx()
     }
 
+    val stableImeBottom = if (imeVisible && fallbackImeBottom > 0) {
+        (fallbackImeBottom + fallbackSafeBottom).coerceIn(0, viewHeight)
+    } else {
+        fallbackSafeBottom.coerceIn(0, viewHeight)
+    }
     val fallback = PhotoTextSearchDialogOcclusionPx(
         left = fallbackSafeLeft.coerceIn(0, viewWidth),
         top = fallbackSafeTop.coerceIn(0, viewHeight),
         right = fallbackSafeRight.coerceIn(0, viewWidth),
-        bottom = max(
-            fallbackSafeBottom,
-            if (imeVisible) fallbackImeBottom else 0,
-        ).coerceIn(0, viewHeight),
+        bottom = stableImeBottom,
     )
     if (!visibleFrameUsable) return fallback
 
@@ -162,17 +167,17 @@ internal fun resolvePhotoTextSearchDialogOcclusionPx(
         bottom = (viewBottomOnScreen - visibleFrameBottomOnScreen).coerceIn(0, viewHeight),
     )
 
-    // If Android says the IME is visible but the visible frame did not move below the ordinary
-    // safe bottom edge, this device/window combination is not exposing IME geometry via the frame.
-    // Fall back only for that edge; otherwise the screen-coordinate frame stays authoritative.
-    val bottom = if (
-        imeVisible &&
-        fallbackImeBottom > 0 &&
-        fromFrame.bottom <= fallbackSafeBottom
-    ) {
-        max(fromFrame.bottom, fallbackImeBottom).coerceIn(0, viewHeight)
-    } else {
-        fromFrame.bottom
+    // On API-35 full-screen Compose Dialogs the visible frame and Type.ime() can both stop at
+    // the top of the bottom system-bar band. In that case they agree with each other while still
+    // under-reporting the real screen occlusion. Add the stable bottom bar exactly in that case.
+    //
+    // If the visible frame already reports more occlusion than Type.ime(), it has already captured
+    // the extra system-bar/window offset and remains authoritative (important for already-inset
+    // dialog roots).
+    val bottom = when {
+        !imeVisible || fallbackImeBottom <= 0 -> fromFrame.bottom
+        fromFrame.bottom > fallbackImeBottom -> fromFrame.bottom
+        else -> max(fromFrame.bottom, stableImeBottom).coerceIn(0, viewHeight)
     }
 
     return fromFrame.copy(bottom = bottom)
