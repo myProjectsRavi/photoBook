@@ -126,7 +126,6 @@ fun PhotoReelsScreen(
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(bottom = photoTextSearchImeState.bottomPadding)
                 .background(Color.Black),
         ) {
             val compactSearchChrome =
