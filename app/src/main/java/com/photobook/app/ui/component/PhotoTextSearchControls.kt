@@ -34,10 +34,12 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -125,7 +127,10 @@ fun PhotoTextSearchHeader(
                     onRetry = onRetry,
                     showMatchAction = showMatchAction,
                     compact = true,
-                    modifier = Modifier.widthIn(min = 132.dp, max = 260.dp),
+                    modifier = Modifier
+                        .widthIn(min = 132.dp, max = 260.dp)
+                        .semantics { testTagsAsResourceId = true }
+                        .testTag(PHOTO_TEXT_SEARCH_COMPACT_NAV_TEST_TAG),
                 )
             }
         }
@@ -358,120 +363,6 @@ private fun PhotoTextSearchNavigationContent(
             )
         }
 
-        if (showMatchAction || retryLabel != null) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (showMatchAction) {
-                    TextButton(
-                        onClick = onShowMatch,
-                        modifier = Modifier.heightIn(min = 48.dp),
-                    ) {
-                        Text(
-                            text = stringResource(R.string.viewer_search_show_match),
-                            color = Color.White,
-                        )
-                    }
-                }
-                if (retryLabel != null) {
-                    TextButton(
-                        onClick = onRetry,
-                        modifier = Modifier.heightIn(min = 48.dp),
-                    ) {
-                        Text(text = retryLabel, color = Color.White)
-                    }
-                }
-            }
-        }
-    }
-}
 
-@Composable
-private fun MatchNavigationButtons(
-    state: PhotoTextSearchState,
-    onPrevious: () -> Unit,
-    onNext: () -> Unit,
-) {
-    if (state.matches.isEmpty()) return
-
-    val enabled = state.matches.size > 1
-    IconButton(
-        onClick = onPrevious,
-        enabled = enabled,
-        modifier = Modifier.size(48.dp),
-    ) {
-        Icon(
-            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-            contentDescription = stringResource(R.string.viewer_search_previous),
-            tint = if (enabled) Color.White else SEARCH_SECONDARY_COLOR,
-        )
-    }
-    IconButton(
-        onClick = onNext,
-        enabled = enabled,
-        modifier = Modifier.size(48.dp),
-    ) {
-        Icon(
-            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-            contentDescription = stringResource(R.string.viewer_search_next),
-            tint = if (enabled) Color.White else SEARCH_SECONDARY_COLOR,
-        )
-    }
-}
-
-@Composable
-private fun statusText(state: PhotoTextSearchState): String {
-    return when (state.phase) {
-        PhotoTextSearchPhase.CLOSED -> ""
-        PhotoTextSearchPhase.PREPARING -> {
-            if (state.isSlow) {
-                stringResource(R.string.viewer_search_still_reading)
-            } else {
-                stringResource(R.string.viewer_search_reading)
-            }
-        }
-        PhotoTextSearchPhase.UNAVAILABLE -> stringResource(R.string.viewer_search_unavailable)
-        PhotoTextSearchPhase.FAILED -> stringResource(R.string.viewer_search_failed)
-        PhotoTextSearchPhase.READY -> {
-            when {
-                state.queryTooLong -> stringResource(
-                    R.string.viewer_search_query_too_long,
-                    PhotoTextSearchController.MAX_QUERY_CHARACTERS,
-                )
-                state.layout?.elements.isNullOrEmpty() -> stringResource(R.string.viewer_search_no_text)
-                state.query.isBlank() -> stringResource(R.string.viewer_search_type_prompt)
-                state.isQueryPending -> stringResource(R.string.viewer_search_searching)
-                state.matches.isNotEmpty() &&
-                    state.layout?.completeness == PhotoTextCompleteness.PARTIAL -> {
-                    stringResource(
-                        R.string.viewer_search_partial_match_count,
-                        state.activeMatchIndex + 1,
-                        state.matches.size,
-                    )
-                }
-                state.matches.isNotEmpty() -> {
-                    stringResource(
-                        R.string.viewer_search_match_count,
-                        state.activeMatchIndex + 1,
-                        state.matches.size,
-                    )
-                }
-                else -> stringResource(R.string.viewer_search_no_match)
-            }
-        }
-    }
-}
-
-private fun shouldShowCharacterCount(state: PhotoTextSearchState): Boolean {
-    return state.queryTooLong ||
-        state.query.length >= PhotoTextSearchController.MAX_QUERY_CHARACTERS - CHARACTER_COUNT_WARNING_MARGIN
-}
-
-private val SEARCH_CHROME_COLOR = Color(0xFF121212)
-private val SEARCH_FIELD_COLOR = Color(0xFF292929)
-private val SEARCH_SECONDARY_COLOR = Color(0xFFC7C7CC)
-private val SEARCH_ERROR_COLOR = Color(0xFFFFB4AB)
-private val SEARCH_HEADER_MIN_HEIGHT = 72.dp
-private const val CHARACTER_COUNT_WARNING_MARGIN = 16
+internal const val PHOTO_TEXT_SEARCH_VIEWPORT_TEST_TAG = "photo_text_search_viewport"
+internal const val PHOTO_TEXT_SEARCH_COMPACT_NAV_TEST_TAG = "photo_text_search_compact_navigation"
