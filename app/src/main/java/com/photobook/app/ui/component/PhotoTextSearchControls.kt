@@ -4,6 +4,8 @@ package com.photobook.app.ui.component
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -171,11 +174,12 @@ fun PhotoTextSearchNavigation(
 @Composable
 fun PhotoTextSearchBackHandler(
     enabled: Boolean,
-    imeVisible: Boolean,
     onClose: () -> Unit,
 ) {
+    val density = LocalDensity.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
+    val imeVisible = WindowInsets.ime.getBottom(density) > 0
 
     BackHandler(enabled = enabled) {
         if (imeVisible) {
