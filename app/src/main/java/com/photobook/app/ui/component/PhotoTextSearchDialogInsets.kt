@@ -7,9 +7,6 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.LayoutDirection
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.toDp
-import androidx.compose.ui.unit.LayoutDirection.Ltr
 import androidx.compose.ui.platform.LocalLayoutDirection
 import kotlin.math.max
 
@@ -41,7 +38,7 @@ fun photoTextSearchDialogPadding(): PaddingValues {
     val right = with(density) { rightPx.toDp() }
     val bottom = with(density) { bottomPx.toDp() }
 
-    return if (layoutDirection == Ltr) {
+    return if (layoutDirection == LayoutDirection.Ltr) {
         PaddingValues(start = left, top = top, end = right, bottom = bottom)
     } else {
         PaddingValues(start = right, top = top, end = left, bottom = bottom)
