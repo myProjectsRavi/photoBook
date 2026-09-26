@@ -6,6 +6,30 @@ import org.junit.Test
 class PhotoTextSearchDialogInsetsTest {
 
     @Test
+    fun api35DialogAddsStableBottomBarWhenFrameAndImeBothUndercountIt() {
+        val result = resolvePhotoTextSearchDialogOcclusionPx(
+            viewLeftOnScreen = 0,
+            viewTopOnScreen = 0,
+            viewWidth = 1440,
+            viewHeight = 2560,
+            visibleFrameLeftOnScreen = 0,
+            visibleFrameTopOnScreen = 63,
+            visibleFrameRightOnScreen = 1440,
+            visibleFrameBottomOnScreen = 1802,
+            visibleFrameUsable = true,
+            fallbackSafeLeft = 0,
+            fallbackSafeTop = 63,
+            fallbackSafeRight = 0,
+            fallbackSafeBottom = 125,
+            fallbackImeBottom = 758,
+            imeVisible = true,
+        )
+
+        assertEquals(883, result.bottom)
+        assertEquals(63, result.top)
+    }
+
+    @Test
     fun fullScreenDialogUsesActualVisibleFrameForImeOverlap() {
         val result = resolvePhotoTextSearchDialogOcclusionPx(
             viewLeftOnScreen = 0,
@@ -99,7 +123,7 @@ class PhotoTextSearchDialogInsetsTest {
     }
 
     @Test
-    fun imeInsetIsFallbackWhenVisibleFrameDoesNotExposeKeyboard() {
+    fun imeInsetAndStableBarAreFallbackWhenVisibleFrameDoesNotExposeKeyboard() {
         val result = resolvePhotoTextSearchDialogOcclusionPx(
             viewLeftOnScreen = 0,
             viewTopOnScreen = 0,
@@ -113,8 +137,8 @@ class PhotoTextSearchDialogInsetsTest {
             fallbackSafeLeft = 0,
             fallbackSafeTop = 63,
             fallbackSafeRight = 0,
-            fallbackSafeBottom = 63,
-            fallbackImeBottom = 883,
+            fallbackSafeBottom = 125,
+            fallbackImeBottom = 758,
             imeVisible = true,
         )
 
@@ -138,7 +162,7 @@ class PhotoTextSearchDialogInsetsTest {
             fallbackSafeTop = 40,
             fallbackSafeRight = 20,
             fallbackSafeBottom = 50,
-            fallbackImeBottom = 700,
+            fallbackImeBottom = 650,
             imeVisible = true,
         )
 
