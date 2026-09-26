@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+
 package com.photobook.app.ui.screen
 
 import android.net.Uri
@@ -40,6 +42,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -53,10 +58,11 @@ import com.photobook.app.feature.phototextsearch.PhotoTextLayoutSource
 import com.photobook.app.feature.phototextsearch.PhotoTextSearchController
 import com.photobook.app.feature.phototextsearch.mediaStorePhotoTextLayoutSource
 import com.photobook.app.ui.component.PhotoTextSearchBackHandler
-import com.photobook.app.ui.component.rememberPhotoTextSearchDialogImeState
 import com.photobook.app.ui.component.PhotoTextSearchHeader
 import com.photobook.app.ui.component.PhotoTextSearchNavigation
 import com.photobook.app.ui.component.PhotoTextSearchOverlay
+import com.photobook.app.ui.component.photoTextSearchDialogPadding
+import com.photobook.app.ui.component.PHOTO_TEXT_SEARCH_VIEWPORT_TEST_TAG
 
 /**
  * Instagram Reels-style vertical photo browser.
@@ -107,21 +113,20 @@ fun PhotoReelsScreen(
         },
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
             dismissOnBackPress = !searchState.isOpen,
         ),
     ) {
-        val photoTextSearchImeState = rememberPhotoTextSearchDialogImeState()
         PhotoTextSearchBackHandler(
             enabled = searchState.isOpen,
-            imeVisible = photoTextSearchImeState.isVisible,
             onClose = searchController::close,
         )
 
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(bottom = photoTextSearchImeState.bottomPadding)
-                .background(Color.Black),
+                .background(Color.Black)
+                .padding(photoTextSearchDialogPadding()),
         ) {
             val compactSearchChrome =
                 searchState.isOpen && maxHeight < 320.dp && maxWidth >= 600.dp
@@ -157,7 +162,9 @@ fun PhotoReelsScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .clipToBounds(),
+                        .clipToBounds()
+                        .semantics { testTagsAsResourceId = true }
+                        .testTag(PHOTO_TEXT_SEARCH_VIEWPORT_TEST_TAG),
                 ) {
                     VerticalPager(
                         state = pagerState,

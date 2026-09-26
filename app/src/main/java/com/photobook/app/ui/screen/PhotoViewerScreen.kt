@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+
 package com.photobook.app.ui.screen
 
 import android.content.ClipData
@@ -101,6 +103,9 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.IntSize
@@ -123,10 +128,11 @@ import com.photobook.app.feature.phototextsearch.SearchOccurrence
 import com.photobook.app.feature.phototextsearch.mediaStorePhotoTextLayoutSource
 import com.photobook.app.ml.BundledOnDeviceIntelligence
 import com.photobook.app.ui.component.PhotoTextSearchBackHandler
-import com.photobook.app.ui.component.rememberPhotoTextSearchDialogImeState
 import com.photobook.app.ui.component.PhotoTextSearchHeader
 import com.photobook.app.ui.component.PhotoTextSearchNavigation
 import com.photobook.app.ui.component.PhotoTextSearchOverlay
+import com.photobook.app.ui.component.photoTextSearchDialogPadding
+import com.photobook.app.ui.component.PHOTO_TEXT_SEARCH_VIEWPORT_TEST_TAG
 import com.photobook.app.feature.duplicates.BestShotRecommendation
 import com.photobook.app.feature.duplicates.BurstBestShotPicker
 import com.photobook.app.feature.editor.CropPreset
@@ -504,13 +510,12 @@ fun PhotoViewerScreen(
         },
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
             dismissOnBackPress = !photoTextSearchState.isOpen,
         ),
     ) {
-        val photoTextSearchImeState = rememberPhotoTextSearchDialogImeState()
         PhotoTextSearchBackHandler(
             enabled = photoTextSearchState.isOpen,
-            imeVisible = photoTextSearchImeState.isVisible,
             onClose = {
                 photoTextSearchController.close()
                 showControls = true
@@ -524,7 +529,7 @@ fun PhotoViewerScreen(
             BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(bottom = photoTextSearchImeState.bottomPadding),
+                    .padding(photoTextSearchDialogPadding()),
             ) {
                 val compactSearchChrome =
                     photoTextSearchState.isOpen && maxHeight < 320.dp && maxWidth >= 600.dp
@@ -579,7 +584,9 @@ fun PhotoViewerScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f)
-                            .clipToBounds(),
+                            .clipToBounds()
+                            .semantics { testTagsAsResourceId = true }
+                            .testTag(PHOTO_TEXT_SEARCH_VIEWPORT_TEST_TAG),
                     ) {
                         val pagerScrollEnabled =
                             currentPageZoom <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON &&

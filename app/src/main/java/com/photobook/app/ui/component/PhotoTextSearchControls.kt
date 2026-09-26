@@ -1,7 +1,11 @@
+@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+
 package com.photobook.app.ui.component
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -32,12 +36,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -125,7 +132,10 @@ fun PhotoTextSearchHeader(
                     onRetry = onRetry,
                     showMatchAction = showMatchAction,
                     compact = true,
-                    modifier = Modifier.widthIn(min = 132.dp, max = 260.dp),
+                    modifier = Modifier
+                        .widthIn(min = 132.dp, max = 260.dp)
+                        .semantics { testTagsAsResourceId = true }
+                        .testTag(PHOTO_TEXT_SEARCH_COMPACT_NAV_TEST_TAG),
                 )
             }
         }
@@ -164,11 +174,12 @@ fun PhotoTextSearchNavigation(
 @Composable
 fun PhotoTextSearchBackHandler(
     enabled: Boolean,
-    imeVisible: Boolean,
     onClose: () -> Unit,
 ) {
+    val density = LocalDensity.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
+    val imeVisible = WindowInsets.ime.getBottom(density) > 0
 
     BackHandler(enabled = enabled) {
         if (imeVisible) {
@@ -475,3 +486,6 @@ private val SEARCH_SECONDARY_COLOR = Color(0xFFC7C7CC)
 private val SEARCH_ERROR_COLOR = Color(0xFFFFB4AB)
 private val SEARCH_HEADER_MIN_HEIGHT = 72.dp
 private const val CHARACTER_COUNT_WARNING_MARGIN = 16
+
+internal const val PHOTO_TEXT_SEARCH_VIEWPORT_TEST_TAG = "photo_text_search_viewport"
+internal const val PHOTO_TEXT_SEARCH_COMPACT_NAV_TEST_TAG = "photo_text_search_compact_navigation"
