@@ -1,46 +1,179 @@
 package com.photobook.app.ui.component
 
+import android.graphics.Rect
+import android.view.View
+import android.view.ViewTreeObserver
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import kotlin.math.max
 
+@Immutable
+internal data class PhotoTextSearchDialogOcclusionPx(
+    val left: Int = 0,
+    val top: Int = 0,
+    val right: Int = 0,
+    val bottom: Int = 0,
+)
+
 /**
- * Returns one authoritative padding rectangle for a full-screen photo-search dialog.
+ * Returns one authoritative safe rectangle for the full-screen search dialog.
  *
- * Insets must be resolved before any inset-padding modifier consumes them. Chaining
- * systemBarsPadding() and imePadding() can under-reserve the IME in edge-to-edge Dialog windows
- * because the second modifier sees already-consumed insets. We instead read both raw inset sets,
- * take the safe drawing edges for left/top/right, and reserve whichever bottom obstruction is
- * larger: safe drawing or the IME.
+ * The visible display frame and this Compose view are both measured in screen coordinates. That
+ * matters for Dialog windows: an IME inset reported in window-local coordinates can differ from
+ * the actual screen overlap when system bars have already shifted or inset the dialog.
+ *
+ * No systemBarsPadding()/imePadding() modifier is used alongside this function. This is the single
+ * inset owner for Viewer, Reels, and Vault search content.
  */
 @Composable
 fun photoTextSearchDialogPadding(): PaddingValues {
+    val view = LocalView.current
     val density = LocalDensity.current
     val layoutDirection = LocalLayoutDirection.current
-    val safeDrawing = WindowInsets.safeDrawing
-    val ime = WindowInsets.ime
+    var occlusion by remember(view) {
+        mutableStateOf(PhotoTextSearchDialogOcclusionPx())
+    }
 
-    val leftPx = safeDrawing.getLeft(density, layoutDirection)
-    val topPx = safeDrawing.getTop(density)
-    val rightPx = safeDrawing.getRight(density, layoutDirection)
-    val safeBottomPx = safeDrawing.getBottom(density)
-    val imeBottomPx = ime.getBottom(density)
-    val bottomPx = max(safeBottomPx, imeBottomPx)
+    DisposableEffect(view) {
+        fun update() {
+            if (view.width <= 0 || view.height <= 0) return
 
-    val left = with(density) { leftPx.toDp() }
-    val top = with(density) { topPx.toDp() }
-    val right = with(density) { rightPx.toDp() }
-    val bottom = with(density) { bottomPx.toDp() }
+            val visibleFrame = Rect()
+            view.getWindowVisibleDisplayFrame(visibleFrame)
+            val location = IntArray(2)
+            view.getLocationOnScreen(location)
+
+            val rootInsets = ViewCompat.getRootWindowInsets(view)
+            val safeType =
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            val safeInsets = rootInsets?.getInsets(safeType)
+            val imeType = WindowInsetsCompat.Type.ime()
+            val imeVisible = rootInsets?.isVisible(imeType) == true
+            val imeInsets = rootInsets?.getInsets(imeType)
+
+            val next = resolvePhotoTextSearchDialogOcclusionPx(
+                viewLeftOnScreen = location[0],
+                viewTopOnScreen = location[1],
+                viewWidth = view.width,
+                viewHeight = view.height,
+                visibleFrameLeftOnScreen = visibleFrame.left,
+                visibleFrameTopOnScreen = visibleFrame.top,
+                visibleFrameRightOnScreen = visibleFrame.right,
+                visibleFrameBottomOnScreen = visibleFrame.bottom,
+                visibleFrameUsable = !visibleFrame.isEmpty,
+                fallbackSafeLeft = safeInsets?.left ?: 0,
+                fallbackSafeTop = safeInsets?.top ?: 0,
+                fallbackSafeRight = safeInsets?.right ?: 0,
+                fallbackSafeBottom = safeInsets?.bottom ?: 0,
+                fallbackImeBottom = imeInsets?.bottom ?: 0,
+                imeVisible = imeVisible,
+            )
+            if (next != occlusion) {
+                occlusion = next
+            }
+        }
+
+        val globalLayoutListener = ViewTreeObserver.OnGlobalLayoutListener { update() }
+        val layoutChangeListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            update()
+        }
+        view.viewTreeObserver.addOnGlobalLayoutListener(globalLayoutListener)
+        view.addOnLayoutChangeListener(layoutChangeListener)
+        view.post { update() }
+
+        onDispose {
+            if (view.viewTreeObserver.isAlive) {
+                view.viewTreeObserver.removeOnGlobalLayoutListener(globalLayoutListener)
+            }
+            view.removeOnLayoutChangeListener(layoutChangeListener)
+        }
+    }
+
+    val left = with(density) { occlusion.left.toDp() }
+    val top = with(density) { occlusion.top.toDp() }
+    val right = with(density) { occlusion.right.toDp() }
+    val bottom = with(density) { occlusion.bottom.toDp() }
 
     return if (layoutDirection == LayoutDirection.Ltr) {
         PaddingValues(start = left, top = top, end = right, bottom = bottom)
     } else {
         PaddingValues(start = right, top = top, end = left, bottom = bottom)
     }
+}
+
+/**
+ * Resolves the part of a dialog view that is not actually visible on screen.
+ *
+ * The visible frame is authoritative when available because it already reflects the dialog's real
+ * screen origin and any system bars consumed before Compose. Root-window insets are fallback data
+ * only. If an OEM reports the IME visible without shrinking the visible frame, the IME fallback is
+ * used for the bottom edge.
+ */
+internal fun resolvePhotoTextSearchDialogOcclusionPx(
+    viewLeftOnScreen: Int,
+    viewTopOnScreen: Int,
+    viewWidth: Int,
+    viewHeight: Int,
+    visibleFrameLeftOnScreen: Int,
+    visibleFrameTopOnScreen: Int,
+    visibleFrameRightOnScreen: Int,
+    visibleFrameBottomOnScreen: Int,
+    visibleFrameUsable: Boolean,
+    fallbackSafeLeft: Int,
+    fallbackSafeTop: Int,
+    fallbackSafeRight: Int,
+    fallbackSafeBottom: Int,
+    fallbackImeBottom: Int,
+    imeVisible: Boolean,
+): PhotoTextSearchDialogOcclusionPx {
+    if (viewWidth <= 0 || viewHeight <= 0) {
+        return PhotoTextSearchDialogOcclusionPx()
+    }
+
+    val fallback = PhotoTextSearchDialogOcclusionPx(
+        left = fallbackSafeLeft.coerceIn(0, viewWidth),
+        top = fallbackSafeTop.coerceIn(0, viewHeight),
+        right = fallbackSafeRight.coerceIn(0, viewWidth),
+        bottom = max(
+            fallbackSafeBottom,
+            if (imeVisible) fallbackImeBottom else 0,
+        ).coerceIn(0, viewHeight),
+    )
+    if (!visibleFrameUsable) return fallback
+
+    val viewRightOnScreen = viewLeftOnScreen + viewWidth
+    val viewBottomOnScreen = viewTopOnScreen + viewHeight
+    val fromFrame = PhotoTextSearchDialogOcclusionPx(
+        left = (visibleFrameLeftOnScreen - viewLeftOnScreen).coerceIn(0, viewWidth),
+        top = (visibleFrameTopOnScreen - viewTopOnScreen).coerceIn(0, viewHeight),
+        right = (viewRightOnScreen - visibleFrameRightOnScreen).coerceIn(0, viewWidth),
+        bottom = (viewBottomOnScreen - visibleFrameBottomOnScreen).coerceIn(0, viewHeight),
+    )
+
+    // If Android says the IME is visible but the visible frame did not move below the ordinary
+    // safe bottom edge, this device/window combination is not exposing IME geometry via the frame.
+    // Fall back only for that edge; otherwise the screen-coordinate frame stays authoritative.
+    val bottom = if (
+        imeVisible &&
+        fallbackImeBottom > 0 &&
+        fromFrame.bottom <= fallbackSafeBottom
+    ) {
+        max(fromFrame.bottom, fallbackImeBottom).coerceIn(0, viewHeight)
+    } else {
+        fromFrame.bottom
+    }
+
+    return fromFrame.copy(bottom = bottom)
 }
