@@ -101,6 +101,9 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.IntSize
@@ -127,6 +130,7 @@ import com.photobook.app.ui.component.rememberPhotoTextSearchDialogImeState
 import com.photobook.app.ui.component.PhotoTextSearchHeader
 import com.photobook.app.ui.component.PhotoTextSearchNavigation
 import com.photobook.app.ui.component.PhotoTextSearchOverlay
+import com.photobook.app.ui.component.PHOTO_TEXT_SEARCH_VIEWPORT_TEST_TAG
 import com.photobook.app.feature.duplicates.BestShotRecommendation
 import com.photobook.app.feature.duplicates.BurstBestShotPicker
 import com.photobook.app.feature.editor.CropPreset
@@ -579,7 +583,9 @@ fun PhotoViewerScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f)
-                            .clipToBounds(),
+                            .clipToBounds()
+                            .semantics { testTagsAsResourceId = true }
+                            .testTag(PHOTO_TEXT_SEARCH_VIEWPORT_TEST_TAG),
                     ) {
                         val pagerScrollEnabled =
                             currentPageZoom <= MIN_VIEWER_ZOOM + VIEWER_ZOOM_EPSILON &&
