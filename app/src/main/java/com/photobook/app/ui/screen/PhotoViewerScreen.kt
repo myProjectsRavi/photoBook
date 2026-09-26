@@ -35,8 +35,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -128,7 +130,6 @@ import com.photobook.app.feature.phototextsearch.SearchOccurrence
 import com.photobook.app.feature.phototextsearch.mediaStorePhotoTextLayoutSource
 import com.photobook.app.ml.BundledOnDeviceIntelligence
 import com.photobook.app.ui.component.PhotoTextSearchBackHandler
-import com.photobook.app.ui.component.rememberPhotoTextSearchDialogImeState
 import com.photobook.app.ui.component.PhotoTextSearchHeader
 import com.photobook.app.ui.component.PhotoTextSearchNavigation
 import com.photobook.app.ui.component.PhotoTextSearchOverlay
@@ -510,13 +511,12 @@ fun PhotoViewerScreen(
         },
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
             dismissOnBackPress = !photoTextSearchState.isOpen,
         ),
     ) {
-        val photoTextSearchImeState = rememberPhotoTextSearchDialogImeState()
         PhotoTextSearchBackHandler(
             enabled = photoTextSearchState.isOpen,
-            imeVisible = photoTextSearchImeState.isVisible,
             onClose = {
                 photoTextSearchController.close()
                 showControls = true
@@ -529,7 +529,9 @@ fun PhotoViewerScreen(
         ) {
             BoxWithConstraints(
                 modifier = Modifier
-                    .fillMaxSize(),
+                    .fillMaxSize()
+                    .systemBarsPadding()
+                    .imePadding(),
             ) {
                 val compactSearchChrome =
                     photoTextSearchState.isOpen && maxHeight < 320.dp && maxWidth >= 600.dp
