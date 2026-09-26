@@ -87,33 +87,62 @@ fun rememberPhotoTextSearchDialogImeState(): PhotoTextSearchDialogImeState {
 private fun readPlatformImeSnapshot(view: View): PlatformImeSnapshot {
     val insets = ViewCompat.getRootWindowInsets(view)
     val imeType = WindowInsetsCompat.Type.ime()
-    val imeVisible = insets?.isVisible(imeType) == true
-    val imeBottom = insets?.getInsets(imeType)?.bottom ?: 0
+    val platformImeVisible = insets?.isVisible(imeType) == true
+    val platformImeBottomInset = insets?.getInsets(imeType)?.bottom ?: 0
 
-    if (imeVisible && imeBottom > 0) {
-        return PlatformImeSnapshot(isVisible = true, bottomInsetPx = imeBottom)
-    }
-
-    // Defensive fallback for OEM/dialog combinations that expose the keyboard through the
-    // visible display frame before WindowInsetsCompat reports Type.ime().
+    // WindowInsets bottom values are local to the dialog window. On edge-to-edge/full-screen
+    // dialogs that window can already have consumed status/navigation insets, so applying the raw
+    // value as full-screen padding can under-reserve the keyboard by exactly those consumed bars.
+    //
+    // Compute the occluded portion in one coordinate system instead: both values below are screen
+    // coordinates. This also handles dialogs whose root view is offset or shorter than the display.
     val visibleFrame = Rect()
     view.getWindowVisibleDisplayFrame(visibleFrame)
     val location = IntArray(2)
     view.getLocationOnScreen(location)
     val viewBottomOnScreen = location[1] + view.height
-    val navigationBottom = insets
-        ?.getInsets(WindowInsetsCompat.Type.navigationBars())
-        ?.bottom
-        ?: 0
-    val obscuredBottom = (viewBottomOnScreen - visibleFrame.bottom).coerceAtLeast(0)
-    val fallbackImeBottom = (obscuredBottom - navigationBottom).coerceAtLeast(0)
-    val minimumImeHeight = (view.height * 0.15f).toInt()
-    val fallbackVisible = fallbackImeBottom > minimumImeHeight
+    val resolvedBottomPadding = resolvePhotoTextSearchImeOcclusionPx(
+        viewHeightPx = view.height,
+        viewBottomOnScreenPx = viewBottomOnScreen,
+        visibleFrameBottomOnScreenPx = visibleFrame.bottom,
+        platformImeVisible = platformImeVisible,
+        platformImeBottomInsetPx = platformImeBottomInset,
+    )
 
     return PlatformImeSnapshot(
-        isVisible = fallbackVisible,
-        bottomInsetPx = if (fallbackVisible) fallbackImeBottom else 0,
+        isVisible = resolvedBottomPadding > 0,
+        bottomInsetPx = resolvedBottomPadding,
     )
+}
+
+/**
+ * Returns the number of pixels of this dialog view that are actually obscured by the IME.
+ *
+ * [visibleFrameBottomOnScreenPx] and [viewBottomOnScreenPx] deliberately use screen coordinates.
+ * The platform IME inset is only a fallback for devices where the visible frame does not move.
+ */
+internal fun resolvePhotoTextSearchImeOcclusionPx(
+    viewHeightPx: Int,
+    viewBottomOnScreenPx: Int,
+    visibleFrameBottomOnScreenPx: Int,
+    platformImeVisible: Boolean,
+    platformImeBottomInsetPx: Int,
+): Int {
+    if (viewHeightPx <= 0) return 0
+
+    val frameOcclusion = (viewBottomOnScreenPx - visibleFrameBottomOnScreenPx)
+        .coerceIn(0, viewHeightPx)
+    val minimumFallbackImeHeight = (viewHeightPx * 0.15f).toInt()
+
+    return when {
+        // The visible frame is the authoritative geometry because it already accounts for this
+        // dialog's actual on-screen origin and any status/navigation insets consumed upstream.
+        platformImeVisible && frameOcclusion > 0 -> frameOcclusion
+        platformImeVisible -> platformImeBottomInsetPx.coerceIn(0, viewHeightPx)
+        // Some OEMs publish the visible-frame change one layout before Type.ime() becomes visible.
+        frameOcclusion > minimumFallbackImeHeight -> frameOcclusion
+        else -> 0
+    }
 }
 
 private fun findDialogWindow(start: View): android.view.Window? {
