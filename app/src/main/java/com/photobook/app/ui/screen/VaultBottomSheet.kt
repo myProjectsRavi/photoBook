@@ -304,8 +304,7 @@ private fun VaultItemPreviewDialog(
         ) {
             BoxWithConstraints(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(bottom = photoTextSearchImeState.bottomPadding),
+                    .fillMaxSize(),
             ) {
                 val compactSearchChrome =
                     searchState.isOpen && maxHeight < 320.dp && maxWidth >= 600.dp
