@@ -529,8 +529,7 @@ fun PhotoViewerScreen(
         ) {
             BoxWithConstraints(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(bottom = photoTextSearchImeState.bottomPadding),
+                    .fillMaxSize(),
             ) {
                 val compactSearchChrome =
                     photoTextSearchState.isOpen && maxHeight < 320.dp && maxWidth >= 600.dp
