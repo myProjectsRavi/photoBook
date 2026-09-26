@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+
 package com.photobook.app.ui.component
 
 import androidx.activity.compose.BackHandler
