@@ -1,0 +1,53 @@
+# Blueprint 01 Decisions
+
+## D001 — Authorized implementation branch
+
+**Decision:** Execute Blueprint 01 only on `autopilot/epics-features-user-stories`. `main` is read-only.
+
+**Reason:** The printed blueprint names `autopilot/photobook-blueprint-01`, but Ravi explicitly designated `autopilot/epics-features-user-stories` for this autopilot implementation before execution. At S01 start the authorized branch was exactly the blueprint baseline SHA, so this changes only the implementation branch name, not the source baseline or product contract.
+
+Never merge, reset, force-push, release or upload as a side effect of this cycle.
+
+## D002 — Product and size contract
+
+The following contract is copied from Blueprint 01 and is binding for this cycle.
+
+### Nonnegotiable product behavior
+
+PhotoBook must not request INTERNET, download models, create accounts, show advertisements, collect telemetry, upload crashes, or require cloud services. Build machines may download pinned dependencies; the installed application must work on first launch with the device offline. The system sharesheet is an explicit user export boundary: another chosen app may transmit a copy, so privacy copy must not claim exports can never leave the device.
+
+Room remains authoritative for committed indexed metadata. Preserve original media during edits and exports. Reconcile limited/revoked access without treating hidden rows as deleted. Destructive media actions require explicit foreground confirmation; background workers may identify candidates or mark retention dates, never delete media. Do not weaken Vault authentication, encryption, backup exclusions, or source-integrity checks for speed.
+
+### Size and compatibility contract
+
+| Item | Binding rule |
+|---|---|
+| User size ceiling | Treat 30 MB conservatively as 30,000,000 bytes per delivered APK; document the measurement |
+| Existing repository APK gate | Keep the existing 30 MiB gate and add the stricter decimal-byte check; never relax either |
+| Existing AAB gate | Preserve at most 20 MiB, or 20,971,520 bytes |
+| Installed footprint | Report separately from APK/AAB; it grows with runtime, indexes, caches, and user Vault data |
+| Android support | Preserve API 26 minimum and API 36 target; runtime matrix includes APIs 26, 29, 30, 33, 34, 35, 36 |
+| Production ABI | Preserve arm64-v8a and armeabi-v7a; x86 emulator translation is separate evidence |
+| Memory | Preserve constrained-device support; 4 GB physical RAM does not imply a 4 GB app heap |
+
+Never promise that an installed gallery, its index, and user-owned media together occupy less than 30 MB. The enforceable download/package budget is separate from storage management. If a stricter APK gate fails, reduce dependency/resource cost and stop release advancement.
+
+### Scope exclusions for this cycle
+
+No video indexing or playback, server/API integration, new language model, generative editing, automatic face naming, cloud backup, remote maps, subscriptions, or app-wide architecture rewrite. Do not lower minSdk, change encryption formats, delete legacy data, or remove functioning features without a separately reviewed need. No feature exists merely to fill a menu. Each accepted addition must solve a named user task with bounded CPU, memory, storage, and an understandable failure state.
+
+“Best complexity” means a justified bound for this workload, including I/O and bitmap cost. Do not call a full scan O(1), or describe hash lookup as making substring search constant time. Favor correctness and completeness over an unproven speed claim.
+
+## D003 — Evidence language
+
+Use “observed in source” for directly inspected behavior, “candidate risk” for a path requiring reproduction, “proposed” for a design choice, and “measured” only with a command, artifact, environment and exact commit. A simulated 4 GB AVD is not a physical 4 GB phone. Never label a skipped or unavailable gate PASS.
+
+## D004 — Failure behavior must fail safe
+
+A readable image with missing metadata remains viewable. A denied operation leaves the rest of the app usable. A failed scan is not an empty library. Unsupported system Trash is not an invitation to permanently delete. A failed privacy transformation does not share the original. A failed Vault export does not delete the encrypted source. A corrupt model does not cause a network download.
+
+Original bytes, favorites and notes are protected user data. Derived tags, thumbnails and indexes may be rebuilt only with explicit scoped recovery. Never erase the database or reset encryption keys as a generic crash fix.
+
+## D005 — Story advancement rule
+
+Exactly one story is the active unit of work. Resume an IN_PROGRESS or BLOCKED story from its durable checkpoint. Mark it ACCEPTED only after its Blueprint acceptance criteria and required reproducible evidence pass. The next hourly run then selects the next eligible story in the fixed S01→S32 schedule. A dependency-safe narrow blocker fix belongs to the active story; broad parallel rewrites are not allowed.

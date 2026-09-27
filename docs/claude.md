@@ -29,11 +29,12 @@ PhotoBook is a free, private, offline-first Android gallery. Preserve the local 
 
 ## Release truth
 
-- `app/build.gradle.kts` is the only checked-in release truth: `versionCode = 24`, `versionName = "2.0.17"`, `targetSdk = 36`.
-- Release uses R8 optimization and resource shrinking with `proguard-android-optimize.txt`; keep the release shrinker enabled and validate the signed output after any keep-rule change.
-- Play Console consumption, track state, and upload eligibility are external preflight facts and must not be written as repository facts.
+- `app/build.gradle.kts` is the only checked-in release metadata truth. Do not copy versionCode/versionName values into contributor guides. Read them from Gradle or run `./gradlew :app:printReleaseMetadata` against the exact branch commit being reviewed.
+- Release uses R8 optimization and resource shrinking with `proguard-android-optimize.txt`; keep the release shrinker enabled and validate the exact output after any keep-rule change.
+- Play Console consumption, track state, signing state, and upload eligibility are external preflight facts and must not be written as repository facts.
 - `finish_release.sh` is reproducible build-only: it discovers the repository root, derives metadata from Gradle, builds release artifacts, checks existence, merged manifest, sizes, and lint, and never pushes, opens a browser, or uploads.
-- The signed Play upload artifact is `app/build/outputs/bundle/release/app-release.aab`; verify package/version, signing, size, and the bundled local semantic-label model before upload.
+- The release bundle path is `app/build/outputs/bundle/release/app-release.aab`; verify package/version, signing when applicable, size, and bundled local model contents from the exact artifact before any separate upload decision.
+- Preserve both package budgets: the existing repository APK gate is 30 MiB per generated ABI APK; Blueprint 01 additionally requires a stricter 30,000,000-byte delivered-APK ceiling before final acceptance. The release AAB remains capped at 20 MiB (20,971,520 bytes).
 
 ## Verification
 

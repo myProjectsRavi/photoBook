@@ -26,5 +26,10 @@ Performance is a measured contract, not a promise of a fixed latency on every An
 - Compose grids use Paging, stable keys, adjacent-page prefetch, bounded Coil memory, and Lite-tier limits on low-RAM devices.
 - Required benchmark scenarios are 10k/50k/100k synthetic libraries: cold startup, search p95, first visible thumbnail, scroll frame stability, peak heap, indexing throughput, and battery-sensitive WorkManager behavior.
 - The hosted API-35 100k search certification is a regression gate: each representative OCR, filename, date, synonym, and private-note query must remain at or below 300 ms p95 while returning exact complete results. This CI ceiling is not a universal latency guarantee for every device.
-- Build gates are hard: every generated APK <=30 MB and the release AAB <=20 MB. Record device model, API level, RAM tier, library size, and airplane-mode state with every benchmark.
-- Release packaging enables R8 optimization and resource shrinking; performance and size claims must be made from the signed, minified AAB rather than from a debug build.
+- Build/package gates are hard and must be reported in raw bytes: preserve the existing per-ABI APK gate of 30 MiB and the release AAB gate of 20 MiB (20,971,520 bytes). Blueprint 01 adds a stricter 30,000,000-byte delivered-APK ceiling for final certification; it does not replace or relax the existing 30 MiB repository gate. Record emulator/device model, API level, RAM tier, library size, and offline state with every benchmark.
+- Release packaging enables R8 optimization and resource shrinking. Performance and size claims must come from an exact release-like/minified artifact; signing/distribution verification is a separate final-release fact and must not be inferred from a debug build or an unsigned CI artifact.
+
+
+## Release metadata source of truth
+
+Do not copy versionCode/versionName into this document. Read `app/build.gradle.kts` or run `./gradlew :app:printReleaseMetadata` at the exact commit under test. This avoids stale release examples across contributor guides.

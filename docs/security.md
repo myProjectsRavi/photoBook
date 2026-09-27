@@ -25,5 +25,10 @@ PhotoBook is local-first by construction. The app has no app-level `INTERNET` pe
 ## Diagnostics and release checks
 
 - Diagnostics are local, redacted for paths/URIs, bounded in size/count, and never uploaded.
-- Every release must verify the merged manifest contains no `INTERNET`, signatures are valid, APK/AAB size gates pass, target SDK is 36, and the exact artifacts pass an airplane-mode device replay. Build success alone is not release readiness.
+- Every release must verify the merged manifest contains no `INTERNET`, package/version metadata matches the exact Gradle source, signatures are valid when signing is part of the tested artifact, the existing 30 MiB APK and 20 MiB AAB gates pass, the Blueprint 01 stricter 30,000,000-byte delivered-APK ceiling passes before final certification, target SDK remains 36, and the exact artifact receives the available offline emulator/device replay. Build success alone is not release readiness.
 - The Play upload must use the exact signed `app/build/outputs/bundle/release/app-release.aab` after package/version, signing, size, and bundled-model checks pass.
+
+
+## Release metadata source of truth
+
+Do not duplicate versionCode/versionName in security guidance. Read `app/build.gradle.kts` or `./gradlew :app:printReleaseMetadata` from the exact branch commit. Play Console track state and signed-distribution state are external evidence, not repository facts.
