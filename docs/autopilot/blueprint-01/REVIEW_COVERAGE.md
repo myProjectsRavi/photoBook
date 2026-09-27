@@ -13,16 +13,16 @@ Semantic status values below reflect only the Blueprint 01 review statement: a s
 
 | Path | Blob SHA | Bytes | Lines | Subsystem | Inventory | Static scan | Semantic review | Runtime coverage |
 |---|---|---:|---:|---|---|---|---|---|
-| `.github/workflows/android-verify.yml` | `9f7cc7dec31f8a274c0366e181da7f923f700f85` | 1054 | PENDING | build/verification | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `.github/workflows/android-verify.yml` | `9f7cc7dec31f8a274c0366e181da7f923f700f85` | 1054 | 36 | build/verification | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `.github/workflows/phase1-device-verify.yml` | `b9db84cb29c028263afd0f3bc26e26a7f6a57c9a` | 7062 | PENDING | build/verification | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `.github/workflows/phase3-device-certification.yml` | `7eddaa0dafd07c5383a1e67692707d67da8ac535` | 6726 | PENDING | build/verification | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `.github/workflows/phase4-index-measurement.yml` | `8912f4d89e89b2814f67290f722f175aa72ffe41` | 7484 | PENDING | build/verification | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `.github/workflows/reliability-emulator-verify.yml` | `9e77fa2a7cd2b62946df6d516d62f048faf41472` | 11077 | PENDING | build/verification | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `.github/workflows/verified-integration-correctness.yml` | `f959030f074234e93a9f903b730e6ea91d73b0a0` | 8520 | PENDING | build/verification | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `.gitignore` | `25773b1367be563d0592c830d732e5fc5b16be8f` | 192 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `README.md` | `718b918d391745be81871f82c6d96ecc44391149` | 9089 | PENDING | documentation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `UI/TestQr.kt` | `17ac326927c7006eaf1ac32089feee7b5f3fda89` | 643 | PENDING | auxiliary tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `UI/UI/clean_overlay.py` | `74cd5e487e13438279cd34daf79c12847da27c42` | 1505 | PENDING | auxiliary tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `.gitignore` | `25773b1367be563d0592c830d732e5fc5b16be8f` | 192 | 34 | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `README.md` | `718b918d391745be81871f82c6d96ecc44391149` | 9089 | 87 | documentation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `UI/TestQr.kt` | `17ac326927c7006eaf1ac32089feee7b5f3fda89` | 643 | 60 | auxiliary tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `UI/UI/clean_overlay.py` | `74cd5e487e13438279cd34daf79c12847da27c42` | 1505 | 34 | auxiliary tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `UI/generate_playstore_screenshots.py` | `09581556cc7b4097fc0d81c4187680273cdc9623` | 3608 | PENDING | auxiliary tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/build.gradle.kts` | `a62ee6ca4da2ca659cb4300b89c84e7aa48e1e95` | 13074 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/patch_qr.sh` | `be14f31c7d2d56db782001e8877953a6be106b19` | 494 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
@@ -237,6 +237,12 @@ Semantic status values below reflect only the Blueprint 01 review statement: a s
 | `tools/benchmark/run_phase3_device.sh` | `9040dc921c2fa86859c52fe51928da6b57ec8afe` | 22475 | PENDING | verification tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `tools/benchmark/run_phase5_physical_device.sh` | `12c4c5935407c10717a6137b7728ca777a69603d` | 957 | PENDING | verification tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `tools/benchmark/test_phase0_tools.py` | `f13cb338b1780a053128389cf85ac617653918a2` | 12629 | PENDING | verification tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+
+## S01 line-count progress
+
+- Exact line counts verified and persisted for the first 5 baseline text candidates above.
+- Remaining text-candidate line counts stay `PENDING`; do not infer them from byte sizes.
+- This is inventory progress only, not semantic/runtime certification.
 
 ## Binary/model/dependency provenance gap
 
