@@ -9,7 +9,7 @@ current_feature: Baseline and CI
 current_story: S01 Establish the canonical baseline  
 status: IN_PROGRESS  
 source_commit_tested: d693acd7c52f285b6ba475fdd3712a10e419d4e1 (baseline identity/source inspection only; no fresh Android runtime claim)  
-latest_checkpoint_commit: PENDING_FIRST_S01_COMMIT
+latest_checkpoint_commit: 0bd6ea79d41fcdd740c3e4214a7466d0ebb8405c
 
 ## Source blueprint
 
@@ -34,8 +34,12 @@ Authoritative planning source for this cycle: user-provided **PhotoBook_Implemen
 
 - Per-file **line counts** for the 224 text candidates remain PENDING. The connector call budget prevented reading every file in one run; do not fabricate them.
 - Whole-tree fresh static-scan status is not yet populated.
-- Post-commit Markdown/link/story-order validation still needs to run against the exact checkpoint commit.
+- Post-commit Markdown/link/story-order validation still needs to run against exact checkpoint commit `0bd6ea79d41fcdd740c3e4214a7466d0ebb8405c`.
 - S01 must remain IN_PROGRESS until those documentation acceptance gaps are closed.
+
+## Checkpoint commit
+
+S01 documentation checkpoint `0bd6ea79d41fcdd740c3e4214a7466d0ebb8405c` is one commit ahead of the baseline and changes only the five canonical checkpoint/coverage files plus five contributor documentation files. `main` remained at `d693acd7c52f285b6ba475fdd3712a10e419d4e1` at verification time.
 
 ## Next action
 

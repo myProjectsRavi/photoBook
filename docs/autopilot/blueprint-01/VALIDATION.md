@@ -41,3 +41,12 @@ These are useful baseline facts, but they are **not fresh S01 runtime execution 
 ## Evidence record format for future stories
 
 Each story record must include: story ID; expected behavior; changed files; source commit; command and exit code; test names/counts; environment; fixture hashes; artifact hashes; CI run URLs; screenshot paths when applicable; comparison baseline; known limitations; and reviewer decision.
+
+
+## S01 checkpoint 0bd6ea79d41fcdd740c3e4214a7466d0ebb8405c
+
+- Branch ref after commit: `autopilot/epics-features-user-stories` → `0bd6ea79d41fcdd740c3e4214a7466d0ebb8405c`.
+- Baseline compare: ahead 1, behind 0.
+- Changed paths: exactly 10 documentation/coverage files. No `app/**`, `.github/workflows/**`, Gradle, resource, source or test file changed.
+- `main` ref at the same verification point remained `d693acd7c52f285b6ba475fdd3712a10e419d4e1`.
+- S01 remains **IN_PROGRESS** because exact per-file line counts and final documentation consistency checks are still open.
