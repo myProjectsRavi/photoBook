@@ -251,3 +251,18 @@ PNG screenshots, the DOCX planning artifact, the Gradle wrapper JAR, generated/p
 ## Story review rule
 
 Before accepting a story that changes a subsystem, inspect every changed production file plus direct callers/tests, record the result in story evidence, and update this ledger or link that evidence. Never promote INVENTORIED or a prior green workflow to whole-file semantic/runtime proof.
+
+
+## S02 verification-subsystem semantic review
+
+Story S02 reviewed the changed verification paths plus their direct execution/evidence boundary:
+
+| S02 path | S02 review result |
+|---|---|
+| `.github/workflows/android-verify.yml` | Semantically reviewed: `autopilot/**` routing, read-only permissions, exact event-SHA checkout, concurrency, Phase-0 gate and fail-closed artifact presence. |
+| `.github/workflows/autopilot-targeted-verify.yml` | New S02 workflow semantically reviewed and executed at exact source `03b63c544e016f809618c4509d2cf5f9c6788a4b`; targeted correctness/privacy run succeeded. |
+| `tools/benchmark/run_phase0_local.sh` | Semantically reviewed: existing full gate preserved, including `assembleRelease` before `verifyApkSize`; evidence unit tests added to host self-test phase. |
+| `tools/benchmark/build_ci_evidence_manifest.py` | New S02 evidence validator semantically reviewed; requires source/workflow/environment/artifact identities and non-zero green instrumentation evidence. |
+| `tools/benchmark/test_ci_evidence_manifest.py` | New independent negative/positive tests reviewed; missing fixture and zero-test evidence fail closed, valid XML/direct instrumentation evidence succeeds. |
+
+S02 runtime evidence is linked in `VALIDATION.md`. The failed broad/performance and UTP-offline attempts are retained there rather than hidden. Binary/dependency provenance remains S31 scope.

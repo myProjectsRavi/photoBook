@@ -7,9 +7,9 @@ baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1
 current_epic: E01 Execution safety  
 current_feature: Baseline and CI  
 current_story: S02 Make branch verification authoritative  
-status: IN_PROGRESS  
-source_commit_tested: 717a9ef69cd6289d1bc649ce3b666e4d18c10dd3 (S01 accepted documentation checkpoint; S02 runtime/workflow changes not yet validated)
-latest_checkpoint_commit: 717a9ef69cd6289d1bc649ce3b666e4d18c10dd3
+status: READY_FOR_REVIEW  
+source_commit_tested: 03b63c544e016f809618c4509d2cf5f9c6788a4b
+latest_checkpoint_commit: 03b63c544e016f809618c4509d2cf5f9c6788a4b (tested S02 implementation source; next documentation checkpoint must prove autopilot routing without altering runtime code)
 
 ## Source blueprint
 
@@ -31,10 +31,30 @@ S01 is documentation/inventory work. No fresh Android runtime result is claimed 
 
 The static screen is deliberately bounded and is not a substitute for semantic review. Before accepting any later story that changes a subsystem, that story must close the relevant REVIEW_GAP entries for its changed production files/direct callers/tests.
 
+## Completed S02 implementation and evidence
+
+- Android Verification now includes `autopilot/**` push routing, explicit read-only permissions, exact-event-SHA checkout, checkout/workflow identity recording, cancellation of superseded runs, and fail-closed evidence upload.
+- Added `.github/workflows/autopilot-targeted-verify.yml` with an exact 40-character source-SHA dispatch contract and an `autopilot/**` runtime/tooling push route.
+- Added `tools/benchmark/build_ci_evidence_manifest.py` and regression tests. The manifest requires exact checkout/workflow identity, APK hashes, API, ABI, AVD RAM, deterministic fixture hash and a non-zero green instrumentation count. Missing fixtures/zero tests are negative tests.
+- Phase-0 host verification compiles and runs the evidence-manifest tests.
+- First targeted attempt, run `36396212144`, correctly failed because the full emulator suite included the 100k timing-only test under x86_64-hosted ARM translation; this is not valid native ARM performance evidence.
+- Second targeted attempt, run `36396959374`, correctly failed after host-network isolation because Gradle UTP attempted to resolve an uncached host plugin. The failure was an evidence-route/tooling dependency, not a product test result.
+- Fixed the targeted route to build while tooling is available, install the prebuilt APK/test APKs, then cut emulator and host outbound network and invoke AndroidJUnitRunner directly. Performance-only instrumentation stays in dedicated certification gates.
+- Exact source commit `03b63c544e016f809618c4509d2cf5f9c6788a4b` passed targeted hosted emulator run `36397730810`: API 35, x86_64 emulator, configured AVD RAM 2048 MiB, airplane mode on, host/emulator outbound-network checks blocked, merged/debug APK/installed-package INTERNET checks passed, and **19/19 targeted correctness/privacy instrumentation tests passed**.
+- Targeted evidence manifest status: VALID. Fixture SHA-256 `6bc4301485bac8f480ea96d711a2294e42ee9dd9d937fcc4a26a5e351c33b5bc`; instrumentation-output SHA-256 `3dfdb7b7242e4c8fb802fd9adcb80d35d6f822e13362a0c8ff9f24ee6d3ba742`; artifact ID `10959695052`, artifact digest `sha256:f9fefb5140cc46a4017aebfcc3392d081a9295613818e1be59e6de31a180b24e`.
+- Exact source commit `03b63c544e016f809618c4509d2cf5f9c6788a4b` passed Android Verification run `36397730695`: 20 host tests, full Phase-0 Gradle gate, release APK/AAB size gates, and packaged release no-INTERNET checks. Release APK sizes: arm64 22,429,005 bytes; armeabi-v7a 16,387,999 bytes. AAB: 20,606,184 bytes. Artifact ID `10959551441`, digest `sha256:e5e3efe3edc4042a70de18aa866a17df97029595524cce5f414fea71696c40f9`.
+- No production application code, resources, database schema, or release metadata changed in S02.
+
+## Limitations
+
+- The API-35 hosted emulator is x86_64 and may translate the ARM64 app. Its results are correctness/privacy evidence only, not native ARM performance evidence.
+- No physical/OEM device evidence is claimed.
+- S31/S32 retain the full compatibility/performance/package matrix.
+
 ## Blockers
 
-None at S02 start.
+One S02 acceptance demonstration remains: push this documentation-only checkpoint on `autopilot/**` and require Android Verification to run successfully for that exact docs-only commit. The targeted emulator workflow should not run because its path filter excludes documentation-only changes.
 
 ## Next action
 
-Inspect Android Verification, reliability emulator verification, Phase-0 tooling and direct verification tests. Implement the smallest workflow/tooling change that adds `autopilot/**` routing, exact-ref hosted validation and fail-closed evidence-manifest checks. Keep main read-only.
+Wait for Android Verification on this documentation-only checkpoint. If it succeeds and no unexpected targeted-emulator run is created, record the exact run and mark S02 ACCEPTED. Do not start S03 in the same hourly run.

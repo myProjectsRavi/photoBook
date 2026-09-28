@@ -81,3 +81,41 @@ Evidence source commit: `2ed75bfb50770000815accfd820197d9d783f036`
 - Observed hosted-emulator limitation: current emulator workflows use implicit current-branch checkout and branch-specific push triggers; no reusable exact-ref/evidence-manifest contract exists for the authorized autopilot branch.
 - Hypothesis: adding branch routing plus an exact-ref targeted verification workflow and fail-closed evidence validation will make branch evidence attributable to the tested source rather than to “latest green”.
 - No workflow/application mutation had been made at this checkpoint.
+
+
+## S02 implementation evidence — tested source 03b63c544e016f809618c4509d2cf5f9c6788a4b
+
+### Failed attempts retained as evidence
+
+- Targeted run **36396212144** failed after the new fail-closed manifest detected one failing instrumentation result. Root cause: the initially broad suite included the 100k search p95 timing test on a hosted x86_64 emulator executing the ARM app under translation. The route was narrowed to correctness/privacy instrumentation rather than weakening the 300 ms performance assertion.
+- Targeted run **36396959374** failed because `connectedDebugAndroidTest --offline` required an uncached Gradle UTP host plugin. The route was changed to build APKs before network isolation and invoke AndroidJUnitRunner directly after host/emulator network cut. No product assertion was weakened.
+
+### Passing exact-source evidence
+
+- **Autopilot Targeted Emulator Verification** run **36397730810**: SUCCESS for exact source `03b63c544e016f809618c4509d2cf5f9c6788a4b`.
+  - checkout SHA: `03b63c544e016f809618c4509d2cf5f9c6788a4b`
+  - workflow blob: `eb9edb1387970de77e6b21d0f4eb0055b7380e47`
+  - API: 35
+  - emulator ABI: x86_64
+  - configured AVD RAM: 2048 MiB; observed MemTotal: 2,532,420 kB
+  - airplane mode: 1
+  - targeted instrumentation: **19 tests, 0 failures, 0 errors**
+  - evidence manifest: VALID
+  - fixture SHA-256: `6bc4301485bac8f480ea96d711a2294e42ee9dd9d937fcc4a26a5e351c33b5bc`
+  - instrumentation output SHA-256: `3dfdb7b7242e4c8fb802fd9adcb80d35d6f822e13362a0c8ff9f24ee6d3ba742`
+  - debug ARM64 APK SHA-256: `de3ff0f9de8f1bee9310e5e7d46049b90d463161a05ab5462b8a8060e5071eb8`
+  - debug armeabi-v7a APK SHA-256: `3e2fd29a5f784019cbc47c3e578c4a690264c3d0d84b64eef2f991e9c868970d`
+  - artifact: `autopilot-targeted-36397730810`, ID `10959695052`, SHA-256 `f9fefb5140cc46a4017aebfcc3392d081a9295613818e1be59e6de31a180b24e`
+  - merged manifest, packaged debug APK permissions and installed package were checked for INTERNET; no INTERNET request was found.
+- **Android Verification** run **36397730695**: SUCCESS for exact source `03b63c544e016f809618c4509d2cf5f9c6788a4b`.
+  - host evidence tests: **20 passed**
+  - full Phase-0 Gradle gate: BUILD SUCCESSFUL, 238 actionable tasks
+  - release arm64 APK: **22,429,005 bytes**
+  - release armeabi-v7a APK: **16,387,999 bytes**
+  - release AAB: **20,606,184 bytes**
+  - both release APKs: no `android.permission.INTERNET`
+  - artifact: `phase0-verification-36397730695`, ID `10959551441`, SHA-256 `e5e3efe3edc4042a70de18aa866a17df97029595524cce5f414fea71696c40f9`
+
+### Remaining S02 acceptance check
+
+This checkpoint is documentation-only and exists specifically to demonstrate that `autopilot/**` routing works without altering runtime behavior. Require Android Verification to run and pass for this exact documentation-only commit. The targeted emulator path filter should not schedule a new targeted run.

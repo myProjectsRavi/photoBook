@@ -51,3 +51,10 @@ Original bytes, favorites and notes are protected user data. Derived tags, thumb
 ## D005 — Story advancement rule
 
 Exactly one story is the active unit of work. Resume an IN_PROGRESS or BLOCKED story from its durable checkpoint. Mark it ACCEPTED only after its Blueprint acceptance criteria and required reproducible evidence pass. The next hourly run then selects the next eligible story in the fixed S01→S32 schedule. A dependency-safe narrow blocker fix belongs to the active story; broad parallel rewrites are not allowed.
+
+
+## D006 — S02 targeted emulator evidence is correctness/privacy evidence
+
+The reusable S02 hosted-emulator route deliberately excludes performance-only instrumentation from its correctness/privacy suite. The API-35 runner is x86_64 while PhotoBook production APKs are ARM; translated execution is useful for correctness, offline inference, package-permission, Room and access-safety checks but is not native ARM timing evidence.
+
+For offline first-use verification, build/resolve host tooling before isolation, install the already-built app/test APKs, then disable emulator Wi-Fi/data, enable airplane mode, block the hosted runner user's outbound traffic while preserving loopback, and invoke AndroidJUnitRunner directly. This prevents Gradle/UTP dependency resolution from being confused with app network behavior. Dedicated performance workflows remain unchanged until their own stories.
