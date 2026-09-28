@@ -242,11 +242,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # This S02 route is a correctness/privacy route, not ARM performance evidence.
-          # The two performance-only instrumentation classes stay in their dedicated
-          # performance/certification gates; x86_64-hosted ARM translation is explicitly
-          # not treated as native ARM timing evidence.
+          # This S02 route is correctness/privacy evidence, not ARM performance evidence.
+          # Performance-only instrumentation remains in dedicated certification gates.
           TARGET_CLASSES="com.photobook.app.feature.metadata.ExifMetadataServiceInstrumentedTest,com.photobook.app.feature.phototextsearch.MediaStorePhotoTextLayoutSourceInstrumentedTest,com.photobook.app.ml.LocalOcrEngineInstrumentedTest,com.photobook.app.util.BitmapOrientationInstrumentedTest,com.photobook.app.verification.ArchiveAccessBoundaryInstrumentedTest,com.photobook.app.verification.IndexPersistenceInstrumentedTest,com.photobook.app.verification.OfflineAndDatabaseInvariantTest,com.photobook.app.verification.RoomMigrationInfrastructureTest"
+
+          mapfile -t APP_APKS < <(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*arm64-v8a*.apk' -print | sort)
+          if [[ "${#APP_APKS[@]}" -ne 1 ]]; then
+            echo "Expected exactly one ARM64 debug APK, found ${#APP_APKS[@]}" >&2
+            exit 1
+          fi
+          TEST_APK="$(find app/build/outputs/apk/androidTest/debug -type f -name '*.apk' -print | head -n 1)"
+          test -n "$TEST_APK"
+          test -f "$TEST_APK"
+          adb install -r "${APP_APKS[0]}" >/dev/null
+          adb install -r "$TEST_APK" >/dev/null
+
+          adb shell dumpsys package com.photobook.app > build/reports/autopilot-targeted/installed-package.txt
+          if sed -n '/requested permissions:/,/install permissions:/p' build/reports/autopilot-targeted/installed-package.txt | grep -Fq 'android.permission.INTERNET'; then
+            echo "Installed PhotoBook package requests android.permission.INTERNET" >&2
+            exit 1
+          fi
+
+          INSTRUMENTATION="$(adb shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n 1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
+          test -n "$INSTRUMENTATION"
 
           uid="$(id -u)"
           sudo iptables -I OUTPUT 1 -o lo -j ACCEPT
@@ -269,7 +287,22 @@ jobs:
           fi
           echo "offline_network_gate=PASS"
 
-          ./gradlew --offline :app:connectedDebugAndroidTest             -Pandroid.testInstrumentationRunnerArguments.class="$TARGET_CLASSES"             --stacktrace
+          set +e
+          adb shell am instrument -w -r -e class "$TARGET_CLASSES" "$INSTRUMENTATION" | tee build/reports/autopilot-targeted/instrumentation.txt
+          instrument_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$instrument_status" -ne 0 ]]; then
+            echo "Instrumentation command failed with exit code $instrument_status" >&2
+            exit "$instrument_status"
+          fi
+          if grep -Eq 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' build/reports/autopilot-targeted/instrumentation.txt; then
+            echo "Instrumentation reported failure" >&2
+            exit 1
+          fi
+          if ! grep -Eq 'OK \([1-9][0-9]* tests?\)' build/reports/autopilot-targeted/instrumentation.txt; then
+            echo "Instrumentation did not report a non-zero completed test count" >&2
+            exit 1
+          fi
 
       - name: Build fail-closed evidence manifest
         if: always()
@@ -281,7 +314,7 @@ jobs:
           EMULATOR_ABI: ${{ steps.emulator.outputs.abi }}
         run: |
           set -euo pipefail
-          python3 tools/benchmark/build_ci_evidence_manifest.py             --checkout-sha "$CHECKOUT_SHA"             --workflow-revision "$WORKFLOW_BLOB"             --workflow-ref "$GITHUB_WORKFLOW_REF"             --api "$EMULATOR_API"             --abi "$EMULATOR_ABI"             --avd-ram-mb 2048             --fixture build/phase0-fixtures/manifest-303.jsonl             --test-results-root app/build/outputs/androidTest-results             --apk-root app/build/outputs/apk/debug             --output build/reports/autopilot-targeted/evidence-manifest.json
+          python3 tools/benchmark/build_ci_evidence_manifest.py             --checkout-sha "$CHECKOUT_SHA"             --workflow-revision "$WORKFLOW_BLOB"             --workflow-ref "$GITHUB_WORKFLOW_REF"             --api "$EMULATOR_API"             --abi "$EMULATOR_ABI"             --avd-ram-mb 2048             --fixture build/phase0-fixtures/manifest-303.jsonl             --instrumentation-output build/reports/autopilot-targeted/instrumentation.txt             --apk-root app/build/outputs/apk/debug             --output build/reports/autopilot-targeted/evidence-manifest.json
 
       - name: Capture emulator diagnostics
         if: always()
@@ -303,8 +336,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           path: |
-            app/build/reports/androidTests/
-            app/build/outputs/androidTest-results/
             build/reports/autopilot-targeted/
             build/phase0-fixtures/manifest-303.jsonl
             build/phase0-fixtures/summary-303.json
