@@ -4,12 +4,12 @@ cycle: blueprint-01
 authorized_branch: autopilot/epics-features-user-stories  
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
-current_epic: E01 Execution safety  
-current_feature: Baseline and CI  
-current_story: S02 Make branch verification authoritative  
-status: READY_FOR_REVIEW  
-source_commit_tested: 03b63c544e016f809618c4509d2cf5f9c6788a4b
-latest_checkpoint_commit: 03b63c544e016f809618c4509d2cf5f9c6788a4b (tested S02 implementation source; next documentation checkpoint must prove autopilot routing without altering runtime code)
+current_epic: E02 Safe media writes  
+current_feature: Editor publication  
+current_story: S03 Move edited copy publication off Main  
+status: IN_PROGRESS  
+source_commit_tested: c4b6c2a3689b2e5fcb8db8a4527d7bdb05817888 (S02 final docs-only routing checkpoint)
+latest_checkpoint_commit: c4b6c2a3689b2e5fcb8db8a4527d7bdb05817888
 
 ## Source blueprint
 
@@ -51,10 +51,22 @@ The static screen is deliberately bounded and is not a substitute for semantic r
 - No physical/OEM device evidence is claimed.
 - S31/S32 retain the full compatibility/performance/package matrix.
 
+## S02 final acceptance
+
+- Documentation-only checkpoint `c4b6c2a3689b2e5fcb8db8a4527d7bdb05817888` automatically triggered Android Verification run `36399573069`, which completed successfully.
+- No Autopilot Targeted Emulator Verification run was scheduled for this documentation-only commit, as required by its runtime/tooling path filter.
+- S02 is ACCEPTED. Its tested implementation source remains `03b63c544e016f809618c4509d2cf5f9c6788a4b`; the later checkpoint is documentation-only routing evidence.
+
+## S03 start hypothesis
+
+Observed source defect: `PhotoViewerScreen.saveEditedCopyToDevice` performs MediaStore insert, stream copy, publication update and cleanup synchronously from the UI coroutine after rendering. Publication can expose a pending row before copy success is known, does not verify read-back/nonzero destination before publishing, has no durable operation journal, and does not model cancellation/access/storage outcomes.
+
+Expected observable result: edited-copy publication moves into a suspend editor/output service using `Dispatchers.IO`, captures immutable invocation state, publishes only a validated complete output, cleans app-owned partial outputs on failure/cancellation, and records enough durable state to reconcile interrupted app-owned pending outputs without touching unrelated media.
+
 ## Blockers
 
-One S02 acceptance demonstration remains: push this documentation-only checkpoint on `autopilot/**` and require Android Verification to run successfully for that exact docs-only commit. The targeted emulator workflow should not run because its path filter excludes documentation-only changes.
+None at S03 start. No physical device is available; S03 must rely on unit/static checks plus authoritative GitHub Android/emulator evidence where applicable.
 
 ## Next action
 
-Wait for Android Verification on this documentation-only checkpoint. If it succeeds and no unexpected targeted-emulator run is created, record the exact run and mark S02 ACCEPTED. Do not start S03 in the same hourly run.
+Inspect the complete editor save path, direct callers/tests and Android storage/API compatibility boundaries. Add a regression-testable publication abstraction/journal before replacing the UI-owned synchronous MediaStore copy. Preserve original media and do not broaden storage permissions.
