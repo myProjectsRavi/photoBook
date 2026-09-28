@@ -6,7 +6,8 @@ import android.net.Uri
 import androidx.core.content.FileProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.google.common.truth.Truth.assertThat
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import com.photobook.app.data.model.PhotoRecord
 import java.io.File
 import java.io.FileOutputStream
@@ -43,7 +44,7 @@ class EditorOutputPublisherInstrumentedTest {
         var publishedUri: Uri? = null
         try {
             val rendered = editService.renderEditedCopy(photo, state)
-            assertThat(rendered).isInstanceOf(PhotoEditResult.Success::class.java)
+            assertTrue(rendered is PhotoEditResult.Success)
             rendered as PhotoEditResult.Success
 
             val result = publisher.publish(
@@ -61,7 +62,7 @@ class EditorOutputPublisherInstrumentedTest {
                     mimeType = rendered.mimeType,
                 ),
             )
-            assertThat(result).isInstanceOf(EditorPublicationResult.Success::class.java)
+            assertTrue(result is EditorPublicationResult.Success)
             result as EditorPublicationResult.Success
             publishedUri = Uri.parse(result.uriString)
 
@@ -69,9 +70,9 @@ class EditorOutputPublisherInstrumentedTest {
             context.contentResolver.openInputStream(publishedUri)?.use { input ->
                 BitmapFactory.decodeStream(input, null, bounds)
             }
-            assertThat(bounds.outWidth).isEqualTo(12)
-            assertThat(bounds.outHeight).isEqualTo(24)
-            assertThat(sha256(sourceFile)).isEqualTo(beforeHash)
+            assertEquals(12, bounds.outWidth)
+            assertEquals(24, bounds.outHeight)
+            assertEquals(beforeHash, sha256(sourceFile))
         } finally {
             publishedUri?.let { context.contentResolver.delete(it, null, null) }
             sourceFile.delete()
@@ -83,7 +84,7 @@ class EditorOutputPublisherInstrumentedTest {
         try {
             bitmap.eraseColor(0xFF336699.toInt())
             FileOutputStream(file).use { output ->
-                assertThat(bitmap.compress(Bitmap.CompressFormat.JPEG, 95, output)).isTrue()
+                assertTrue(bitmap.compress(Bitmap.CompressFormat.JPEG, 95, output))
                 output.flush()
                 output.fd.sync()
             }
