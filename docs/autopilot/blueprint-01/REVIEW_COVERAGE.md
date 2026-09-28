@@ -7,7 +7,7 @@ Authorized implementation branch: `autopilot/epics-features-user-stories`
 
 The exact baseline tree contains **256 tracked blobs**. Of these, this ledger classifies **224 UTF-8/text candidates**, plus 30 PNGs, 1 DOCX and 1 JAR binary blob. Blueprint 01 reported 218 selected text files / 36,411 lines from its source-informed review. This S01 inventory deliberately does not assume that earlier selected set is identical to the full current text set.
 
-Per-file blob identity is recorded below. **Exact per-file line counts are still PENDING in S01** because the GitHub connector call budget prevented completing all content reads in one run. This is an explicit acceptance gap, not a fabricated count. Before S01 becomes ACCEPTED, line counts must be filled from the exact tree and the file statuses must remain distinguishable as inventoried, static-scanned, semantically reviewed and runtime-covered.
+Per-file blob identity is recorded below. Exact line counts and a bounded baseline static scan are being completed against the immutable baseline tree. The static scan checks private-key markers, common hard-coded credential/token signatures, and unresolved merge markers; it is screening evidence, not semantic or runtime certification.
 
 Semantic status values below reflect only the Blueprint 01 review statement: a small named set received detailed tracing, while the rest remain targeted/gap work. Runtime coverage is not attributed to individual files merely because a workflow was green.
 
@@ -38,22 +38,22 @@ Semantic status values below reflect only the Blueprint 01 review statement: a s
 | `app/src/androidTest/java/com/photobook/app/verification/OfflineAndDatabaseInvariantTest.kt` | `12b5b11e8fad3e1ecfe54692445a57820a91c361` | 1728 | 51 | android tests | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/androidTest/java/com/photobook/app/verification/RoomMigrationInfrastructureTest.kt` | `f402445585847cd2bbc23faa7218037ad157cfba` | 1162 | 38 | android tests | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/androidTest/java/com/photobook/app/verification/SearchCompletionInstrumentedTest.kt` | `fdae92526786c71fcb1c8b0d1f316b3f04408a0d` | 8241 | 198 | android tests | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/benchmark/AndroidManifest.xml` | `06dd166c6dc89068931e3727e1365b4222c0d015` | 299 | PENDING | resources/package | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/AndroidManifest.xml` | `129e3d464e0100169447115eece30ffa58d9b3f1` | 3193 | PENDING | resources/package | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/assets/cities_min.csv` | `927fb93c9f7f2b002691a6fa7825e802b57c82f6` | 382 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/MainActivity.kt` | `fb013053db172ff7a9d7530ec1fff6b99e47297e` | 35816 | PENDING | project/build | INVENTORIED | PENDING | DETAILED_BASELINE_REVIEW | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/PhotoBookApplication.kt` | `2e64888039df2b31ab0714cf76c9fd3d9200e03a` | 2188 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/data/db/ArchiveDao.kt` | `6d96007971e8b8610b5f1ffcbbb00e98d71e4db3` | 4406 | PENDING | persistence | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/data/db/ArchiveDecisionEntity.kt` | `860b96c77da50ce4a10df7d2cb650d582dfa2700` | 858 | PENDING | persistence | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/data/db/PhotoBookDatabase.kt` | `22ecb51651a20561c1edcfcbbb7d34abdd7e277b` | 477 | PENDING | persistence | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/data/db/PhotoDao.kt` | `9a74add2e2d9660fa9dd5ffc298df83aa2dad284` | 6211 | PENDING | persistence | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/data/db/PhotoEntity.kt` | `5e565b182678e7cf2130dc32fffc41de37d9b822` | 4550 | PENDING | persistence | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/data/db/PhotoFtsEntity.kt` | `df68e241260378de877c49a9eb9405972960400e` | 885 | PENDING | persistence | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/data/db/PhotoTagCodec.kt` | `80a0509fdd4b4b6b9ff187fc2b356fa3cbc2939b` | 1508 | PENDING | persistence | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/data/db/VaultDao.kt` | `1cfa11a137faa751b23cda6b7366c122cbf2ca28` | 977 | PENDING | persistence | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/data/db/VaultEntity.kt` | `b368d2b00de7e53ba7e2e4aa844d0e98b89eb215` | 494 | PENDING | persistence | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/data/geo/CityDatabase.kt` | `b7f277b3248bf092b2f77381b77cf4af6567e916` | 1200 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/data/geo/OfflineGeocoder.kt` | `72b4182d751f2acc59d965bc02d15a7d7d5274bc` | 2150 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/benchmark/AndroidManifest.xml` | `06dd166c6dc89068931e3727e1365b4222c0d015` | 299 | 9 | resources/package | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/AndroidManifest.xml` | `129e3d464e0100169447115eece30ffa58d9b3f1` | 3193 | 78 | resources/package | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/assets/cities_min.csv` | `927fb93c9f7f2b002691a6fa7825e802b57c82f6` | 382 | 9 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/MainActivity.kt` | `fb013053db172ff7a9d7530ec1fff6b99e47297e` | 35816 | 913 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | DETAILED_BASELINE_REVIEW | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/PhotoBookApplication.kt` | `2e64888039df2b31ab0714cf76c9fd3d9200e03a` | 2188 | 69 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/data/db/ArchiveDao.kt` | `6d96007971e8b8610b5f1ffcbbb00e98d71e4db3` | 4406 | 156 | persistence | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/data/db/ArchiveDecisionEntity.kt` | `860b96c77da50ce4a10df7d2cb650d582dfa2700` | 858 | 35 | persistence | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/data/db/PhotoBookDatabase.kt` | `22ecb51651a20561c1edcfcbbb7d34abdd7e277b` | 477 | 20 | persistence | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/data/db/PhotoDao.kt` | `9a74add2e2d9660fa9dd5ffc298df83aa2dad284` | 6211 | 213 | persistence | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/data/db/PhotoEntity.kt` | `5e565b182678e7cf2130dc32fffc41de37d9b822` | 4550 | 152 | persistence | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/data/db/PhotoFtsEntity.kt` | `df68e241260378de877c49a9eb9405972960400e` | 885 | 39 | persistence | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/data/db/PhotoTagCodec.kt` | `80a0509fdd4b4b6b9ff187fc2b356fa3cbc2939b` | 1508 | 50 | persistence | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/data/db/VaultDao.kt` | `1cfa11a137faa751b23cda6b7366c122cbf2ca28` | 977 | 27 | persistence | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/data/db/VaultEntity.kt` | `b368d2b00de7e53ba7e2e4aa844d0e98b89eb215` | 494 | 22 | persistence | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/data/geo/CityDatabase.kt` | `b7f277b3248bf092b2f77381b77cf4af6567e916` | 1200 | 36 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/data/geo/OfflineGeocoder.kt` | `72b4182d751f2acc59d965bc02d15a7d7d5274bc` | 2150 | 62 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/java/com/photobook/app/data/index/IndexBuilder.kt` | `1c80a49631b0d391c8f04aa10a89d1fc3100cb5b` | 6462 | PENDING | index | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/java/com/photobook/app/data/index/IndexCommitCoordinator.kt` | `8a53ef30fe7ca3ed792601c37ab2d4c72f6fa758` | 670 | PENDING | index | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/java/com/photobook/app/data/index/IndexPersistence.kt` | `19649f3d89a0e80d948d587f294b991c81ae236b` | 16162 | PENDING | index | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
@@ -240,9 +240,9 @@ Semantic status values below reflect only the Blueprint 01 review statement: a s
 
 ## S01 line-count progress
 
-- Exact line counts verified and persisted for 25 baseline text candidates above (15 previously persisted plus this 10-file Android instrumentation batch).
-- Remaining text-candidate line counts stay `PENDING`; do not infer them from byte sizes.
-- This is inventory progress only, not semantic/runtime certification.
+- Exact line counts are now persisted for **41/224** baseline text candidates.
+- Baseline static screening is persisted alongside newly measured rows; it checks only the bounded patterns documented above.
+- This is inventory/static-screening evidence, not semantic/runtime certification.
 
 ## Binary/model/dependency provenance gap
 
