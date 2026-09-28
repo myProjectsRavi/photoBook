@@ -120,23 +120,23 @@ Semantic status values below reflect only the Blueprint 01 review statement: a s
 | `app/src/main/java/com/photobook/app/search/OcrIndexReadiness.kt` | `3178f451f9ba3152648bfa5f01c5b6b4fb0e292b` | 635 | 16 | search | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/java/com/photobook/app/search/OcrQueryMatcher.kt` | `6919dbdadc06a2f257e7b3f017bcda0e01e5cd83` | 1435 | 43 | search | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/java/com/photobook/app/search/PhotoSource.kt` | `3b1b41cbf0a5cacba604d2ac70e18f83caa89414` | 2543 | 80 | search | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/search/QueryParser.kt` | `215ae9bd7fa49140e4131454828d0fcb3432b747` | 1640 | PENDING | search | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/search/QueryToken.kt` | `a1345e8ef94bf9ec2e3fb4abc11c8cdab69ab4e9` | 901 | PENDING | search | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/search/SearchEngineV2.kt` | `3f6acd0b4dbf4e5100383cbb1b28d3ec90300265` | 6860 | PENDING | search | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/search/SearchRanker.kt` | `21f3393406e02556adbb2af25b7c232358c0fb23` | 5314 | PENDING | search | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/search/SuggestionEngine.kt` | `0a51dafc6024a68d11befef9ad3c3fe85036bbf0` | 1505 | PENDING | search | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/search/TokenClassifier.kt` | `cbab2dd36d2e4a957366e866a4b11ffbf636b81a` | 4259 | PENDING | search | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/ui/component/EmptyState.kt` | `e268eea6118230a6e7703a388789ca8f38641986` | 10039 | PENDING | ui/navigation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/ui/component/PhotoGrid.kt` | `3e9be37a7524f0421c342771e07f538c2f8ba77d` | 8680 | PENDING | ui/navigation | INVENTORIED | PENDING | DETAILED_BASELINE_REVIEW | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/ui/component/PhotoTextSearchControls.kt` | `90cf71c6f786153b805f27f7538b09fa96336240` | 17778 | PENDING | ui/navigation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/ui/component/PhotoTextSearchDialogInsets.kt` | `69260fe4efaaa607dfd6f72387bd4730ddb9f875` | 7787 | PENDING | ui/navigation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/ui/component/PhotoTextSearchOverlay.kt` | `25965d838385c3a857d2b4c76e7d5d788c824862` | 5888 | PENDING | ui/navigation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/ui/component/PhotoThumbnail.kt` | `4915d90c49beb019178f89575655cb461eb33844` | 4592 | PENDING | ui/navigation | INVENTORIED | PENDING | DETAILED_BASELINE_REVIEW | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/ui/component/SearchBar.kt` | `5ab24b1dea713b1f104b0b3e84e378efd6c048b5` | 3517 | PENDING | ui/navigation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/ui/component/SuggestionDropdown.kt` | `6a2a626d88ff3a30aa31223d8fd1f418d096ce44` | 3397 | PENDING | ui/navigation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/ui/model/HomeFeedMode.kt` | `5707c53194f183553c95b2e87be58a5882283f27` | 147 | PENDING | ui/navigation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/ui/model/TimelineMark.kt` | `93b36e94bce67986bdad7b8d548d29fcd79218db` | 160 | PENDING | ui/navigation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/ui/screen/ArchivesScreen.kt` | `2b099ed2f2f93e1394b4f8869dbaa072785629cb` | 25387 | PENDING | ui/navigation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/search/QueryParser.kt` | `215ae9bd7fa49140e4131454828d0fcb3432b747` | 1640 | 52 | search | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/search/QueryToken.kt` | `a1345e8ef94bf9ec2e3fb4abc11c8cdab69ab4e9` | 901 | 36 | search | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/search/SearchEngineV2.kt` | `3f6acd0b4dbf4e5100383cbb1b28d3ec90300265` | 6860 | 167 | search | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/search/SearchRanker.kt` | `21f3393406e02556adbb2af25b7c232358c0fb23` | 5314 | 147 | search | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/search/SuggestionEngine.kt` | `0a51dafc6024a68d11befef9ad3c3fe85036bbf0` | 1505 | 49 | search | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/search/TokenClassifier.kt` | `cbab2dd36d2e4a957366e866a4b11ffbf636b81a` | 4259 | 113 | search | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/ui/component/EmptyState.kt` | `e268eea6118230a6e7703a388789ca8f38641986` | 10039 | 268 | ui/navigation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/ui/component/PhotoGrid.kt` | `3e9be37a7524f0421c342771e07f538c2f8ba77d` | 8680 | 219 | ui/navigation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | DETAILED_BASELINE_REVIEW | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/ui/component/PhotoTextSearchControls.kt` | `90cf71c6f786153b805f27f7538b09fa96336240` | 17778 | 491 | ui/navigation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/ui/component/PhotoTextSearchDialogInsets.kt` | `69260fe4efaaa607dfd6f72387bd4730ddb9f875` | 7787 | 184 | ui/navigation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/ui/component/PhotoTextSearchOverlay.kt` | `25965d838385c3a857d2b4c76e7d5d788c824862` | 5888 | 152 | ui/navigation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/ui/component/PhotoThumbnail.kt` | `4915d90c49beb019178f89575655cb461eb33844` | 4592 | 122 | ui/navigation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | DETAILED_BASELINE_REVIEW | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/ui/component/SearchBar.kt` | `5ab24b1dea713b1f104b0b3e84e378efd6c048b5` | 3517 | 98 | ui/navigation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/ui/component/SuggestionDropdown.kt` | `6a2a626d88ff3a30aa31223d8fd1f418d096ce44` | 3397 | 80 | ui/navigation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/ui/model/HomeFeedMode.kt` | `5707c53194f183553c95b2e87be58a5882283f27` | 147 | 9 | ui/navigation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/ui/model/TimelineMark.kt` | `93b36e94bce67986bdad7b8d548d29fcd79218db` | 160 | 9 | ui/navigation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/ui/screen/ArchivesScreen.kt` | `2b099ed2f2f93e1394b4f8869dbaa072785629cb` | 25387 | 643 | ui/navigation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/java/com/photobook/app/ui/screen/DeclutterSwipeScreen.kt` | `9842e8b114f5c3c1b00f0e96e0cdb17adeb61a49` | 12829 | PENDING | ui/navigation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/java/com/photobook/app/ui/screen/MainScreen.kt` | `f3834c9795e32e9180c169ccc58ed2a6cba4295b` | 35553 | PENDING | ui/navigation | INVENTORIED | PENDING | DETAILED_BASELINE_REVIEW | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/java/com/photobook/app/ui/screen/MemoryStoryViewerScreen.kt` | `d26afa9e99d336e80d2ccf3728fe073684e6f721` | 9402 | PENDING | ui/navigation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
@@ -240,7 +240,7 @@ Semantic status values below reflect only the Blueprint 01 review statement: a s
 
 ## S01 line-count progress
 
-- Exact line counts are now persisted for **107/224** baseline text candidates.
+- Exact line counts are now persisted for **124/224** baseline text candidates.
 - Baseline static screening is persisted alongside measured rows; it checks private-key markers, common hard-coded credential/token signatures, and unresolved merge markers.
 - This is inventory/static-screening evidence, not semantic/runtime certification.
 
