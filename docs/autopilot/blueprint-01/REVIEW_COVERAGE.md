@@ -103,23 +103,23 @@ Semantic status values below reflect only the Blueprint 01 review statement: a s
 | `app/src/main/java/com/photobook/app/feature/qrshare/QrShareEncoder.kt` | `0e05bd0c01c764fd899c14a7a1243eec7cdaf983` | 12576 | 341 | qr transfer | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/java/com/photobook/app/feature/qrshare/QrTransferAssembler.kt` | `ffb68eb2c10c4eecedf1708ede1c95f27736b0c6` | 7565 | 217 | qr transfer | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | DETAILED_BASELINE_REVIEW | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/java/com/photobook/app/feature/qrshare/QrTransferProtocol.kt` | `86e844c1edb51ee9a5cee18fa7f6620866804165` | 6258 | 181 | qr transfer | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/feature/trash/TrashService.kt` | `e376b065f1dfa3b9ed9d0994da717f264ba8a505` | 5375 | PENDING | trash | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/feature/vault/VaultAuthCrypto.kt` | `2498d78a97d58b17a185cf7af390d22a0ac34fbf` | 29578 | PENDING | vault | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/feature/vault/VaultAuthenticationCoordinator.kt` | `36c46f94620adbbe1a4b93706b39b8a18d9edcae` | 9095 | PENDING | vault | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/feature/vault/VaultService.kt` | `6c4140b6bb1e635b4b861f8cbc3684179b54376c` | 35389 | PENDING | vault | INVENTORIED | PENDING | DETAILED_BASELINE_REVIEW | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/ml/ArchiveFoodSignals.kt` | `8a5dc5932cf969933d507f0aab8e0ded93a607c9` | 3221 | PENDING | offline intelligence | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/ml/CompactLocalIntelligence.kt` | `e6d43e4bf82f4223dfc76036d22d51e8e59be5ae` | 4838 | PENDING | offline intelligence | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/ml/LabelMapping.kt` | `c43e09ef37666be84ab613b67cbb18d000670e06` | 7344 | PENDING | offline intelligence | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/ml/LocalOcrEngine.kt` | `a0c1bb1e6ae22c5d3e8e8dc2e4bc73400ef72f7d` | 8454 | PENDING | offline intelligence | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/ml/LocalSemanticImageLabeler.kt` | `fcfdac4931bc572867382e037f81cc9ffdd8c3c4` | 13926 | PENDING | offline intelligence | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/ml/MLTagger.kt` | `a305a4b2b4bd06f71b4597e593e8a4c92766b33f` | 12049 | PENDING | offline intelligence | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/ml/OnDeviceIntelligence.kt` | `73c6c938b8eb9fff9d2c1a5fda0d9d17d0e3d652` | 1227 | PENDING | offline intelligence | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/ml/TaggingWorker.kt` | `07342e97a9ee950b81d24707a4a2c3685a4182f1` | 14740 | PENDING | offline intelligence | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/search/FilterEngine.kt` | `f802f2a13c2fc27a4d013c72263b6a66fd6adabb` | 3005 | PENDING | search | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/search/FilterFactory.kt` | `beaf32ecfc219a529a43637903c4188fa9449201` | 10403 | PENDING | search | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/search/OcrIndexReadiness.kt` | `3178f451f9ba3152648bfa5f01c5b6b4fb0e292b` | 635 | PENDING | search | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/search/OcrQueryMatcher.kt` | `6919dbdadc06a2f257e7b3f017bcda0e01e5cd83` | 1435 | PENDING | search | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/search/PhotoSource.kt` | `3b1b41cbf0a5cacba604d2ac70e18f83caa89414` | 2543 | PENDING | search | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/feature/trash/TrashService.kt` | `e376b065f1dfa3b9ed9d0994da717f264ba8a505` | 5375 | 124 | trash | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/feature/vault/VaultAuthCrypto.kt` | `2498d78a97d58b17a185cf7af390d22a0ac34fbf` | 29578 | 753 | vault | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/feature/vault/VaultAuthenticationCoordinator.kt` | `36c46f94620adbbe1a4b93706b39b8a18d9edcae` | 9095 | 235 | vault | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/feature/vault/VaultService.kt` | `6c4140b6bb1e635b4b861f8cbc3684179b54376c` | 35389 | 911 | vault | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | DETAILED_BASELINE_REVIEW | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/ml/ArchiveFoodSignals.kt` | `8a5dc5932cf969933d507f0aab8e0ded93a607c9` | 3221 | 107 | offline intelligence | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/ml/CompactLocalIntelligence.kt` | `e6d43e4bf82f4223dfc76036d22d51e8e59be5ae` | 4838 | 127 | offline intelligence | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/ml/LabelMapping.kt` | `c43e09ef37666be84ab613b67cbb18d000670e06` | 7344 | 264 | offline intelligence | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/ml/LocalOcrEngine.kt` | `a0c1bb1e6ae22c5d3e8e8dc2e4bc73400ef72f7d` | 8454 | 215 | offline intelligence | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/ml/LocalSemanticImageLabeler.kt` | `fcfdac4931bc572867382e037f81cc9ffdd8c3c4` | 13926 | 342 | offline intelligence | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/ml/MLTagger.kt` | `a305a4b2b4bd06f71b4597e593e8a4c92766b33f` | 12049 | 300 | offline intelligence | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/ml/OnDeviceIntelligence.kt` | `73c6c938b8eb9fff9d2c1a5fda0d9d17d0e3d652` | 1227 | 38 | offline intelligence | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/ml/TaggingWorker.kt` | `07342e97a9ee950b81d24707a4a2c3685a4182f1` | 14740 | 351 | offline intelligence | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/search/FilterEngine.kt` | `f802f2a13c2fc27a4d013c72263b6a66fd6adabb` | 3005 | 89 | search | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/search/FilterFactory.kt` | `beaf32ecfc219a529a43637903c4188fa9449201` | 10403 | 245 | search | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/search/OcrIndexReadiness.kt` | `3178f451f9ba3152648bfa5f01c5b6b4fb0e292b` | 635 | 16 | search | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/search/OcrQueryMatcher.kt` | `6919dbdadc06a2f257e7b3f017bcda0e01e5cd83` | 1435 | 43 | search | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/search/PhotoSource.kt` | `3b1b41cbf0a5cacba604d2ac70e18f83caa89414` | 2543 | 80 | search | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/java/com/photobook/app/search/QueryParser.kt` | `215ae9bd7fa49140e4131454828d0fcb3432b747` | 1640 | PENDING | search | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/java/com/photobook/app/search/QueryToken.kt` | `a1345e8ef94bf9ec2e3fb4abc11c8cdab69ab4e9` | 901 | PENDING | search | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/java/com/photobook/app/search/SearchEngineV2.kt` | `3f6acd0b4dbf4e5100383cbb1b28d3ec90300265` | 6860 | PENDING | search | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
@@ -240,7 +240,7 @@ Semantic status values below reflect only the Blueprint 01 review statement: a s
 
 ## S01 line-count progress
 
-- Exact line counts are now persisted for **90/224** baseline text candidates.
+- Exact line counts are now persisted for **107/224** baseline text candidates.
 - Baseline static screening is persisted alongside measured rows; it checks private-key markers, common hard-coded credential/token signatures, and unresolved merge markers.
 - This is inventory/static-screening evidence, not semantic/runtime certification.
 
