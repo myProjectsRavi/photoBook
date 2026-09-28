@@ -70,3 +70,14 @@ Evidence source commit: `2ed75bfb50770000815accfd820197d9d783f036`
 - Binary/model/dependency provenance, packaged-artifact inspection and physical/OEM properties remain explicitly deferred to their later blueprint gates, especially S31.
 
 **Decision: S01 ACCEPTED.** No confirmed S01 acceptance blocker remains in the tested documentation/inventory scope.
+
+
+## S02 start checkpoint
+
+- Story: S02 — Make branch verification authoritative.
+- Starting branch HEAD: `717a9ef69cd6289d1bc649ce3b666e4d18c10dd3`.
+- S01 dependency: ACCEPTED.
+- Observed source risk: `.github/workflows/android-verify.yml` push branches omit `autopilot/**`.
+- Observed hosted-emulator limitation: current emulator workflows use implicit current-branch checkout and branch-specific push triggers; no reusable exact-ref/evidence-manifest contract exists for the authorized autopilot branch.
+- Hypothesis: adding branch routing plus an exact-ref targeted verification workflow and fail-closed evidence validation will make branch evidence attributable to the tested source rather than to “latest green”.
+- No workflow/application mutation had been made at this checkpoint.

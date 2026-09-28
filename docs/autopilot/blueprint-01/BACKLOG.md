@@ -7,7 +7,7 @@ Execution rule: select the first incomplete story whose dependencies pass. Do no
 | ID | Epic | Feature | Depends on | Status | Scope / acceptance anchor |
 |---|---|---|---|---|---|
 | S01 | E01 Execution safety | Baseline and CI | none | ACCEPTED | Canonical checkpoint files, full review-coverage ledger, correct stale guidance, exact baseline/no-main-change proof. |
-| S02 | E01 Execution safety | Baseline and CI | S01 | NOT_STARTED | Add `autopilot/**` CI routing, exact-ref hosted verification/evidence manifest, fail missing evidence. |
+| S02 | E01 Execution safety | Baseline and CI | S01 | IN_PROGRESS | Add `autopilot/**` CI routing, exact-ref hosted verification/evidence manifest, fail missing evidence. |
 | S03 | E02 Safe media writes | Editor publication | S02 | NOT_STARTED | Move edited-copy provider I/O off Main; journal pending outputs; fail/cancel without partial public media. |
 | S04 | E01 Execution safety | Durable state | S02 | NOT_STARTED | Real historical Room upgrade fixtures/migration execution; preserve user data; no destructive fallback. |
 | S05 | E03 Gallery experience | Navigation | S02 | NOT_STARTED | Photos-first shell with Photos/Albums/Tools, no automatic keyboard, no PRO badge, preserved journeys. |

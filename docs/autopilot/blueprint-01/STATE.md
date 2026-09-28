@@ -6,10 +6,10 @@ blueprint_printed_branch: autopilot/photobook-blueprint-01
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
 current_epic: E01 Execution safety  
 current_feature: Baseline and CI  
-current_story: S01 Establish the canonical baseline  
-status: ACCEPTED  
-source_commit_tested: 2ed75bfb50770000815accfd820197d9d783f036  
-latest_checkpoint_commit: 2ed75bfb50770000815accfd820197d9d783f036 (evidence source; the acceptance-record commit containing this file is intentionally not self-referential)
+current_story: S02 Make branch verification authoritative  
+status: IN_PROGRESS  
+source_commit_tested: 717a9ef69cd6289d1bc649ce3b666e4d18c10dd3 (S01 accepted documentation checkpoint; S02 runtime/workflow changes not yet validated)
+latest_checkpoint_commit: 717a9ef69cd6289d1bc649ce3b666e4d18c10dd3
 
 ## Source blueprint
 
@@ -17,18 +17,13 @@ Authoritative planning source for this cycle: user-provided **PhotoBook_Implemen
 
 ## S01 completed work
 
-- Verified the authorized implementation branch began exactly at baseline SHA `d693acd7c52f285b6ba475fdd3712a10e419d4e1`.
-- Inventoried the exact baseline Git tree: 256 tracked blobs.
-- REVIEW_COVERAGE.md contains 224 text candidates with exact path, blob SHA, byte size, line count, subsystem, inventory status, bounded static-screen status, semantic-review status and runtime-coverage status.
-- Completed exact line counts for 224/224 text candidates.
-- Completed the bounded baseline static screen for 224/224 text candidates. No private-key marker, common hard-coded credential/token signature, or unresolved merge-marker flag remained.
-- Preserved explicit binary/model/dependency provenance gaps for S31 instead of claiming binary semantic certification.
-- Corrected stale contributor guidance in docs/claude.md, docs/gemini.md, docs/jules.md, docs/performance.md and docs/security.md: release metadata is read from Gradle; Safe Share remains fail-closed; the existing 30 MiB APK and 20 MiB AAB gates remain while Blueprint 01 adds the stricter 30,000,000-byte delivered-APK ceiling.
-- BACKLOG.md contains S01-S32 exactly once in fixed order with valid dependency references.
-- DECISIONS.md records the user-authorized branch override and the binding product/size contract.
-- Verified documented S01 commands/tasks used by the checkpoint exist: `tools/benchmark/run_phase0_local.sh`, `:app:printReleaseMetadata`, `:app:verifyApkSize` and `:app:verifyReleaseBundleSize`.
-- Final S01 compare from baseline to evidence source commit changed exactly ten documentation/coverage files and no app source, resource, test, Gradle or workflow file.
-- Re-read repository refs at final validation: `main` remained `d693acd7c52f285b6ba475fdd3712a10e419d4e1`; the authorized branch was ahead only by S01 documentation commits.
+S01 is ACCEPTED. See VALIDATION.md and REVIEW_COVERAGE.md for the complete 224/224 inventory/static-screen evidence.
+
+## S02 design hypothesis
+
+Android Verification currently omits `autopilot/**` from push routing, so commits on the authorized implementation branch can exist without the normal Phase-0 source/build gate. Hosted emulator workflows also do not provide a reusable exact-ref dispatch/evidence contract for this branch.
+
+Expected observable result: every push to `autopilot/**` receives Android Verification; targeted hosted emulator verification can be dispatched against an explicit commit/ref and records checkout/workflow/APK/ABI/API/RAM/fixture/test-count evidence; missing required evidence fails instead of uploading a misleading partial report.
 
 ## Validation boundary
 
@@ -38,8 +33,8 @@ The static screen is deliberately bounded and is not a substitute for semantic r
 
 ## Blockers
 
-None for S01.
+None at S02 start.
 
 ## Next action
 
-On the next scheduled run, start **S02 — Make branch verification authoritative**. Re-read actual branch HEAD first, then add `autopilot/**` routing and the exact-ref/evidence verification path required by Blueprint 01. Do not touch `main`.
+Inspect Android Verification, reliability emulator verification, Phase-0 tooling and direct verification tests. Implement the smallest workflow/tooling change that adds `autopilot/**` routing, exact-ref hosted validation and fail-closed evidence-manifest checks. Keep main read-only.
