@@ -14,20 +14,20 @@ Semantic status values below reflect only the Blueprint 01 review statement: a s
 | Path | Blob SHA | Bytes | Lines | Subsystem | Inventory | Static scan | Semantic review | Runtime coverage |
 |---|---|---:|---:|---|---|---|---|---|
 | `.github/workflows/android-verify.yml` | `9f7cc7dec31f8a274c0366e181da7f923f700f85` | 1054 | 36 | build/verification | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `.github/workflows/phase1-device-verify.yml` | `b9db84cb29c028263afd0f3bc26e26a7f6a57c9a` | 7062 | PENDING | build/verification | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `.github/workflows/phase3-device-certification.yml` | `7eddaa0dafd07c5383a1e67692707d67da8ac535` | 6726 | PENDING | build/verification | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `.github/workflows/phase4-index-measurement.yml` | `8912f4d89e89b2814f67290f722f175aa72ffe41` | 7484 | PENDING | build/verification | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `.github/workflows/reliability-emulator-verify.yml` | `9e77fa2a7cd2b62946df6d516d62f048faf41472` | 11077 | PENDING | build/verification | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `.github/workflows/verified-integration-correctness.yml` | `f959030f074234e93a9f903b730e6ea91d73b0a0` | 8520 | PENDING | build/verification | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `.github/workflows/phase1-device-verify.yml` | `b9db84cb29c028263afd0f3bc26e26a7f6a57c9a` | 7062 | 184 | build/verification | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `.github/workflows/phase3-device-certification.yml` | `7eddaa0dafd07c5383a1e67692707d67da8ac535` | 6726 | 186 | build/verification | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `.github/workflows/phase4-index-measurement.yml` | `8912f4d89e89b2814f67290f722f175aa72ffe41` | 7484 | 204 | build/verification | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `.github/workflows/reliability-emulator-verify.yml` | `9e77fa2a7cd2b62946df6d516d62f048faf41472` | 11077 | 266 | build/verification | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `.github/workflows/verified-integration-correctness.yml` | `f959030f074234e93a9f903b730e6ea91d73b0a0` | 8520 | 193 | build/verification | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `.gitignore` | `25773b1367be563d0592c830d732e5fc5b16be8f` | 192 | 34 | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `README.md` | `718b918d391745be81871f82c6d96ecc44391149` | 9089 | 87 | documentation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `UI/TestQr.kt` | `17ac326927c7006eaf1ac32089feee7b5f3fda89` | 643 | 60 | auxiliary tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `UI/UI/clean_overlay.py` | `74cd5e487e13438279cd34daf79c12847da27c42` | 1505 | 34 | auxiliary tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `UI/generate_playstore_screenshots.py` | `09581556cc7b4097fc0d81c4187680273cdc9623` | 3608 | PENDING | auxiliary tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/build.gradle.kts` | `a62ee6ca4da2ca659cb4300b89c84e7aa48e1e95` | 13074 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/patch_qr.sh` | `be14f31c7d2d56db782001e8877953a6be106b19` | 494 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/proguard-rules.pro` | `4520c221351179b5597d91212da2cf80db2c093a` | 1209 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/schemas/com.photobook.app.data.db.PhotoBookDatabase/12.json` | `564fe3875883f9cda5b215b3cf61ef8f26329ad8` | 11421 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `UI/generate_playstore_screenshots.py` | `09581556cc7b4097fc0d81c4187680273cdc9623` | 3608 | 98 | auxiliary tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/build.gradle.kts` | `a62ee6ca4da2ca659cb4300b89c84e7aa48e1e95` | 13074 | 344 | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/patch_qr.sh` | `be14f31c7d2d56db782001e8877953a6be106b19` | 494 | 2 | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/proguard-rules.pro` | `4520c221351179b5597d91212da2cf80db2c093a` | 1209 | 40 | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/schemas/com.photobook.app.data.db.PhotoBookDatabase/12.json` | `564fe3875883f9cda5b215b3cf61ef8f26329ad8` | 11421 | 118 | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/androidTest/java/com/photobook/app/feature/metadata/ExifMetadataServiceInstrumentedTest.kt` | `0b65185380a15417b1f0d5796558d94323646b81` | 10545 | PENDING | android tests | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/androidTest/java/com/photobook/app/feature/phototextsearch/MediaStorePhotoTextLayoutSourceInstrumentedTest.kt` | `f39f8a5c6d5aef46a8c16f9db8aa3c38b51cb1b9` | 5312 | PENDING | android tests | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/androidTest/java/com/photobook/app/feature/phototextsearch/PhotoTextMatcherPerformanceInstrumentedTest.kt` | `f14d128cc59a5a361383f65d383f826e885edacb` | 2733 | PENDING | android tests | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
@@ -240,7 +240,7 @@ Semantic status values below reflect only the Blueprint 01 review statement: a s
 
 ## S01 line-count progress
 
-- Exact line counts verified and persisted for the first 5 baseline text candidates above.
+- Exact line counts verified and persisted for 15 baseline text candidates above (the original 5 plus this 10-file batch).
 - Remaining text-candidate line counts stay `PENDING`; do not infer them from byte sizes.
 - This is inventory progress only, not semantic/runtime certification.
 
