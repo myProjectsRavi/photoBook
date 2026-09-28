@@ -3,11 +3,8 @@
 package com.photobook.app.ui.screen
 
 import android.content.ClipData
-import android.content.ContentValues
 import android.content.Intent
-import android.os.Build
 import android.net.Uri
-import android.provider.MediaStore
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animate
@@ -137,6 +134,9 @@ import com.photobook.app.feature.duplicates.BestShotRecommendation
 import com.photobook.app.feature.duplicates.BurstBestShotPicker
 import com.photobook.app.feature.editor.CropPreset
 import com.photobook.app.feature.editor.NormalizedCropRegion
+import com.photobook.app.feature.editor.EditorOutputPublisher
+import com.photobook.app.feature.editor.EditorPublicationRequest
+import com.photobook.app.feature.editor.EditorPublicationResult
 import com.photobook.app.feature.editor.PhotoEditResult
 import com.photobook.app.feature.editor.PhotoEditService
 import com.photobook.app.feature.editor.PhotoEditState
@@ -208,6 +208,9 @@ fun PhotoViewerScreen(
     val photoEditService = remember(context.applicationContext) {
         PhotoEditService(context.applicationContext)
     }
+    val editorOutputPublisher = remember(context.applicationContext) {
+        EditorOutputPublisher(context.applicationContext)
+    }
     var showCopyTextSheet by remember { mutableStateOf(false) }
     var copySheetState by remember { mutableStateOf<CopySheetState>(CopySheetState.Idle) }
     var copySheetPhotoId by remember { mutableStateOf<Long?>(null) }
@@ -221,6 +224,9 @@ fun PhotoViewerScreen(
     var showEditorSheet by remember { mutableStateOf(false) }
     var editorState by remember { mutableStateOf(PhotoEditState()) }
     var isApplyingEditorAction by remember { mutableStateOf(false) }
+    var editorSaveState by remember { mutableStateOf<EditorSaveUiState>(EditorSaveUiState.Idle) }
+    var editorActionJob by remember { mutableStateOf<Job?>(null) }
+    var editorActionToken by remember { mutableStateOf(0L) }
     var showCropSelector by remember { mutableStateOf(false) }
     var showControls by remember { mutableStateOf(true) }
 
@@ -293,6 +299,11 @@ fun PhotoViewerScreen(
     }
 
     fun openEditorSheet() {
+        editorActionJob?.cancel()
+        editorActionJob = null
+        editorActionToken += 1
+        isApplyingEditorAction = false
+        editorSaveState = EditorSaveUiState.Idle
         editorState = PhotoEditState()
         showCropSelector = false
         showEditorSheet = true
@@ -308,72 +319,116 @@ fun PhotoViewerScreen(
         context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.viewer_share)))
     }
 
-    fun saveEditedCopyToDevice(result: PhotoEditResult.Success): Boolean {
-        val resolver = context.contentResolver
-        val outputName = "PhotoBook_Edit_${System.currentTimeMillis()}.jpg"
-        val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, outputName)
-            put(MediaStore.Images.Media.MIME_TYPE, result.mimeType)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/PhotoBook")
-                put(MediaStore.Images.Media.IS_PENDING, 1)
-            }
-        }
-
-        val destUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
-        val copied = runCatching {
-            resolver.openInputStream(result.uri)?.use { input ->
-                resolver.openOutputStream(destUri)?.use { output ->
-                    input.copyTo(output)
-                    true
-                } ?: false
-            } ?: false
-        }.getOrDefault(false)
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val doneValues = ContentValues().apply {
-                put(MediaStore.Images.Media.IS_PENDING, 0)
-            }
-            resolver.update(destUri, doneValues, null, null)
-        }
-        if (!copied) {
-            runCatching { resolver.delete(destUri, null, null) }
-        }
-        return copied
-    }
-
     fun runEditorAction(shareAfterRender: Boolean) {
         if (isApplyingEditorAction) return
-        val active = photos.getOrNull(pagerState.currentPage) ?: return
+        val activeSnapshot = photos.getOrNull(pagerState.currentPage) ?: return
+        val editSnapshot = editorState
+        val sourceRevision = listOf(
+            activeSnapshot.id,
+            activeSnapshot.dateAdded,
+            activeSnapshot.fileSize,
+            activeSnapshot.width,
+            activeSnapshot.height,
+        ).joinToString(":")
+        val actionToken = editorActionToken + 1
+        editorActionToken = actionToken
         isApplyingEditorAction = true
-        coroutineScope.launch {
-            when (val result = photoEditService.renderEditedCopy(active, editorState)) {
-                is PhotoEditResult.Success -> {
-                    if (shareAfterRender) {
-                        shareEditedCopy(result)
-                    } else {
-                        val saved = saveEditedCopyToDevice(result)
-                        Toast.makeText(
-                            context,
-                            if (saved) {
-                                context.getString(R.string.viewer_editor_save_success)
-                            } else {
-                                context.getString(R.string.viewer_editor_save_error)
-                            },
-                            Toast.LENGTH_SHORT,
-                        ).show()
+        if (!shareAfterRender) {
+            editorSaveState = EditorSaveUiState.Idle
+        }
+
+        editorActionJob = coroutineScope.launch {
+            try {
+                when (val result = photoEditService.renderEditedCopy(activeSnapshot, editSnapshot)) {
+                    is PhotoEditResult.Success -> {
+                        if (shareAfterRender) {
+                            if (
+                                actionToken == editorActionToken &&
+                                showEditorSheet &&
+                                photos.getOrNull(pagerState.currentPage)?.id == activeSnapshot.id
+                            ) {
+                                shareEditedCopy(result)
+                            }
+                        } else {
+                            val publication = editorOutputPublisher.publish(
+                                EditorPublicationRequest(
+                                    sourcePhotoId = activeSnapshot.id,
+                                    sourceRevision = sourceRevision,
+                                    editState = editSnapshot,
+                                    renderedUriString = result.uri.toString(),
+                                    mimeType = result.mimeType,
+                                ),
+                            )
+                            if (
+                                actionToken == editorActionToken &&
+                                showEditorSheet &&
+                                photos.getOrNull(pagerState.currentPage)?.id == activeSnapshot.id
+                            ) {
+                                editorSaveState = when (publication) {
+                                    is EditorPublicationResult.Success -> {
+                                        EditorSaveUiState.Saved(publication.uriString)
+                                    }
+
+                                    EditorPublicationResult.Cancelled -> {
+                                        EditorSaveUiState.Failed(R.string.viewer_editor_save_cancelled)
+                                    }
+
+                                    EditorPublicationResult.InsufficientStorage -> {
+                                        EditorSaveUiState.Failed(R.string.viewer_editor_save_storage_error)
+                                    }
+
+                                    EditorPublicationResult.AccessDenied -> {
+                                        EditorSaveUiState.Failed(R.string.viewer_editor_save_access_error)
+                                    }
+
+                                    EditorPublicationResult.Failed -> {
+                                        EditorSaveUiState.Failed(R.string.viewer_editor_save_error)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    PhotoEditResult.Error -> {
+                        if (
+                            actionToken == editorActionToken &&
+                            showEditorSheet &&
+                            photos.getOrNull(pagerState.currentPage)?.id == activeSnapshot.id
+                        ) {
+                            editorSaveState = EditorSaveUiState.Failed(
+                                R.string.viewer_editor_render_error,
+                            )
+                        }
                     }
                 }
-
-                PhotoEditResult.Error -> {
-                    Toast.makeText(
-                        context,
-                        context.getString(R.string.viewer_editor_render_error),
-                        Toast.LENGTH_SHORT,
-                    ).show()
+            } finally {
+                if (actionToken == editorActionToken) {
+                    isApplyingEditorAction = false
+                    editorActionJob = null
                 }
             }
-            isApplyingEditorAction = false
+        }
+    }
+
+    fun openSavedEditedCopy(uriString: String) {
+        val uri = Uri.parse(uriString)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "image/jpeg")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        runCatching {
+            context.startActivity(
+                Intent.createChooser(
+                    intent,
+                    context.getString(R.string.viewer_editor_open_saved),
+                ),
+            )
+        }.onFailure {
+            Toast.makeText(
+                context,
+                context.getString(R.string.viewer_editor_open_error),
+                Toast.LENGTH_SHORT,
+            ).show()
         }
     }
 
@@ -1002,20 +1057,40 @@ fun PhotoViewerScreen(
                 photo = activePhoto,
                 state = editorState,
                 isApplying = isApplyingEditorAction,
+                saveState = editorSaveState,
                 onDismiss = {
+                    editorActionJob?.cancel()
+                    editorActionJob = null
+                    editorActionToken += 1
+                    isApplyingEditorAction = false
                     showEditorSheet = false
                     showCropSelector = false
+                    editorSaveState = EditorSaveUiState.Idle
                     editorState = PhotoEditState()
                 },
-                onStateChange = { next -> editorState = next },
+                onStateChange = { next ->
+                    if (!isApplyingEditorAction) {
+                        editorSaveState = EditorSaveUiState.Idle
+                        editorState = next
+                    }
+                },
                 onRotate = {
-                    editorState = editorState.copy(rotationQuarterTurns = (editorState.rotationQuarterTurns + 1) % 4)
+                    if (!isApplyingEditorAction) {
+                        editorSaveState = EditorSaveUiState.Idle
+                        editorState = editorState.copy(
+                            rotationQuarterTurns = (editorState.rotationQuarterTurns + 1) % 4,
+                        )
+                    }
                 },
                 onCustomCrop = {
-                    showCropSelector = true
+                    if (!isApplyingEditorAction) {
+                        showCropSelector = true
+                    }
                 },
                 onSaveCopy = { runEditorAction(shareAfterRender = false) },
                 onShareCopy = { runEditorAction(shareAfterRender = true) },
+                onRetrySave = { runEditorAction(shareAfterRender = false) },
+                onOpenSavedCopy = ::openSavedEditedCopy,
             )
         }
         if (showCropSelector && activePhoto != null) {
@@ -1024,6 +1099,7 @@ fun PhotoViewerScreen(
                 initialRegion = editorState.customCrop,
                 onDismiss = { showCropSelector = false },
                 onCropSelected = { region ->
+                    editorSaveState = EditorSaveUiState.Idle
                     editorState = editorState.copy(
                         cropPreset = CropPreset.Original,
                         customCrop = region.normalized(),
@@ -1484,12 +1560,15 @@ private fun QuickEditorBottomSheet(
     photo: PhotoRecord,
     state: PhotoEditState,
     isApplying: Boolean,
+    saveState: EditorSaveUiState,
     onDismiss: () -> Unit,
     onStateChange: (PhotoEditState) -> Unit,
     onRotate: () -> Unit,
     onCustomCrop: () -> Unit,
     onSaveCopy: () -> Unit,
     onShareCopy: () -> Unit,
+    onRetrySave: () -> Unit,
+    onOpenSavedCopy: (String) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val cropAspect = state.customCrop?.aspectRatioFor(photo.aspectRatio)
@@ -1665,6 +1744,66 @@ private fun QuickEditorBottomSheet(
                     enabled = !isApplying,
                 ) {
                     Text(text = stringResource(R.string.viewer_editor_share_copy))
+                }
+            }
+
+            when (val status = saveState) {
+                EditorSaveUiState.Idle -> Unit
+
+                is EditorSaveUiState.Saved -> {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        tonalElevation = 1.dp,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = stringResource(R.string.viewer_editor_save_success),
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(
+                                onClick = { onOpenSavedCopy(status.uriString) },
+                                enabled = !isApplying,
+                            ) {
+                                Text(text = stringResource(R.string.viewer_editor_open_saved))
+                            }
+                        }
+                    }
+                }
+
+                is EditorSaveUiState.Failed -> {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        tonalElevation = 1.dp,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = stringResource(status.messageRes),
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(
+                                onClick = onRetrySave,
+                                enabled = !isApplying,
+                            ) {
+                                Text(text = stringResource(R.string.viewer_editor_retry_save))
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -2438,4 +2577,10 @@ private fun multiplyColorMatrices(a: FloatArray, b: FloatArray): FloatArray {
         out[row * 5 + 4] = translation
     }
     return out
+}
+
+private sealed interface EditorSaveUiState {
+    data object Idle : EditorSaveUiState
+    data class Saved(val uriString: String) : EditorSaveUiState
+    data class Failed(val messageRes: Int) : EditorSaveUiState
 }

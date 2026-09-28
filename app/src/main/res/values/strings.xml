@@ -181,6 +181,12 @@
     <string name="viewer_editor_share_copy">Share copy</string>
     <string name="viewer_editor_save_success">Edited copy saved to device</string>
     <string name="viewer_editor_save_error">Couldn\'t save edited copy</string>
+    <string name="viewer_editor_save_storage_error">Not enough storage to save this edited copy.</string>
+    <string name="viewer_editor_save_access_error">This Android version cannot safely publish edited copies without broader storage access.</string>
+    <string name="viewer_editor_save_cancelled">Save cancelled. Your original photo is unchanged.</string>
+    <string name="viewer_editor_retry_save">Retry save</string>
+    <string name="viewer_editor_open_saved">Open saved copy</string>
+    <string name="viewer_editor_open_error">No photo viewer could open the saved copy.</string>
     <string name="viewer_editor_render_error">Couldn\'t apply edits</string>
     <string name="viewer_private_note">Private note</string>
     <string name="viewer_note_title">Private photo note</string>
