@@ -205,23 +205,23 @@ Semantic status values below reflect only the Blueprint 01 review statement: a s
 | `app/src/test/java/com/photobook/app/ui/component/PhotoTextSearchDialogInsetsTest.kt` | `00ce31e6bc4e46b3648747e2a3dcfe284aa6e199` | 5440 | 179 | unit tests | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/test/java/com/photobook/app/ui/screen/PhotoSearchRevealRequestGateTest.kt` | `e12c93f69049abedf07ade0e1c6a95778c8df7ad` | 1469 | 49 | unit tests | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/test/java/com/photobook/app/ui/viewmodel/LimitedAccessReconcileTest.kt` | `aece8fc0ad08eb2c42d7578c7eed189e49d96018` | 5264 | 149 | unit tests | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `baselineprofile/build.gradle.kts` | `cc456ecb2b72a91839393d37641c1f606b3cae92` | 1485 | PENDING | verification tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `baselineprofile/src/main/AndroidManifest.xml` | `8072ee00dbf16d9161b7464ef3d2194a7d659bcc` | 52 | PENDING | resources/package | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `baselineprofile/src/main/java/com/photobook/app/baselineprofile/BaselineProfileGenerator.kt` | `105159a16bb5cf026dd2a318b62092b4fe46797f` | 2523 | PENDING | verification tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `baselineprofile/src/main/java/com/photobook/app/baselineprofile/BenchmarkMediaSeeder.kt` | `89b3c73b82a200a525d52e1cd7cbf9b1cb40978e` | 7545 | PENDING | verification tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `baselineprofile/src/main/java/com/photobook/app/baselineprofile/PhotoBookMacrobenchmark.kt` | `21d9e4c9f649edf4bd5537db7e3cc00a32282ae2` | 23672 | PENDING | verification tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `build.gradle.kts` | `ed486b6836240db73ce4042c34b0b5b400461d54` | 447 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `docs/README.md` | `06ad01aeb2dbed0064543e1ba6997688de7b3486` | 2209 | PENDING | documentation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `docs/claude.md` | `e202efc6f0bc8c671ad09b725bf9dbd65219a6dc` | 4660 | PENDING | documentation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `docs/gemini.md` | `0bec841a2b5cab86cd9a870997966703fb4a98ab` | 4330 | PENDING | documentation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `docs/jules.md` | `34146795c1615fad58897094d0774819184c3983` | 4565 | PENDING | documentation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `docs/performance.md` | `f07febb143f0c27f68bb1d6c0603e900b6927dd4` | 3591 | PENDING | documentation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `docs/phase0-verification.md` | `6eebe9322c7ba0586eba7fb89ecca4edefa8ac5a` | 10399 | PENDING | documentation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `docs/phase4-index-startup-plan.md` | `579bb2cc76a693e7fc50ee3ad457be3c1982bfb7` | 3438 | PENDING | documentation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `docs/phase5-device-evidence-template.md` | `dc5023457f3c0f3d14fa5adc6bc078089c9634d8` | 7582 | PENDING | documentation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `docs/phase5-physical-device-certification-plan.md` | `0672e836a7d258fc6d73639ab96cc9a1f5688a94` | 7768 | PENDING | documentation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `docs/security.md` | `10188ccda17dd2df481d86eaba5f858a9a370b44` | 3337 | PENDING | documentation | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `finish_release.sh` | `133267f2dcd2ee82aac84b1796fc43f27ba00c1c` | 4636 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `baselineprofile/build.gradle.kts` | `cc456ecb2b72a91839393d37641c1f606b3cae92` | 1485 | 59 | verification tooling | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `baselineprofile/src/main/AndroidManifest.xml` | `8072ee00dbf16d9161b7464ef3d2194a7d659bcc` | 52 | 2 | resources/package | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `baselineprofile/src/main/java/com/photobook/app/baselineprofile/BaselineProfileGenerator.kt` | `105159a16bb5cf026dd2a318b62092b4fe46797f` | 2523 | 78 | verification tooling | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `baselineprofile/src/main/java/com/photobook/app/baselineprofile/BenchmarkMediaSeeder.kt` | `89b3c73b82a200a525d52e1cd7cbf9b1cb40978e` | 7545 | 189 | verification tooling | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `baselineprofile/src/main/java/com/photobook/app/baselineprofile/PhotoBookMacrobenchmark.kt` | `21d9e4c9f649edf4bd5537db7e3cc00a32282ae2` | 23672 | 611 | verification tooling | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `build.gradle.kts` | `ed486b6836240db73ce4042c34b0b5b400461d54` | 447 | 9 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `docs/README.md` | `06ad01aeb2dbed0064543e1ba6997688de7b3486` | 2209 | 45 | documentation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `docs/claude.md` | `e202efc6f0bc8c671ad09b725bf9dbd65219a6dc` | 4660 | 44 | documentation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `docs/gemini.md` | `0bec841a2b5cab86cd9a870997966703fb4a98ab` | 4330 | 40 | documentation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `docs/jules.md` | `34146795c1615fad58897094d0774819184c3983` | 4565 | 47 | documentation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `docs/performance.md` | `f07febb143f0c27f68bb1d6c0603e900b6927dd4` | 3591 | 30 | documentation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `docs/phase0-verification.md` | `6eebe9322c7ba0586eba7fb89ecca4edefa8ac5a` | 10399 | 178 | documentation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `docs/phase4-index-startup-plan.md` | `579bb2cc76a693e7fc50ee3ad457be3c1982bfb7` | 3438 | 64 | documentation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `docs/phase5-device-evidence-template.md` | `dc5023457f3c0f3d14fa5adc6bc078089c9634d8` | 7582 | 195 | documentation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `docs/phase5-physical-device-certification-plan.md` | `0672e836a7d258fc6d73639ab96cc9a1f5688a94` | 7768 | 131 | documentation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `docs/security.md` | `10188ccda17dd2df481d86eaba5f858a9a370b44` | 3337 | 29 | documentation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `finish_release.sh` | `133267f2dcd2ee82aac84b1796fc43f27ba00c1c` | 4636 | 137 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `gradle.properties` | `b4eecc410e10dd712ec08130fb85ab5a8b2ee677` | 177 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `gradle/wrapper/gradle-wrapper.properties` | `e98323e7071c55a6bd74029ba8d5f07a2b7dad0a` | 281 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `gradlew` | `ef07e0162b183eb9d19a2c9ba7035c283af9f8dd` | 8728 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
@@ -240,7 +240,7 @@ Semantic status values below reflect only the Blueprint 01 review statement: a s
 
 ## S01 line-count progress
 
-- Exact line counts are now persisted for **192/224** baseline text candidates.
+- Exact line counts are now persisted for **209/224** baseline text candidates.
 - Baseline static screening is persisted alongside measured rows; it checks private-key markers, common hard-coded credential/token signatures, and unresolved merge markers.
 - This is inventory/static-screening evidence, not semantic/runtime certification.
 
