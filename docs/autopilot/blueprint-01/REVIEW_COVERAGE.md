@@ -222,27 +222,27 @@ Semantic status values below reflect only the Blueprint 01 review statement: a s
 | `docs/phase5-physical-device-certification-plan.md` | `0672e836a7d258fc6d73639ab96cc9a1f5688a94` | 7768 | 131 | documentation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `docs/security.md` | `10188ccda17dd2df481d86eaba5f858a9a370b44` | 3337 | 29 | documentation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `finish_release.sh` | `133267f2dcd2ee82aac84b1796fc43f27ba00c1c` | 4636 | 137 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `gradle.properties` | `b4eecc410e10dd712ec08130fb85ab5a8b2ee677` | 177 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `gradle/wrapper/gradle-wrapper.properties` | `e98323e7071c55a6bd74029ba8d5f07a2b7dad0a` | 281 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `gradlew` | `ef07e0162b183eb9d19a2c9ba7035c283af9f8dd` | 8728 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `gradlew.bat` | `5eed7ee8452842305a18a4eb967442683808226a` | 2937 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `keystore.properties.example` | `cde94f7eb0a8795ccd56ea7c4f9fdcb6fca4ba28` | 286 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `settings.gradle.kts` | `2cc08940dcaca86fe63369df38cf3c9142fbfdad` | 445 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `tools/benchmark/README.md` | `9aa5ae074819a4dc2eed179630b342d311fe0723` | 2296 | PENDING | verification tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `tools/benchmark/extract_phase4_timings.py` | `707c0b1b480b16f8250d3cb377678f1745bffd92` | 7274 | PENDING | verification tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `tools/benchmark/generate_media_fixtures.py` | `f9b3ffb1f9d1eb42c4bafe645336d74bbdffc951` | 11836 | PENDING | verification tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `tools/benchmark/phase0_device_stress.sh` | `48360f93b1179332ab6bba4e8ed4421e1fe9c604` | 3513 | PENDING | verification tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `tools/benchmark/report_artifact_sizes.py` | `0f7947b4b0a5bf591d848fe44fefc4f1e5b2a721` | 4029 | PENDING | verification tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `tools/benchmark/run_phase0_local.sh` | `224dcb02a2d1919c338fb3f0dbda95e1d652e1e5` | 3080 | PENDING | verification tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `tools/benchmark/run_phase3_device.sh` | `9040dc921c2fa86859c52fe51928da6b57ec8afe` | 22475 | PENDING | verification tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `tools/benchmark/run_phase5_physical_device.sh` | `12c4c5935407c10717a6137b7728ca777a69603d` | 957 | PENDING | verification tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `tools/benchmark/test_phase0_tools.py` | `f13cb338b1780a053128389cf85ac617653918a2` | 12629 | PENDING | verification tooling | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `gradle.properties` | `b4eecc410e10dd712ec08130fb85ab5a8b2ee677` | 177 | 5 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `gradle/wrapper/gradle-wrapper.properties` | `e98323e7071c55a6bd74029ba8d5f07a2b7dad0a` | 281 | 8 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `gradlew` | `ef07e0162b183eb9d19a2c9ba7035c283af9f8dd` | 8728 | 251 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `gradlew.bat` | `5eed7ee8452842305a18a4eb967442683808226a` | 2937 | 94 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `keystore.properties.example` | `cde94f7eb0a8795ccd56ea7c4f9fdcb6fca4ba28` | 286 | 6 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `settings.gradle.kts` | `2cc08940dcaca86fe63369df38cf3c9142fbfdad` | 445 | 22 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `tools/benchmark/README.md` | `9aa5ae074819a4dc2eed179630b342d311fe0723` | 2296 | 39 | verification tooling | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `tools/benchmark/extract_phase4_timings.py` | `707c0b1b480b16f8250d3cb377678f1745bffd92` | 7274 | 180 | verification tooling | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `tools/benchmark/generate_media_fixtures.py` | `f9b3ffb1f9d1eb42c4bafe645336d74bbdffc951` | 11836 | 353 | verification tooling | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `tools/benchmark/phase0_device_stress.sh` | `48360f93b1179332ab6bba4e8ed4421e1fe9c604` | 3513 | 100 | verification tooling | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `tools/benchmark/report_artifact_sizes.py` | `0f7947b4b0a5bf591d848fe44fefc4f1e5b2a721` | 4029 | 119 | verification tooling | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `tools/benchmark/run_phase0_local.sh` | `224dcb02a2d1919c338fb3f0dbda95e1d652e1e5` | 3080 | 108 | verification tooling | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `tools/benchmark/run_phase3_device.sh` | `9040dc921c2fa86859c52fe51928da6b57ec8afe` | 22475 | 570 | verification tooling | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `tools/benchmark/run_phase5_physical_device.sh` | `12c4c5935407c10717a6137b7728ca777a69603d` | 957 | 24 | verification tooling | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `tools/benchmark/test_phase0_tools.py` | `f13cb338b1780a053128389cf85ac617653918a2` | 12629 | 299 | verification tooling | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 
 ## S01 line-count progress
 
-- Exact line counts are now persisted for **209/224** baseline text candidates.
-- Baseline static screening is persisted alongside measured rows; it checks private-key markers, common hard-coded credential/token signatures, and unresolved merge markers.
-- This is inventory/static-screening evidence, not semantic/runtime certification.
+- Exact line counts and the bounded baseline static screen are complete for **224/224** baseline text candidates.
+- Static screening checks private-key markers, common hard-coded credential/token signatures, and unresolved merge markers. No result is promoted to semantic/runtime proof.
+- The final batch produced no static-review flags.
 
 ## Binary/model/dependency provenance gap
 
