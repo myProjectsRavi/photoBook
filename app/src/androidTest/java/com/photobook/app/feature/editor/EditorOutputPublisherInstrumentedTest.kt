@@ -62,7 +62,10 @@ class EditorOutputPublisherInstrumentedTest {
                     mimeType = rendered.mimeType,
                 ),
             )
-            assertTrue(result is EditorPublicationResult.Success)
+            assertTrue(
+                "Expected successful edited-copy publication but got $result",
+                result is EditorPublicationResult.Success,
+            )
             result as EditorPublicationResult.Success
             publishedUri = Uri.parse(result.uriString)
 

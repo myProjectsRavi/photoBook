@@ -11,7 +11,7 @@ import org.junit.Test
 class EditorPublicationCoordinatorTest {
 
     @Test
-    fun success_runsProviderWorkOffCallerThread_andClearsJournal() = runBlocking {
+    fun success_runsProviderWorkOffCallerThread_andClearsJournal(): Unit = runBlocking {
         val backend = FakeBackend()
         val journal = FakeJournal()
         val dispatcher = Executors.newSingleThreadExecutor { runnable ->
@@ -35,7 +35,7 @@ class EditorPublicationCoordinatorTest {
     }
 
     @Test
-    fun failureAfterInsertBeforeDestinationJournal_deletesOnlyInsertedRow() = runBlocking {
+    fun failureAfterInsertBeforeDestinationJournal_deletesOnlyInsertedRow(): Unit = runBlocking {
         val backend = FakeBackend()
         val journal = FakeJournal(failPutNumber = 2)
 
@@ -47,27 +47,27 @@ class EditorPublicationCoordinatorTest {
     }
 
     @Test
-    fun openFailure_cleansPendingOutput() = runBlocking {
+    fun openFailure_cleansPendingOutput(): Unit = runBlocking {
         assertFailureStageCleans(FailureStage.OPEN)
     }
 
     @Test
-    fun halfCopyFailure_cleansPendingOutput() = runBlocking {
+    fun halfCopyFailure_cleansPendingOutput(): Unit = runBlocking {
         assertFailureStageCleans(FailureStage.HALF_COPY)
     }
 
     @Test
-    fun closeFailure_cleansPendingOutput() = runBlocking {
+    fun closeFailure_cleansPendingOutput(): Unit = runBlocking {
         assertFailureStageCleans(FailureStage.CLOSE)
     }
 
     @Test
-    fun publicationFailure_cleansPendingOutput() = runBlocking {
+    fun publicationFailure_cleansPendingOutput(): Unit = runBlocking {
         assertFailureStageCleans(FailureStage.PUBLISH)
     }
 
     @Test
-    fun emptyOutput_failsAndCleansPendingOutput() = runBlocking {
+    fun emptyOutput_failsAndCleansPendingOutput(): Unit = runBlocking {
         val backend = FakeBackend(bytesCopied = 0)
 
         val result = coordinator(backend, FakeJournal()).publish(request())
@@ -77,7 +77,7 @@ class EditorPublicationCoordinatorTest {
     }
 
     @Test
-    fun revokedAccess_returnsAccessDeniedWithoutPublishing() = runBlocking {
+    fun revokedAccess_returnsAccessDeniedWithoutPublishing(): Unit = runBlocking {
         val backend = FakeBackend(failureStage = FailureStage.ACCESS)
 
         val result = coordinator(backend, FakeJournal()).publish(request())
@@ -87,7 +87,19 @@ class EditorPublicationCoordinatorTest {
     }
 
     @Test
-    fun fullStorage_returnsSpecificResultAndCleansPendingOutput() = runBlocking {
+    fun unsupportedSafePublication_returnsAccessDeniedWithoutProviderMutation(): Unit = runBlocking {
+        val backend = FakeBackend(supportsSafePublication = false)
+        val journal = FakeJournal()
+
+        val result = coordinator(backend, journal).publish(request())
+
+        assertThat(result).isEqualTo(EditorPublicationResult.AccessDenied)
+        assertThat(backend.insertCalls).isEqualTo(0)
+        assertThat(journal.entries).isEmpty()
+    }
+
+    @Test
+    fun fullStorage_returnsSpecificResultAndCleansPendingOutput(): Unit = runBlocking {
         val backend = FakeBackend(failureStage = FailureStage.NO_SPACE)
 
         val result = coordinator(backend, FakeJournal()).publish(request())
@@ -97,7 +109,7 @@ class EditorPublicationCoordinatorTest {
     }
 
     @Test
-    fun coroutineCancellation_isRethrownAndCleansPendingOutput() = runBlocking {
+    fun coroutineCancellation_isRethrownAndCleansPendingOutput(): Unit = runBlocking {
         val backend = FakeBackend(failureStage = FailureStage.CANCEL)
         val journal = FakeJournal()
 
@@ -114,7 +126,7 @@ class EditorPublicationCoordinatorTest {
     }
 
     @Test
-    fun recovery_deletesPendingButPreservesAlreadyPublishedRows() = runBlocking {
+    fun recovery_deletesPendingButPreservesAlreadyPublishedRows(): Unit = runBlocking {
         val backend = FakeBackend().apply {
             states["content://media/pending"] = EditorPendingState.PENDING
             states["content://media/published"] = EditorPendingState.PUBLISHED
@@ -152,7 +164,7 @@ class EditorPublicationCoordinatorTest {
     }
 
     @Test
-    fun recovery_withoutRecordedUri_usesUniqueOutputNameOnly() = runBlocking {
+    fun recovery_withoutRecordedUri_usesUniqueOutputNameOnly(): Unit = runBlocking {
         val backend = FakeBackend().apply {
             pendingByName["PhotoBook_Edit_unique.jpg"] = listOf("content://media/recovered")
             states["content://media/recovered"] = EditorPendingState.PENDING
@@ -223,6 +235,7 @@ class EditorPublicationCoordinatorTest {
     private class FakeBackend(
         private val failureStage: FailureStage? = null,
         private val bytesCopied: Long = 128L,
+        private val supportsSafePublication: Boolean = true,
     ) : EditorPublicationBackend {
         val destination = "content://media/output"
         val deleted = mutableListOf<String>()
@@ -231,11 +244,13 @@ class EditorPublicationCoordinatorTest {
         val findByNameCalls = mutableListOf<String>()
         val providerThreads = linkedSetOf<String>()
         var publishCalls = 0
+        var insertCalls = 0
 
-        override fun supportsSafePublication(): Boolean = true
+        override fun supportsSafePublication(): Boolean = supportsSafePublication
 
         override fun insertPending(outputName: String, mimeType: String): String {
             recordThread()
+            insertCalls += 1
             if (failureStage == FailureStage.ACCESS) {
                 throw EditorPublicationAccessDeniedException()
             }
