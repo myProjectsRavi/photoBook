@@ -17,6 +17,9 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -125,9 +128,22 @@ internal class FileEditorPublicationJournal(
                     raw.fd.sync()
                 }
             }
-            if (!tempFile.renameTo(finalFile)) {
+            try {
+                Files.move(
+                    tempFile.toPath(),
+                    finalFile.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE,
+                )
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(
+                    tempFile.toPath(),
+                    finalFile.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (error: IOException) {
                 tempFile.delete()
-                throw IOException("Unable to commit editor publication journal")
+                throw IOException("Unable to commit editor publication journal", error)
             }
         }
     }

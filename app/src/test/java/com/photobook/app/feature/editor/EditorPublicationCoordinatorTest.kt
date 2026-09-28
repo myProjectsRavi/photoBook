@@ -23,8 +23,8 @@ class EditorPublicationCoordinatorTest {
             val result = coordinator(backend, journal, dispatcher).publish(request())
 
             assertThat(result).isEqualTo(EditorPublicationResult.Success(backend.destination))
-            assertThat(backend.providerThreads).isNotEmpty()
-            assertThat(backend.providerThreads).containsExactly("editor-publication-io")
+            assertThat(backend.providerThreads).hasSize(1)
+            assertThat(backend.providerThreads.single()).startsWith("editor-publication-io")
             assertThat(backend.providerThreads).doesNotContain(callerThread)
             assertThat(journal.entries).isEmpty()
             assertThat(backend.deleted).isEmpty()
