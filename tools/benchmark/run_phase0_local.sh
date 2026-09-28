@@ -23,10 +23,14 @@ printf '%s\n' "[phase0] compiling host Python tooling"
 python3 -m py_compile \
   tools/benchmark/generate_media_fixtures.py \
   tools/benchmark/report_artifact_sizes.py \
-  tools/benchmark/test_phase0_tools.py
+  tools/benchmark/build_ci_evidence_manifest.py \
+  tools/benchmark/test_phase0_tools.py \
+  tools/benchmark/test_ci_evidence_manifest.py
 
 printf '%s\n' "[phase0] running host self-tests"
-python3 -m unittest tools/benchmark/test_phase0_tools.py
+python3 -m unittest \
+  tools/benchmark/test_phase0_tools.py \
+  tools/benchmark/test_ci_evidence_manifest.py
 
 printf '%s\n' "[phase0] generating deterministic 303-record smoke corpus"
 rm -rf "$FIXTURE_ROOT"

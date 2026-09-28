@@ -8,7 +8,15 @@ on:
       - "feature/**"
       - "codex/**"
       - "agent/**"
+      - "autopilot/**"
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   verify:
@@ -16,8 +24,18 @@ jobs:
     timeout-minutes: 55
 
     steps:
-      - name: Checkout
+      - name: Checkout exact event commit
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Record exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          echo "checkout_sha=$(git rev-parse HEAD)" | tee "$RUNNER_TEMP/photobook-checkout.txt"
+          echo "workflow_blob=$(git rev-parse HEAD:.github/workflows/android-verify.yml)" | tee -a "$RUNNER_TEMP/photobook-checkout.txt"
 
       - name: Set up JDK
         uses: actions/setup-java@v5
@@ -34,7 +52,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: phase0-verification-${{ github.run_id }}
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
           path: |
             app/schemas/
