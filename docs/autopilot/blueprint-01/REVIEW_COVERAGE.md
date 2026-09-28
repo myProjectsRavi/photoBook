@@ -171,23 +171,23 @@ Semantic status values below reflect only the Blueprint 01 review statement: a s
 | `app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml` | `6b78462d615bfe7003b31d0534dcad416b75ad25` | 273 | 5 | resources/package | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml` | `6b78462d615bfe7003b31d0534dcad416b75ad25` | 273 | 5 | resources/package | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/res/values/colors.xml` | `c8cd280f77403083e3b6449eff22ab0fb84b808f` | 625 | 13 | resources/package | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/res/values/strings.xml` | `538893b415484f8bdd9f70f2344e796e834d9d05` | 19147 | PENDING | resources/package | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/res/values/themes.xml` | `1b5cc1854fa8d6fa77b2686c996bb0b9ee58cb10` | 108 | PENDING | resources/package | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/res/xml/backup_rules.xml` | `d348ebd18ef7f41118eb6e6c62e92df8bf942787` | 492 | PENDING | resources/package | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/res/xml/data_extraction_rules.xml` | `ac01a2af935a7af6be3c669f1866f31e4018b9dd` | 921 | PENDING | resources/package | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/res/xml/file_paths.xml` | `c26dc8532737f3e09f478de08cb72e2c364db095` | 381 | PENDING | resources/package | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/res/xml/on_this_day_widget_info.xml` | `c17c44a5ef3bf2f0dda1ee550e31f85b6042a3d2` | 468 | PENDING | resources/package | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/test/java/com/photobook/app/data/db/PhotoEntityTest.kt` | `a3b89474cb9453990384039d4d1652845493569f` | 2400 | PENDING | unit tests | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/test/java/com/photobook/app/data/db/PhotoTagCodecTest.kt` | `75bd9cb5ed2e33944b5ceeb9fa39da35cf744387` | 675 | PENDING | unit tests | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/test/java/com/photobook/app/data/index/PhotoIndexV2ParityTest.kt` | `84540f94e5fc5a5b3a2e7331643de1a0c5f7b4e2` | 9530 | PENDING | unit tests | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/test/java/com/photobook/app/data/source/MediaStoreScannerProjectionTest.kt` | `3e0297e0266c19eaf919bfb5fc9b8b19b12b6e28` | 1259 | PENDING | unit tests | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/test/java/com/photobook/app/feature/archive/ArchiveClassifierTest.kt` | `24cdabaf74d683f77b569e2eb513d9358d29a70b` | 13214 | PENDING | unit tests | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/test/java/com/photobook/app/feature/archive/ArchivePaginationTest.kt` | `321a1b7af673771fa68a6e1440345ebe538911a5` | 2888 | PENDING | unit tests | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/test/java/com/photobook/app/feature/copytext/PhotoTextCopyCoordinatorTest.kt` | `3c1a72737663a20cf503cb531e27ed262caf38a3` | 2559 | PENDING | unit tests | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/test/java/com/photobook/app/feature/copytext/PhotoTextFormatterTest.kt` | `3b581fe1e031bf224741df33be8d6c1e7e561fe7` | 720 | PENDING | unit tests | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/test/java/com/photobook/app/feature/duplicates/DuplicateHashTest.kt` | `9708f3293767190fc464d990862450cd29c29e1a` | 554 | PENDING | unit tests | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/test/java/com/photobook/app/feature/editor/PhotoEditStateTest.kt` | `e554ce8761d45a996e53e2ad13447b441d46dc8a` | 1022 | PENDING | unit tests | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/test/java/com/photobook/app/feature/pdf/PdfExportLayoutTest.kt` | `098450d3261e16cc5c8acada05f6794d29d6dca7` | 2951 | PENDING | unit tests | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/res/values/strings.xml` | `538893b415484f8bdd9f70f2344e796e834d9d05` | 19147 | 259 | resources/package | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/res/values/themes.xml` | `1b5cc1854fa8d6fa77b2686c996bb0b9ee58cb10` | 108 | 3 | resources/package | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/res/xml/backup_rules.xml` | `d348ebd18ef7f41118eb6e6c62e92df8bf942787` | 492 | 10 | resources/package | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/res/xml/data_extraction_rules.xml` | `ac01a2af935a7af6be3c669f1866f31e4018b9dd` | 921 | 20 | resources/package | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/res/xml/file_paths.xml` | `c26dc8532737f3e09f478de08cb72e2c364db095` | 381 | 15 | resources/package | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/res/xml/on_this_day_widget_info.xml` | `c17c44a5ef3bf2f0dda1ee550e31f85b6042a3d2` | 468 | 10 | resources/package | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/test/java/com/photobook/app/data/db/PhotoEntityTest.kt` | `a3b89474cb9453990384039d4d1652845493569f` | 2400 | 77 | unit tests | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/test/java/com/photobook/app/data/db/PhotoTagCodecTest.kt` | `75bd9cb5ed2e33944b5ceeb9fa39da35cf744387` | 675 | 24 | unit tests | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/test/java/com/photobook/app/data/index/PhotoIndexV2ParityTest.kt` | `84540f94e5fc5a5b3a2e7331643de1a0c5f7b4e2` | 9530 | 230 | unit tests | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/test/java/com/photobook/app/data/source/MediaStoreScannerProjectionTest.kt` | `3e0297e0266c19eaf919bfb5fc9b8b19b12b6e28` | 1259 | 34 | unit tests | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/test/java/com/photobook/app/feature/archive/ArchiveClassifierTest.kt` | `24cdabaf74d683f77b569e2eb513d9358d29a70b` | 13214 | 451 | unit tests | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/test/java/com/photobook/app/feature/archive/ArchivePaginationTest.kt` | `321a1b7af673771fa68a6e1440345ebe538911a5` | 2888 | 87 | unit tests | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/test/java/com/photobook/app/feature/copytext/PhotoTextCopyCoordinatorTest.kt` | `3c1a72737663a20cf503cb531e27ed262caf38a3` | 2559 | 82 | unit tests | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/test/java/com/photobook/app/feature/copytext/PhotoTextFormatterTest.kt` | `3b581fe1e031bf224741df33be8d6c1e7e561fe7` | 720 | 27 | unit tests | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/test/java/com/photobook/app/feature/duplicates/DuplicateHashTest.kt` | `9708f3293767190fc464d990862450cd29c29e1a` | 554 | 19 | unit tests | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/test/java/com/photobook/app/feature/editor/PhotoEditStateTest.kt` | `e554ce8761d45a996e53e2ad13447b441d46dc8a` | 1022 | 38 | unit tests | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/test/java/com/photobook/app/feature/pdf/PdfExportLayoutTest.kt` | `098450d3261e16cc5c8acada05f6794d29d6dca7` | 2951 | 97 | unit tests | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/test/java/com/photobook/app/feature/phototextsearch/PhotoTextCoordinateMapperTest.kt` | `f3b17d6f827edcb8e2ef7a42be349596456d5502` | 2260 | PENDING | unit tests | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/test/java/com/photobook/app/feature/phototextsearch/PhotoTextMatcherTest.kt` | `1601efb5510f2e09352c9c528699585705f14330` | 4546 | PENDING | unit tests | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/test/java/com/photobook/app/feature/phototextsearch/PhotoTextSearchControllerTest.kt` | `ad8290b0e2dbf12dda1e7e67ba20e5989ffff8ae` | 6005 | PENDING | unit tests | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
@@ -240,7 +240,7 @@ Semantic status values below reflect only the Blueprint 01 review statement: a s
 
 ## S01 line-count progress
 
-- Exact line counts are now persisted for **158/224** baseline text candidates.
+- Exact line counts are now persisted for **175/224** baseline text candidates.
 - Baseline static screening is persisted alongside measured rows; it checks private-key markers, common hard-coded credential/token signatures, and unresolved merge markers.
 - This is inventory/static-screening evidence, not semantic/runtime certification.
 
