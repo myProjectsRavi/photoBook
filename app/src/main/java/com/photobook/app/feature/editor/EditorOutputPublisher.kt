@@ -260,8 +260,8 @@ internal class AndroidEditorPublicationBackend(
         return providerCall {
             val destinationUri = Uri.parse(destinationUriString)
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            resolver.openInputStream(destinationUri)?.use { input ->
-                BitmapFactory.decodeStream(input, null, options)
+            resolver.openFileDescriptor(destinationUri, "r")?.use { descriptor ->
+                BitmapFactory.decodeFileDescriptor(descriptor.fileDescriptor, null, options)
             } ?: return@providerCall false
             options.outWidth > 0 && options.outHeight > 0
         }
