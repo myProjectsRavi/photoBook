@@ -54,22 +54,22 @@ Semantic status values below reflect only the Blueprint 01 review statement: a s
 | `app/src/main/java/com/photobook/app/data/db/VaultEntity.kt` | `b368d2b00de7e53ba7e2e4aa844d0e98b89eb215` | 494 | 22 | persistence | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/java/com/photobook/app/data/geo/CityDatabase.kt` | `b7f277b3248bf092b2f77381b77cf4af6567e916` | 1200 | 36 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/java/com/photobook/app/data/geo/OfflineGeocoder.kt` | `72b4182d751f2acc59d965bc02d15a7d7d5274bc` | 2150 | 62 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/data/index/IndexBuilder.kt` | `1c80a49631b0d391c8f04aa10a89d1fc3100cb5b` | 6462 | PENDING | index | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/data/index/IndexCommitCoordinator.kt` | `8a53ef30fe7ca3ed792601c37ab2d4c72f6fa758` | 670 | PENDING | index | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/data/index/IndexPersistence.kt` | `19649f3d89a0e80d948d587f294b991c81ae236b` | 16162 | PENDING | index | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/data/index/PhotoIndex.kt` | `96b2f42d8c981cf09933bd5265986d4fc1c514d5` | 22117 | PENDING | index | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/data/model/GeoResult.kt` | `0bd1b030de35f5130b0e71704d61920e178b8d50` | 132 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/data/model/IntelligenceStatus.kt` | `c06e4885e623a51f9b7b4d564384f9665d72bd0a` | 630 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/data/model/MLTag.kt` | `09195c586ed883d45d5da072bbff1d513fc91d7b` | 162 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/data/model/PhotoRecord.kt` | `3087d20001b6c899402167e01f8d44282c7a398a` | 1794 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/data/model/RawPhotoData.kt` | `0e5552621aa6b3cb060a3d0ba3b661a2407ae99a` | 376 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/data/source/ExifExtractor.kt` | `ff33732d75e2c62082787204dc3dd4d82f2b2c4e` | 2034 | PENDING | media scanning | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/data/source/MediaStoreScanner.kt` | `39bc06e0b86f0d814ec13d3cfd572b0c89903b2a` | 6860 | PENDING | media scanning | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/di/AppModule.kt` | `5c1befdc2ca3950ba3296d64615d9528a5890a51` | 11132 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/di/MLModule.kt` | `5443c639ff287f8b02953fb5f91edfa425a051e4` | 555 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/feature/archive/ArchiveClassifier.kt` | `50d7865ce5c8c64200b939d2bfb464625f2a7010` | 8483 | PENDING | archives | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/feature/archive/ArchivePagination.kt` | `66d9455875bb75f20a4a3fe10e1ad2dcc4b982a8` | 1366 | PENDING | archives | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/feature/archive/ArchiveService.kt` | `1601b5bad06c2b6ac12ab1c658cde2507b2db78d` | 23411 | PENDING | archives | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/data/index/IndexBuilder.kt` | `1c80a49631b0d391c8f04aa10a89d1fc3100cb5b` | 6462 | 170 | index | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/data/index/IndexCommitCoordinator.kt` | `8a53ef30fe7ca3ed792601c37ab2d4c72f6fa758` | 670 | 21 | index | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/data/index/IndexPersistence.kt` | `19649f3d89a0e80d948d587f294b991c81ae236b` | 16162 | 388 | index | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/data/index/PhotoIndex.kt` | `96b2f42d8c981cf09933bd5265986d4fc1c514d5` | 22117 | 570 | index | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/data/model/GeoResult.kt` | `0bd1b030de35f5130b0e71704d61920e178b8d50` | 132 | 7 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/data/model/IntelligenceStatus.kt` | `c06e4885e623a51f9b7b4d564384f9665d72bd0a` | 630 | 21 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/data/model/MLTag.kt` | `09195c586ed883d45d5da072bbff1d513fc91d7b` | 162 | 9 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/data/model/PhotoRecord.kt` | `3087d20001b6c899402167e01f8d44282c7a398a` | 1794 | 63 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/data/model/RawPhotoData.kt` | `0e5552621aa6b3cb060a3d0ba3b661a2407ae99a` | 376 | 16 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/data/source/ExifExtractor.kt` | `ff33732d75e2c62082787204dc3dd4d82f2b2c4e` | 2034 | 50 | media scanning | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/data/source/MediaStoreScanner.kt` | `39bc06e0b86f0d814ec13d3cfd572b0c89903b2a` | 6860 | 170 | media scanning | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/di/AppModule.kt` | `5c1befdc2ca3950ba3296d64615d9528a5890a51` | 11132 | 305 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/di/MLModule.kt` | `5443c639ff287f8b02953fb5f91edfa425a051e4` | 555 | 22 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/feature/archive/ArchiveClassifier.kt` | `50d7865ce5c8c64200b939d2bfb464625f2a7010` | 8483 | 238 | archives | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/feature/archive/ArchivePagination.kt` | `66d9455875bb75f20a4a3fe10e1ad2dcc4b982a8` | 1366 | 39 | archives | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/feature/archive/ArchiveService.kt` | `1601b5bad06c2b6ac12ab1c658cde2507b2db78d` | 23411 | 602 | archives | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/java/com/photobook/app/feature/copytext/ExtractedTextResult.kt` | `c5fd88711788548de919e00a7f6dbc41e7310f20` | 269 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/java/com/photobook/app/feature/copytext/NormalizedTextRegion.kt` | `a0d048137c53dd313d51a2ada181a5ee850cbcd1` | 1069 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/java/com/photobook/app/feature/copytext/OnDevicePhotoTextExtractor.kt` | `91b9f1f525c1cec4362b821b2789f9b0fffee4c3` | 11744 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
@@ -240,8 +240,8 @@ Semantic status values below reflect only the Blueprint 01 review statement: a s
 
 ## S01 line-count progress
 
-- Exact line counts are now persisted for **41/224** baseline text candidates.
-- Baseline static screening is persisted alongside newly measured rows; it checks only the bounded patterns documented above.
+- Exact line counts are now persisted for **57/224** baseline text candidates.
+- Baseline static screening is persisted alongside measured rows; it checks private-key markers, common hard-coded credential/token signatures, and unresolved merge markers.
 - This is inventory/static-screening evidence, not semantic/runtime certification.
 
 ## Binary/model/dependency provenance gap
