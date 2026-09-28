@@ -154,23 +154,23 @@ Semantic status values below reflect only the Blueprint 01 review statement: a s
 | `app/src/main/java/com/photobook/app/ui/viewmodel/MainViewModel.kt` | `0bd78501c1e6603b2a6f09e7de4efc2e06b6b6e5` | 77954 | 2010 | ui/navigation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | DETAILED_BASELINE_REVIEW | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/java/com/photobook/app/ui/viewmodel/PhotoViewerViewModel.kt` | `7a105d6dcf58beb391f8aef3ba4f15b9127be611` | 335 | 14 | ui/navigation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/java/com/photobook/app/ui/viewmodel/SearchResultsPagingSource.kt` | `6f9d2e2fea5186b03fe5c840598e93ce9d9e9b4a` | 2333 | 69 | ui/navigation | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/util/BitmapOrientation.kt` | `e6454a975e4d770eb4549ca5248db995877af8af` | 1771 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/util/Constants.kt` | `8b6e3b87eccb039ba0de03e6cad6b2de3824598f` | 955 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/util/DateUtils.kt` | `00d765b8ca58edba5610a6233b1d9724e8e3a282` | 3421 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/util/LocalDiagnostics.kt` | `456f38e2cc7931f1cee9f78525e4fbe04c6a59e8` | 3580 | PENDING | project/build | INVENTORIED | PENDING | DETAILED_BASELINE_REVIEW | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/util/PerformanceProfiler.kt` | `2717c5f21c1bcfabdd857556ee11603c9c1be2cf` | 1958 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/util/PermissionUtils.kt` | `6c803c48c8a02094721aeca6e3aa552499f8dc96` | 2173 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/widget/OnThisDayWidgetProvider.kt` | `2f6215fd05faf8f0619a5024d30fd3ea9bd0536c` | 4446 | PENDING | memories/widget | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/worker/ArchiveRetentionWorker.kt` | `7dff89c9483c6c709ec99b80c1b6a70135be99a7` | 2019 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/worker/ArchiveScanWorker.kt` | `d96b12fd2d86329dcd36e04da4cbc8a750776a85` | 2403 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/java/com/photobook/app/worker/TrashPurgeWorker.kt` | `5af0e0bd1fe7fcf49ad9ca7d00128926481ca453` | 1571 | PENDING | project/build | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/res/drawable/ic_launcher_background.xml` | `9dd403c8f1588b0a52db0cda5860757fb4163d28` | 140 | PENDING | resources/package | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/res/drawable/ic_launcher_foreground.xml` | `531e2c19e256e1a243d25c8fec734931104735bd` | 472 | PENDING | resources/package | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/res/drawable/widget_on_this_day_bg.xml` | `11a64ede9326c316088392e4ffa30e9a612432b3` | 300 | PENDING | resources/package | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/res/layout/widget_on_this_day.xml` | `fb4f25e1ada54216e6d3214ae62f079b0c7b3e40` | 1949 | PENDING | resources/package | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml` | `6b78462d615bfe7003b31d0534dcad416b75ad25` | 273 | PENDING | resources/package | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml` | `6b78462d615bfe7003b31d0534dcad416b75ad25` | 273 | PENDING | resources/package | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
-| `app/src/main/res/values/colors.xml` | `c8cd280f77403083e3b6449eff22ab0fb84b808f` | 625 | PENDING | resources/package | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/util/BitmapOrientation.kt` | `e6454a975e4d770eb4549ca5248db995877af8af` | 1771 | 53 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/util/Constants.kt` | `8b6e3b87eccb039ba0de03e6cad6b2de3824598f` | 955 | 24 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/util/DateUtils.kt` | `00d765b8ca58edba5610a6233b1d9724e8e3a282` | 3421 | 80 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/util/LocalDiagnostics.kt` | `456f38e2cc7931f1cee9f78525e4fbe04c6a59e8` | 3580 | 103 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | DETAILED_BASELINE_REVIEW | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/util/PerformanceProfiler.kt` | `2717c5f21c1bcfabdd857556ee11603c9c1be2cf` | 1958 | 55 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/util/PermissionUtils.kt` | `6c803c48c8a02094721aeca6e3aa552499f8dc96` | 2173 | 58 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/widget/OnThisDayWidgetProvider.kt` | `2f6215fd05faf8f0619a5024d30fd3ea9bd0536c` | 4446 | 110 | memories/widget | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/worker/ArchiveRetentionWorker.kt` | `7dff89c9483c6c709ec99b80c1b6a70135be99a7` | 2019 | 58 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/worker/ArchiveScanWorker.kt` | `d96b12fd2d86329dcd36e04da4cbc8a750776a85` | 2403 | 64 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/java/com/photobook/app/worker/TrashPurgeWorker.kt` | `5af0e0bd1fe7fcf49ad9ca7d00128926481ca453` | 1571 | 41 | project/build | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/res/drawable/ic_launcher_background.xml` | `9dd403c8f1588b0a52db0cda5860757fb4163d28` | 140 | 3 | resources/package | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/res/drawable/ic_launcher_foreground.xml` | `531e2c19e256e1a243d25c8fec734931104735bd` | 472 | 12 | resources/package | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/res/drawable/widget_on_this_day_bg.xml` | `11a64ede9326c316088392e4ffa30e9a612432b3` | 300 | 9 | resources/package | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/res/layout/widget_on_this_day.xml` | `fb4f25e1ada54216e6d3214ae62f079b0c7b3e40` | 1949 | 56 | resources/package | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml` | `6b78462d615bfe7003b31d0534dcad416b75ad25` | 273 | 5 | resources/package | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml` | `6b78462d615bfe7003b31d0534dcad416b75ad25` | 273 | 5 | resources/package | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
+| `app/src/main/res/values/colors.xml` | `c8cd280f77403083e3b6449eff22ab0fb84b808f` | 625 | 13 | resources/package | INVENTORIED | SCANNED_NO_CREDENTIAL_PATTERN | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/res/values/strings.xml` | `538893b415484f8bdd9f70f2344e796e834d9d05` | 19147 | PENDING | resources/package | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/res/values/themes.xml` | `1b5cc1854fa8d6fa77b2686c996bb0b9ee58cb10` | 108 | PENDING | resources/package | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
 | `app/src/main/res/xml/backup_rules.xml` | `d348ebd18ef7f41118eb6e6c62e92df8bf942787` | 492 | PENDING | resources/package | INVENTORIED | PENDING | REVIEW_GAP | NOT_FRESHLY_ATTRIBUTED_PER_FILE |
@@ -240,7 +240,7 @@ Semantic status values below reflect only the Blueprint 01 review statement: a s
 
 ## S01 line-count progress
 
-- Exact line counts are now persisted for **141/224** baseline text candidates.
+- Exact line counts are now persisted for **158/224** baseline text candidates.
 - Baseline static screening is persisted alongside measured rows; it checks private-key markers, common hard-coded credential/token signatures, and unresolved merge markers.
 - This is inventory/static-screening evidence, not semantic/runtime certification.
 
