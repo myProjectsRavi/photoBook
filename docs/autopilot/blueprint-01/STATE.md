@@ -114,3 +114,18 @@ Recover a trustworthy historical database artifact/schema from repository or CI 
 ### Exact next action
 
 Retry the isolated instrumentation-test write through the normal GitHub contents API. If accepted, let branch CI compile it, diagnose any schema-validation mismatch from the genuine v1 fixture, and run the exact-head targeted hosted emulator route. Keep S04 IN_PROGRESS until executable migration evidence passes; do not start S05.
+
+
+## S04 checkpoint — executable test mutation still blocked
+
+- Exact branch HEAD inspected: `a8237af686f3fdfc2481ffee17e5d185f07e1512`; branch is 38 commits ahead and 0 behind `main`. Main was not modified.
+- Re-read canonical STATE/BACKLOG/VALIDATION/DECISIONS/REVIEW_COVERAGE, production `AppModule`, existing Room migration infrastructure test, the S04 scaffold, and historical v1 `PhotoEntity`/`PhotoFtsEntity`/`PhotoBookDatabase` at provenance commit `09c35afc15f3bfa087b0b78ab826f04598555c9f`.
+- Current S04 scaffold is only 14 lines and is not executable migration evidence.
+- Prepared the smallest executable instrumentation test design: create `photobook.db` with the exact provenance-backed v1 photos + FTS4 shape, seed durable photo/FTS data, set `user_version=1`, then open via `AppModule.providePhotoBookDatabase` so production migrations 1→12 and Room's current schema validation execute. Assertions cover durable metadata/tags/OCR/FTS preservation, v9→10 OCR derivation, intentional v11→12 ML reopening only, final version 12, and `PRAGMA integrity_check=ok`.
+- The normal authenticated GitHub contents-API update of `HistoricalRoomMigrationInstrumentedTest.kt` was blocked by the connector safety layer before mutation. No lower-level Git-object bypass was attempted.
+- GitHub reports no workflow runs or combined statuses for exact HEAD `a8237af...`; no CI PASS is claimed.
+- S04 remains IN_PROGRESS; S05 was not started. No physical/OEM/camera/battery/thermal evidence is claimed.
+
+### Exact next action
+
+Retry only the normal GitHub contents-API replacement of `HistoricalRoomMigrationInstrumentedTest.kt`. Once accepted, inspect the exact diff, allow Android Verification to compile it, diagnose any genuine schema mismatch, then obtain exact-head targeted hosted-emulator migration execution before considering S04 ACCEPTED.
