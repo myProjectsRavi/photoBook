@@ -129,3 +129,16 @@ Retry the isolated instrumentation-test write through the normal GitHub contents
 ### Exact next action
 
 Retry only the normal GitHub contents-API replacement of `HistoricalRoomMigrationInstrumentedTest.kt`. Once accepted, inspect the exact diff, allow Android Verification to compile it, diagnose any genuine schema mismatch, then obtain exact-head targeted hosted-emulator migration execution before considering S04 ACCEPTED.
+
+
+## S04 checkpoint — automation retry
+
+- Re-read canonical S04 state, backlog, validation/decision/review ledgers, production AppModule migration registration, current migration tests, and the provenance scaffold through the connected GitHub integration.
+- Branch comparison at start: 39 commits ahead and 0 behind main; main was not modified.
+- Re-read the genuine v1 definitions at provenance commit 09c35afc15f3bfa087b0b78ab826f04598555c9f. PhotoBookDatabase was version 1 with exportSchema=false; PhotoEntity and PhotoFtsEntity definitions provide the historical SQLite shape.
+- Retried the normal authenticated contents-API replacement of HistoricalRoomMigrationInstrumentedTest.kt with the executable v1 fixture -> production AppModule 1-to-12 migration test. The connector safety layer rejected the mutation before repository change.
+- No test/CI PASS is claimed for the uncommitted test body. S04 remains IN_PROGRESS and S05 was not started.
+
+### Exact next action
+
+Retry only the normal GitHub contents-API update of HistoricalRoomMigrationInstrumentedTest.kt. Do not fabricate historical Room JSON. Once the executable test is committed, inspect its diff and obtain exact-head Android Verification plus targeted hosted-emulator execution before accepting S04.
