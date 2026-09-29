@@ -4,10 +4,10 @@ cycle: blueprint-01
 authorized_branch: autopilot/epics-features-user-stories  
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
-current_epic: E02 Safe media writes  
-current_feature: Editor publication  
-current_story: S03 Move edited copy publication off Main  
-status: ACCEPTED  
+current_epic: E01 Execution safety  
+current_feature: Durable state  
+current_story: S04 Real historical Room upgrade evidence  
+status: IN_PROGRESS  
 source_commit_tested: 607353b9fbee37e7dfb683a99627b5f222332e13 (S03 accepted implementation candidate)
 latest_checkpoint_commit: 607353b9fbee37e7dfb683a99627b5f222332e13
 
@@ -87,3 +87,16 @@ S03 is **ACCEPTED**. Do not reopen or rerun it unless later evidence reveals a r
 ## Next action
 
 On the next run, select S04 (Durable state) as the first incomplete story in fixed order. Before editing, inspect the Room database configuration, schema/export history, migrations, historical schema fixtures, database callers and migration tests. Do not use destructive migration fallback and do not modify `main`.
+
+
+## S04 checkpoint — historical schema provenance
+
+- S04 is active. Production `PhotoBookDatabase` is version 12 with `exportSchema = true`; `AppModule` explicitly registers migrations 1→2 through 11→12 and does not configure destructive fallback.
+- Actual migration test path is `app/src/androidTest/java/com/photobook/app/verification/RoomMigrationInfrastructureTest.kt`. It currently proves only fresh v12 schema creation plus `PRAGMA integrity_check`; it does not execute a historical upgrade.
+- Actual exported schema path is `app/schemas/com.photobook.app.data.db.PhotoBookDatabase/12.json`.
+- Repository history confirms commit `fb8602a784b2871cfed7746fafddec9761ac7427` introduced migration 6→7/database v7, but no v7 exported Room schema exists at that commit. Phase-0 commit `048ef1aa6f38567755a8f00f415f089d40ef85fd` contains v12 but no v7 fixture.
+- Existing `docs/phase0-verification.md` explicitly states historical schemas predating Phase 0 were not exported and **must not be fabricated**. Therefore S04 cannot truthfully manufacture Room JSON fixtures from migration SQL and call them historical exports.
+
+### S04 next action
+
+Recover a trustworthy historical database artifact/schema from repository or CI history if one exists. If none exists, design an evidence path that executes the real migration chain against a provenance-backed historical SQLite database fixture rather than fabricating Room schema JSON; preserve durable photo/Vault/archive records and validate the resulting v12 schema. Keep S04 IN_PROGRESS until executable upgrade evidence passes.
