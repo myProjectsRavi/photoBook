@@ -100,3 +100,17 @@ On the next run, select S04 (Durable state) as the first incomplete story in fix
 ### S04 next action
 
 Recover a trustworthy historical database artifact/schema from repository or CI history if one exists. If none exists, design an evidence path that executes the real migration chain against a provenance-backed historical SQLite database fixture rather than fabricating Room schema JSON; preserve durable photo/Vault/archive records and validate the resulting v12 schema. Keep S04 IN_PROGRESS until executable upgrade evidence passes.
+
+
+## S04 checkpoint — production-chain test design
+
+- Branch relationship at this checkpoint: `autopilot/epics-features-user-stories` is 36 commits ahead and 0 behind `main`; `main` was not modified.
+- Historical provenance was re-read from commit `09c35afc15f3bfa087b0b78ab826f04598555c9f`: Room v1 used `PhotoEntity` + `PhotoFtsEntity`, `version = 1`, and `exportSchema = false`.
+- Current production `AppModule.providePhotoBookDatabase` remains the authoritative migration caller and installs migrations 1→2 through 11→12 with no destructive fallback.
+- Smallest safe test design: create a test-only SQLite v1 fixture from the exact historical entity schema, seed durable photo/FTS data, set `user_version = 1`, then open that file through `AppModule.providePhotoBookDatabase`. This exercises the real production migration registration and current Room schema validation without inventing a historical Room JSON export.
+- The intended assertions preserve URI/name/location/favorite/tags/OCR/FTS data, verify v9→10 derived OCR status, verify the intentional v11→12 ML reset only, and require `PRAGMA integrity_check = ok`.
+- Two authenticated GitHub write attempts for this test (existing-test update and isolated new instrumentation test) were rejected by the connector safety layer before mutation. No source/test file changed and no lower-level Git-object bypass was used.
+
+### Exact next action
+
+Retry the isolated instrumentation-test write through the normal GitHub contents API. If accepted, let branch CI compile it, diagnose any schema-validation mismatch from the genuine v1 fixture, and run the exact-head targeted hosted emulator route. Keep S04 IN_PROGRESS until executable migration evidence passes; do not start S05.
