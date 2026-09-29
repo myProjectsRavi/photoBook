@@ -3,7 +3,7 @@ package com.photobook.app.feature.editor
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
-import android.graphics.BitmapFactory
+import android.graphics.BitmapRegionDecoder
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
@@ -259,11 +259,15 @@ internal class AndroidEditorPublicationBackend(
     override fun verifyReadableImage(destinationUriString: String): Boolean {
         return providerCall {
             val destinationUri = Uri.parse(destinationUriString)
-            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             resolver.openFileDescriptor(destinationUri, "r")?.use { descriptor ->
-                BitmapFactory.decodeFileDescriptor(descriptor.fileDescriptor, null, options)
-            } ?: return@providerCall false
-            options.outWidth > 0 && options.outHeight > 0
+                val decoder = BitmapRegionDecoder.newInstance(descriptor.fileDescriptor, false)
+                    ?: return@providerCall false
+                try {
+                    decoder.width > 0 && decoder.height > 0
+                } finally {
+                    decoder.recycle()
+                }
+            } ?: false
         }
     }
 
