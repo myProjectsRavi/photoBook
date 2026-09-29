@@ -7,9 +7,9 @@ baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1
 current_epic: E02 Safe media writes  
 current_feature: Editor publication  
 current_story: S03 Move edited copy publication off Main  
-status: IN_PROGRESS  
-source_commit_tested: c4b6c2a3689b2e5fcb8db8a4527d7bdb05817888 (S02 final docs-only routing checkpoint)
-latest_checkpoint_commit: c4b6c2a3689b2e5fcb8db8a4527d7bdb05817888
+status: ACCEPTED  
+source_commit_tested: 607353b9fbee37e7dfb683a99627b5f222332e13 (S03 accepted implementation candidate)
+latest_checkpoint_commit: 607353b9fbee37e7dfb683a99627b5f222332e13
 
 ## Source blueprint
 
@@ -70,3 +70,20 @@ None at S03 start. No physical device is available; S03 must rely on unit/static
 ## Next action
 
 Inspect the complete editor save path, direct callers/tests and Android storage/API compatibility boundaries. Add a regression-testable publication abstraction/journal before replacing the UI-owned synchronous MediaStore copy. Preserve original media and do not broaden storage permissions.
+## S03 final acceptance
+
+- Tested source commit: `607353b9fbee37e7dfb683a99627b5f222332e13`.
+- Changed S03 scope since the S02 checkpoint: editor publication workflow/test routing, `EditorOutputPublisherInstrumentedTest.kt`, `PhotoBookApplication.kt`, `EditorOutputPublisher.kt`, `PhotoViewerScreen.kt`, editor strings, and `EditorPublicationCoordinatorTest.kt`; intermediate S03 checkpoint docs are also in the seven-commit range.
+- Android Verification run `36509867274`: SUCCESS on the exact tested source; Phase-0/build/size/no-INTERNET gates passed.
+- Targeted API-35 emulator run `36509867285`: SUCCESS on the exact tested source; 20/20 targeted instrumentation tests passed, including production edited-copy publication while preserving the original source bytes.
+- Publication provider work is off the caller thread; immutable invocation state, API-29+ pending publication, validation before exposure, cancellation/failure cleanup, durable app-owned recovery and fail-closed legacy behavior are preserved.
+- No physical/OEM/camera/battery/thermal evidence is claimed. Hosted API-35 x86_64 evidence is correctness/privacy evidence, not native-ARM performance certification.
+- Final S03 source diff/evidence review found no reason to weaken privacy, original-media integrity, cancellation, offline, access-safety, size or destructive-operation gates.
+
+## S03 decision
+
+S03 is **ACCEPTED**. Do not reopen or rerun it unless later evidence reveals a regression.
+
+## Next action
+
+On the next run, select S04 (Durable state) as the first incomplete story in fixed order. Before editing, inspect the Room database configuration, schema/export history, migrations, historical schema fixtures, database callers and migration tests. Do not use destructive migration fallback and do not modify `main`.
