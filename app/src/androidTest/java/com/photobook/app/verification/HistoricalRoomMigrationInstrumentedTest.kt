@@ -2,11 +2,8 @@ package com.photobook.app.verification
 
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
-import androidx.room.Room
-import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.photobook.app.data.db.PhotoBookDatabase
 import com.photobook.app.di.AppModule
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -24,10 +21,9 @@ import java.io.File
  * exportSchema=false. Historical Room JSON therefore does not exist and must
  * not be fabricated.
  *
- * This test therefore reconstructs only the production v1 SQLite shape proven
- * by that commit, seeds durable user data, and opens the same database through
- * PhotoBook's real production database provider so the registered 1 -> 12
- * migration chain and Room's current schema validation execute unchanged.
+ * This fixture recreates only the SQLite shape proven by those v1 entity
+ * definitions, seeds durable user data, then opens the file through the real
+ * production provider so migrations 1 -> 12 and Room's v12 validation run.
  */
 @RunWith(AndroidJUnit4::class)
 class HistoricalRoomMigrationInstrumentedTest {
@@ -58,41 +54,44 @@ class HistoricalRoomMigrationInstrumentedTest {
         migrated.openHelper.readableDatabase.query(
             """
             SELECT
-                uri,
-                displayName,
-                bucketName,
-                isFavorite,
-                tags,
-                ocrText,
-                ocrProcessed,
-                mlProcessed
+                id, uriString, filePath, fileName, folderName, folderPath,
+                isFavorite, mlTagsPayload, isMlProcessed, mlStatus,
+                ocrText, isOcrProcessed, ocrStatus,
+                isArchiveScreenshotCandidate, isArchiveFoodCandidate
             FROM photos
-            WHERE uri = ?
+            WHERE id = ?
             """.trimIndent(),
-            arrayOf(TEST_URI)
+            arrayOf(TEST_ID),
         ).use { cursor ->
             assertTrue(cursor.moveToFirst())
-            assertEquals(TEST_URI, cursor.getString(0))
-            assertEquals("IMG_0001.jpg", cursor.getString(1))
-            assertEquals("Camera", cursor.getString(2))
-            assertEquals(1, cursor.getInt(3))
-            assertEquals("beach,sunset", cursor.getString(4))
-            assertEquals("hello photobook", cursor.getString(5))
+            assertEquals(TEST_ID, cursor.getLong(0))
+            assertEquals(TEST_URI, cursor.getString(1))
+            assertEquals("/storage/emulated/0/DCIM/Camera/IMG_0001.jpg", cursor.getString(2))
+            assertEquals("IMG_0001.jpg", cursor.getString(3))
+            assertEquals("Camera", cursor.getString(4))
+            assertEquals("/storage/emulated/0/DCIM/Camera", cursor.getString(5))
             assertEquals(1, cursor.getInt(6))
-            assertEquals(0, cursor.getInt(7))
+            assertEquals("[\"beach\",\"sunset\"]", cursor.getString(7))
+            assertEquals(0, cursor.getInt(8))
+            assertEquals("PENDING", cursor.getString(9))
+            assertEquals("hello photobook", cursor.getString(10))
+            assertEquals(1, cursor.getInt(11))
+            assertEquals("PROCESSED", cursor.getString(12))
+            assertEquals(0, cursor.getInt(13))
+            assertEquals(0, cursor.getInt(14))
         }
 
         migrated.openHelper.readableDatabase.query(
-            "SELECT COUNT(*) FROM photo_fts WHERE uri = ? AND ocrText = ?",
-            arrayOf(TEST_URI, "hello photobook")
+            "SELECT searchableText FROM photo_fts WHERE rowid = ?",
+            arrayOf(TEST_ID),
         ).use { cursor ->
             assertTrue(cursor.moveToFirst())
-            assertEquals(1, cursor.getInt(0))
+            assertEquals(TEST_SEARCHABLE_TEXT, cursor.getString(0))
         }
 
         migrated.openHelper.readableDatabase.query("PRAGMA user_version").use { cursor ->
             assertTrue(cursor.moveToFirst())
-            assertEquals(PhotoBookDatabase.VERSION, cursor.getInt(0))
+            assertEquals(12, cursor.getInt(0))
         }
 
         migrated.openHelper.readableDatabase.query("PRAGMA integrity_check").use { cursor ->
@@ -109,59 +108,97 @@ class HistoricalRoomMigrationInstrumentedTest {
         sqlite.execSQL(
             """
             CREATE TABLE IF NOT EXISTS photos (
-                uri TEXT NOT NULL PRIMARY KEY,
-                displayName TEXT,
-                dateTaken INTEGER NOT NULL,
-                size INTEGER NOT NULL,
-                bucketName TEXT,
-                relativePath TEXT,
-                mimeType TEXT,
+                id INTEGER NOT NULL PRIMARY KEY,
+                uriString TEXT NOT NULL,
+                filePath TEXT NOT NULL,
+                fileName TEXT NOT NULL,
+                dateAdded INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                month INTEGER NOT NULL,
+                dayOfMonth INTEGER NOT NULL,
+                dayOfWeek INTEGER NOT NULL,
+                hourOfDay INTEGER NOT NULL,
+                latitude REAL,
+                longitude REAL,
+                city TEXT,
+                state TEXT,
+                country TEXT,
+                fileSize INTEGER NOT NULL,
                 width INTEGER NOT NULL,
                 height INTEGER NOT NULL,
+                mimeType TEXT NOT NULL,
+                folderName TEXT NOT NULL,
+                folderPath TEXT NOT NULL,
+                cameraModel TEXT,
+                isFrontCamera INTEGER NOT NULL,
+                isHdr INTEGER NOT NULL,
                 isFavorite INTEGER NOT NULL,
-                tags TEXT,
-                ocrText TEXT
+                mlTagsPayload TEXT NOT NULL,
+                isMlProcessed INTEGER NOT NULL,
+                ocrText TEXT NOT NULL,
+                isOcrProcessed INTEGER NOT NULL
             )
-            """.trimIndent()
+            """.trimIndent(),
         )
 
         sqlite.execSQL(
             """
-            CREATE VIRTUAL TABLE IF NOT EXISTS photo_fts USING FTS4(
-                uri,
-                tags,
-                ocrText,
-                tokenize=unicode61 "prefix=2,3,4"
+            CREATE VIRTUAL TABLE IF NOT EXISTS photo_fts
+            USING FTS4(
+                searchableText TEXT NOT NULL,
+                tokenize=unicode61,
+                prefix='2,3,4'
             )
-            """.trimIndent()
+            """.trimIndent(),
         )
 
         sqlite.execSQL(
             """
             INSERT INTO photos(
-                uri, displayName, dateTaken, size, bucketName, relativePath,
-                mimeType, width, height, isFavorite, tags, ocrText
-            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, uriString, filePath, fileName, dateAdded,
+                year, month, dayOfMonth, dayOfWeek, hourOfDay,
+                latitude, longitude, city, state, country,
+                fileSize, width, height, mimeType, folderName, folderPath,
+                cameraModel, isFrontCamera, isHdr, isFavorite,
+                mlTagsPayload, isMlProcessed, ocrText, isOcrProcessed
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """.trimIndent(),
             arrayOf(
+                TEST_ID,
                 TEST_URI,
+                "/storage/emulated/0/DCIM/Camera/IMG_0001.jpg",
                 "IMG_0001.jpg",
-                1_700_000_000_000L,
+                1_700_000_000L,
+                2023,
+                11,
+                14,
+                3,
+                10,
+                17.385,
+                78.4867,
+                "Hyderabad",
+                "Telangana",
+                "India",
                 4_096L,
-                "Camera",
-                "DCIM/Camera/",
-                "image/jpeg",
                 4_000,
                 3_000,
+                "image/jpeg",
+                "Camera",
+                "/storage/emulated/0/DCIM/Camera",
+                "Pixel",
+                0,
                 1,
-                "beach,sunset",
-                "hello photobook"
-            )
+                1,
+                "[\"beach\",\"sunset\"]",
+                1,
+                "hello photobook",
+                1,
+            ),
         )
 
         sqlite.execSQL(
-            "INSERT INTO photo_fts(uri, tags, ocrText) VALUES(?, ?, ?)",
-            arrayOf(TEST_URI, "beach,sunset", "hello photobook")
+            "INSERT INTO photo_fts(rowid, searchableText) VALUES(?, ?)",
+            arrayOf(TEST_ID, TEST_SEARCHABLE_TEXT),
         )
 
         sqlite.version = 1
@@ -173,13 +210,16 @@ class HistoricalRoomMigrationInstrumentedTest {
             dbFile,
             File(dbFile.path + "-shm"),
             File(dbFile.path + "-wal"),
-            File(dbFile.path + "-journal")
+            File(dbFile.path + "-journal"),
         ).forEach { it.delete() }
     }
 
     private companion object {
         const val DATABASE_NAME = "photobook.db"
+        const val TEST_ID = 424242L
         const val TEST_URI = "content://media/external/images/media/424242"
+        const val TEST_SEARCHABLE_TEXT =
+            "img_0001.jpg camera /storage/emulated/0/dcim/camera hyderabad telangana india hello photobook beach sunset"
     }
 }
 
