@@ -45,7 +45,7 @@ class MainNavigationInstrumentedTest {
         assertFalse(inputMethodBeforeNavigation.contains("mInputShown=true"))
 
         device.findObject(By.text("Albums")).click()
-        assertTrue(device.wait(Until.hasObject(By.text("Screenshots")), 5_000))
+        assertTrue(device.wait(Until.hasObject(By.text("No albums in current access")), 5_000))
 
         device.findObject(By.text("Tools")).click()
         assertTrue(device.wait(Until.hasObject(By.text("Vault")), 5_000))
