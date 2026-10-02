@@ -286,7 +286,6 @@ fun MainScreen(
                             onSearch = onSearchSubmitted,
                             onClear = onClearQuery,
                             onFocusChanged = onSearchFocusChanged,
-                            autoFocus = searchReady && query.isBlank(),
                         )
                     }
                 }
