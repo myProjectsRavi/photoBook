@@ -209,3 +209,16 @@ Inspect exact-source Android Verification for `82922885bfe76334f05c3d7a6b8646cef
 ### Exact next action
 
 Re-check for newly associated runs on the current shell source/head. If push-triggered runs remain absent, retry a safe non-merge CI trigger available through the connected GitHub integration. Once exact-source Android Verification is green, add focused navigation/IME regression evidence before accepting S05. Do not start S06.
+
+
+## S05 checkpoint 5 — compile regression diagnosed and fixed
+
+- Android Verification run `37016344646` on checkpoint head `cc295a2a277e541c368514f55902fec65e35ae31` failed in Phase-0 Kotlin compilation.
+- Root cause from job `110868030959`: `MainScreen.kt` used `rememberSaveable` without importing `androidx.compose.runtime.saveable.rememberSaveable`; the reported `MainDestination` enum comparison errors were downstream type-resolution failures.
+- Smallest coherent fix committed at `aceb439e274eb6f518eb5540771acadd9824fac6`: add only the missing saveable import. Navigation behavior, search/media/Vault/privacy/offline/destructive semantics are unchanged.
+- No PASS is claimed yet for `aceb439e...`; GitHub had not surfaced an exact-head workflow run at this checkpoint query.
+- Branch comparison at run start was 52 commits ahead / 0 behind `main`; base/merge-base remained `d693acd7c52f285b6ba475fdd3712a10e419d4e1`. Main was not modified.
+
+### Exact next action
+
+Inspect the push-triggered Android Verification/targeted emulator runs for `aceb439e274eb6f518eb5540771acadd9824fac6` once surfaced. Diagnose any remaining failure instead of rerunning blindly. If compile/build gates are green, add focused navigation/IME regression evidence for Photos default, Albums/Tools reachability and preserved journeys before considering S05 ACCEPTED. Do not start S06.
