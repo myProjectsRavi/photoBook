@@ -222,45 +222,6 @@ fun MainScreen(
                     )
                 }
 
-                Surface(
-                    color = Color.White.copy(alpha = 0.18f),
-                    shape = RoundedCornerShape(18.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)),
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .background(
-                                Brush.horizontalGradient(
-                                    colors = listOf(
-                                        AccentIndigo,
-                                        AccentViolet,
-                                        AccentPink,
-                                    )
-                                ),
-                                shape = RoundedCornerShape(18.dp)
-                            )
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(18.dp)
-                                .background(Color.White.copy(alpha = 0.16f), CircleShape),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text("✦", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Black)
-                        }
-                        Text(
-                            "PRO",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Black,
-                                color = Color.White,
-                                letterSpacing = 1.2.sp
-                            )
-                        )
-                    }
-                }
             }
 
             // Search Area
