@@ -44,13 +44,15 @@ import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.feature.duplicates.DuplicateMatchKind
 import com.photobook.app.feature.duplicates.DuplicatePhotoGroup
 import com.photobook.app.feature.memories.MemoryStory
-import com.photobook.app.search.PhotoSource
 import com.photobook.app.ui.component.EmptyState
 import com.photobook.app.ui.component.PhotoGrid
 import com.photobook.app.ui.component.SearchBar
 import com.photobook.app.ui.component.SuggestionDropdown
 import com.photobook.app.ui.component.WelcomeState
 import com.photobook.app.search.SuggestionItem
+import com.photobook.app.ui.model.AlbumDescriptor
+import com.photobook.app.ui.model.AlbumKind
+import com.photobook.app.ui.model.AlbumScope
 import com.photobook.app.ui.model.TimelineMark
 
 private val MeshBase = Color(0xFFFFF0E4)
@@ -93,6 +95,8 @@ fun MainScreen(
     archiveCandidateCount: Int,
     archiveDueDeleteCount: Int,
     limitedPhotoAccess: Boolean,
+    albumCatalog: List<AlbumDescriptor>,
+    activeAlbumLabel: String?,
     onQueryChange: (String) -> Unit,
     onSearchSubmitted: () -> Unit,
     onSearchFocusChanged: (Boolean) -> Unit,
@@ -113,7 +117,8 @@ fun MainScreen(
     onOpenVault: () -> Unit,
     onManagePhotoAccess: () -> Unit,
     onOpenArchives: () -> Unit,
-    onSourceSelected: (PhotoSource) -> Unit,
+    onAlbumSelected: (AlbumDescriptor) -> Unit,
+    onClearAlbumScope: () -> Unit,
     onOpenDuplicateFinder: () -> Unit,
     onRefreshDuplicates: () -> Unit,
     onDismissDuplicateFinder: () -> Unit,
@@ -124,38 +129,6 @@ fun MainScreen(
     val isSelectionMode = selectedPhotoIds.isNotEmpty()
     var destination by rememberSaveable { mutableStateOf(MainDestination.Photos) }
     val isSearchRevisionCurrent = query == resultQuery
-    val smartAlbums = remember {
-        listOf(
-            SmartAlbum.Search("Screenshots", "source:screenshots", Icons.Default.Image, AccentIndigo),
-            SmartAlbum.Search("Receipts", "receipts", Icons.AutoMirrored.Filled.ReceiptLong, AccentAmber),
-            SmartAlbum.Search("Documents", "document", Icons.Default.Description, Color(0xFF475569)),
-            SmartAlbum.Archives("Payments", Icons.Default.Payments, AccentTeal),
-            SmartAlbum.Search("Food", "food", Icons.Default.Restaurant, Color(0xFFBE123C)),
-            SmartAlbum.Search("Selfies", "selfie", Icons.Default.Face, AccentPink),
-            SmartAlbum.Search("Groups", "people", Icons.Default.Groups, Color(0xFF7C3AED)),
-            SmartAlbum.Search("Blurry", "blurry", Icons.Default.BlurOn, Color(0xFF64748B)),
-            SmartAlbum.Storage("Duplicates", Icons.Default.ContentCopy, AccentIndigo),
-            SmartAlbum.Search("Large files", "large", Icons.Default.SdStorage, AccentViolet),
-            SmartAlbum.Search("WhatsApp", "source:whatsapp", Icons.AutoMirrored.Filled.Chat, Color(0xFF15803D)),
-            SmartAlbum.Search("Camera", "source:camera", Icons.Default.CameraAlt, Color(0xFF0369A1)),
-            SmartAlbum.Search("Downloads", "source:downloads", Icons.Default.Download, Color(0xFF7C2D12)),
-            SmartAlbum.Search("Text", "with_text", Icons.AutoMirrored.Filled.TextSnippet, Color(0xFF4338CA)),
-            SmartAlbum.Search("With location", "with_location", Icons.Default.LocationOn, Color(0xFF0E7490)),
-            SmartAlbum.Search("No location", "without_location", Icons.Default.LocationOff, Color(0xFF9F1239)),
-        )
-    }
-
-    fun openSmartAlbum(album: SmartAlbum) {
-        when (album) {
-            is SmartAlbum.Search -> {
-                onQueryChange(album.query)
-                onSearchSubmitted()
-            }
-            is SmartAlbum.Archives -> onOpenArchives()
-            is SmartAlbum.Storage -> onOpenDuplicateFinder()
-        }
-    }
-
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -288,45 +261,63 @@ fun MainScreen(
 
                 when (destination) {
                     MainDestination.Photos -> {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            PhotoSource.all.forEach { source ->
-                                RefinedGlassChip(
-                                    label = source.label,
-                                    onClick = { onSourceSelected(source) }
-                                )
-                            }
+                        if (activeAlbumLabel != null) {
+                            InputChip(
+                                selected = true,
+                                onClick = onClearAlbumScope,
+                                label = { Text(activeAlbumLabel) },
+                                trailingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear album filter",
+                                    )
+                                },
+                            )
                         }
                     }
 
                     MainDestination.Albums -> {
-                        Text(
-                            text = stringResource(R.string.smart_albums_title),
-                            style = MaterialTheme.typography.labelLarge.copy(
-                                fontWeight = FontWeight.Black,
-                                color = Color(0xFF334155),
-                            ),
-                            modifier = Modifier.padding(start = 2.dp, bottom = 8.dp),
-                        )
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            smartAlbums.forEach { album ->
-                                SmartAlbumChip(
-                                    album = album,
-                                    enabled = searchReady && !isSelectionMode,
-                                    onClick = {
-                                        openSmartAlbum(album)
-                                        destination = MainDestination.Photos
-                                    },
-                                )
+                        if (albumCatalog.isEmpty()) {
+                            Text(
+                                text = "No albums in current access",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            AlbumKind.entries.forEach { kind ->
+                                val group = albumCatalog.filter { it.kind == kind }
+                                if (group.isNotEmpty()) {
+                                    Text(
+                                        text = when (kind) {
+                                            AlbumKind.Favorite -> "Favorites"
+                                            AlbumKind.Source, AlbumKind.Folder -> "On this device"
+                                            AlbumKind.SmartQuery -> "Smart collections"
+                                        },
+                                        style = MaterialTheme.typography.labelLarge.copy(
+                                            fontWeight = FontWeight.Black,
+                                            color = Color(0xFF334155),
+                                        ),
+                                        modifier = Modifier.padding(start = 2.dp, bottom = 8.dp),
+                                    )
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    ) {
+                                        group.forEach { album ->
+                                            AlbumDescriptorChip(
+                                                album = album,
+                                                enabled = searchReady && !isSelectionMode,
+                                                onClick = {
+                                                    onAlbumSelected(album)
+                                                    destination = MainDestination.Photos
+                                                },
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                }
                             }
                         }
                     }
@@ -476,43 +467,29 @@ fun MainScreen(
     }
 }
 
-private sealed class SmartAlbum(
-    val label: String,
-    val icon: androidx.compose.ui.graphics.vector.ImageVector,
-    val color: Color,
-) {
-    class Search(
-        label: String,
-        val query: String,
-        icon: androidx.compose.ui.graphics.vector.ImageVector,
-        color: Color,
-    ) : SmartAlbum(label, icon, color)
-
-    class Archives(
-        label: String,
-        icon: androidx.compose.ui.graphics.vector.ImageVector,
-        color: Color,
-    ) : SmartAlbum(label, icon, color)
-
-    class Storage(
-        label: String,
-        icon: androidx.compose.ui.graphics.vector.ImageVector,
-        color: Color,
-    ) : SmartAlbum(label, icon, color)
-}
-
 @Composable
-private fun SmartAlbumChip(
-    album: SmartAlbum,
+private fun AlbumDescriptorChip(
+    album: AlbumDescriptor,
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
+    val icon = when (val scope = album.scope) {
+        AlbumScope.Favorites -> Icons.Default.Favorite
+        is AlbumScope.Source -> when (scope.source.token) {
+            "camera" -> Icons.Default.CameraAlt
+            "downloads" -> Icons.Default.Download
+            "screenshots" -> Icons.Default.Image
+            else -> Icons.Default.Folder
+        }
+        is AlbumScope.Folder -> Icons.Default.Folder
+        is AlbumScope.SmartQuery -> Icons.Default.AutoAwesome
+    }
     Surface(
         onClick = onClick,
         enabled = enabled,
         color = Color.White.copy(alpha = 0.74f),
         shape = RoundedCornerShape(16.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, album.color.copy(alpha = 0.20f)),
+        border = androidx.compose.foundation.BorderStroke(1.dp, AccentIndigo.copy(alpha = 0.20f)),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -520,13 +497,13 @@ private fun SmartAlbumChip(
             horizontalArrangement = Arrangement.spacedBy(7.dp),
         ) {
             Icon(
-                imageVector = album.icon,
+                imageVector = icon,
                 contentDescription = null,
-                tint = album.color,
+                tint = AccentIndigo,
                 modifier = Modifier.size(18.dp),
             )
             Text(
-                text = album.label,
+                text = "${album.label} (${album.count})",
                 style = MaterialTheme.typography.labelMedium.copy(
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF334155),
