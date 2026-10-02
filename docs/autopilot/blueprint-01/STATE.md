@@ -297,3 +297,16 @@ Tested source `a286b10c306d56a14a24e7e9bece7d3d4ef9f578` passed Android Verifica
 - No physical/OEM/camera/battery/thermal evidence is claimed.
 
 S06 is **ACCEPTED**. Next eligible story is S07 Design system; start it on the next run after refreshing canonical state and exact branch HEAD.
+
+
+## S07 checkpoint — 48dp target mutation blocked
+
+- Active story: S07 Design system. S01-S06 are accepted by canonical STATE; branch HEAD at run start is `5c5d74c4b88250f696a0cc4b1adeef5cc4db0e7c`, 81 commits ahead and 0 behind `main`.
+- Re-read canonical STATE/BACKLOG/VALIDATION/DECISIONS/REVIEW_COVERAGE and inspected production theme/MainScreen code through the connected GitHub integration.
+- Confirmed the PhotoBook logo clickable target is 44dp, below S07's 48dp acceptance anchor. MainScreen also retains duplicated palette literals and an overfull selection-action row; these remain open S07 work.
+- Prepared the smallest safe production change: replace only the logo container's 44dp size with 48dp. The normal authenticated GitHub contents update was rejected by the connector safety layer before mutation. No lower-level Git-object bypass was attempted.
+- No CI PASS or runtime evidence is claimed for the uncommitted change. No physical/OEM/camera/battery/thermal evidence is claimed. Main was not modified.
+
+### Exact next action
+
+Retry the normal contents-API MainScreen update changing only the clickable logo target from 44dp to 48dp. After it commits, inspect exact-source CI, then continue S07 with centralized theme roles, bounded selection actions, and reproducible 200% font/inset accessibility evidence. Keep S07 IN_PROGRESS; do not start S08.
