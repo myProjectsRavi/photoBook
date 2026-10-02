@@ -8,6 +8,7 @@ import com.photobook.app.search.FilterFactory
 import com.photobook.app.search.PhotoSource
 import com.photobook.app.search.QueryParser
 import com.photobook.app.search.TokenClassifier
+import kotlinx.coroutines.test.runTest
 import org.junit.Test
 
 class AlbumCatalogTest {
@@ -55,7 +56,7 @@ class AlbumCatalogTest {
     }
 
     @Test
-    fun sourceScope_andsWithLiteralTextSearch() {
+    fun sourceScope_andsWithLiteralTextSearch() = runTest {
         val records = listOf(
             photo(
                 id = 1,
