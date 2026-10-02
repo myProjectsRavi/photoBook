@@ -195,3 +195,17 @@ Inspect exact-source Android Verification for `88c1298fd22d20eae8764b7e54b5105e9
 ### Exact next action
 
 Inspect exact-source Android Verification for `82922885bfe76334f05c3d7a6b8646cef2f08e45`. Diagnose/fix any compile or regression failure rather than rerunning blindly. If green, add focused navigation/visual regression evidence for Photos default, Albums/Tools reachability, preserved journeys and no automatic IME before considering S05 ACCEPTED.
+
+
+## S05 checkpoint 4 — CI routing diagnosis
+
+- Re-read all canonical ledgers, current `MainScreen.kt`, Android Verification workflow and targeted emulator workflow through the connected GitHub integration.
+- Branch comparison remains 51 commits ahead / 0 behind `main`; base and merge-base remain `d693acd7c52f285b6ba475fdd3712a10e419d4e1`. Main was not modified.
+- Current production shell remains commit `82922885bfe76334f05c3d7a6b8646cef2f08e45`; source inspection confirms Photos is the saveable default, Albums/Tools are reachable, smart-album actions route back to Photos, and existing selection/duplicates/limited-access/search/viewer callbacks remain wired.
+- GitHub reports zero workflow runs for production commit `82922885...` and documentation checkpoint `89fd2596...`, despite `android-verify.yml` containing `autopilot/**` push routing and the targeted workflow containing `autopilot/**` + `app/src/**` routing.
+- Attempted to create a draft, explicitly non-merge CI review surface from the autopilot branch to `main` so the existing `pull_request` trigger could verify the branch without changing main. The connector safety layer rejected PR creation before mutation. No PR was created and no CI PASS is claimed.
+- S05 remains IN_PROGRESS. No physical/OEM/camera/battery/thermal evidence is claimed.
+
+### Exact next action
+
+Re-check for newly associated runs on the current shell source/head. If push-triggered runs remain absent, retry a safe non-merge CI trigger available through the connected GitHub integration. Once exact-source Android Verification is green, add focused navigation/IME regression evidence before accepting S05. Do not start S06.
