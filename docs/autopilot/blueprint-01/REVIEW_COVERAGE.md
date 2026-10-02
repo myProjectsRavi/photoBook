@@ -266,3 +266,16 @@ Story S02 reviewed the changed verification paths plus their direct execution/ev
 | `tools/benchmark/test_ci_evidence_manifest.py` | New independent negative/positive tests reviewed; missing fixture and zero-test evidence fail closed, valid XML/direct instrumentation evidence succeeds. |
 
 S02 runtime evidence is linked in `VALIDATION.md`. The failed broad/performance and UTP-offline attempts are retained there rather than hidden. Binary/dependency provenance remains S31 scope.
+
+
+## S05 navigation-shell semantic review
+
+| S05 path | Review result |
+|---|---|
+| `app/src/main/java/com/photobook/app/ui/screen/MainScreen.kt` | Semantically reviewed after final diff: Photos is the saveable default, Albums/Tools destinations preserve existing callbacks, automatic search autofocus is removed, and the decorative PRO badge is removed. |
+| `app/src/main/java/com/photobook/app/MainActivity.kt` | Direct caller reviewed: existing search/viewer/selection/Vault/Trash/Archives/duplicate/memory callbacks remain wired through the shell. |
+| `app/src/main/java/com/photobook/app/ui/component/SearchBar.kt` | Direct focus behavior reviewed: IME display occurs only from explicit focus behavior; S05 no longer requests focus automatically from MainScreen. |
+| `app/src/androidTest/java/com/photobook/app/verification/MainNavigationInstrumentedTest.kt` | Focused API-35 hosted-emulator regression reviewed and executed; verifies shell navigation, absent PRO, no automatic IME, and scroll-reachable Tools journey. |
+| `.github/workflows/autopilot-targeted-verify.yml` | Existing correctness/privacy suite preserved and extended to execute the focused S05 navigation regression; no existing gate removed or weakened. |
+
+Runtime evidence and artifact identities are recorded in `VALIDATION.md`. Physical/OEM evidence remains unavailable and is not inferred from hosted emulation.
