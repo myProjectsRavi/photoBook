@@ -90,6 +90,11 @@ object AlbumCatalogBuilder {
             .eachCount()
 
         folders.entries
+            .filterNot { (_, photos) ->
+                PhotoSource.all.any { source ->
+                    photos.all { photo -> photo.matchesSource(source) }
+                }
+            }
             .sortedWith(
                 compareBy<Map.Entry<String, List<PhotoRecord>>> {
                     normalizedFolderName(it.value.first())
