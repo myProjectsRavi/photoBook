@@ -237,3 +237,16 @@ Inspect the push-triggered Android Verification/targeted emulator runs for `aceb
 ### Exact next action
 
 Add the smallest focused regression evidence for S05 navigation and no-auto-IME behavior against production `MainScreen`, then run the existing Android Verification/targeted emulator gates on the resulting exact source. If those pass and final diff review confirms preserved journeys, update validation/review ledgers and mark S05 ACCEPTED. Do not start S06 until then.
+
+
+## S05 checkpoint 7 — focused navigation/IME emulator regression added
+
+- Added `app/src/androidTest/java/com/photobook/app/verification/MainNavigationInstrumentedTest.kt` at `df5ab83531265387409a21ea9b8d3fbad17f9253`.
+- The test launches the real PhotoBook activity with UIAutomator and verifies the S05 acceptance surface: Photos/Albums/Tools are present, PRO is absent, launch/navigation do not report `mInputShown=true`, Albums exposes Screenshots, Tools exposes Vault/Trash, and Photos remains reachable.
+- Updated `.github/workflows/autopilot-targeted-verify.yml` at `85da25f2208ab9dcee2f41401d3625ff68e66907` so the existing offline API-35 targeted instrumentation suite explicitly executes `MainNavigationInstrumentedTest`.
+- This does not weaken or remove any existing targeted test class or offline/privacy gate.
+- Exact-head CI for `85da25f...` had not surfaced at the immediate post-push query; no PASS is claimed yet. No physical/OEM/camera/battery/thermal evidence is claimed.
+
+### Exact next action
+
+Inspect Android Verification and Autopilot Targeted Emulator Verification for exact head `85da25f2208ab9dcee2f41401d3625ff68e66907`. Diagnose any failure from logs. If both are green, review artifacts/test output, update VALIDATION/REVIEW_COVERAGE/BACKLOG and canonical STATE, then mark S05 ACCEPTED only if no acceptance blocker remains. Do not start S06 before that decision.
