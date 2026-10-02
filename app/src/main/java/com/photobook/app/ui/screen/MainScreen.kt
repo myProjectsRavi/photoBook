@@ -64,6 +64,12 @@ private val AccentViolet = Color(0xFF8B5CF6)
 private val AccentTeal = Color(0xFF0F766E)
 private val AccentAmber = Color(0xFFB45309)
 
+private enum class MainDestination {
+    Photos,
+    Albums,
+    Tools,
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
@@ -115,6 +121,7 @@ fun MainScreen(
     onMemoryStorySelected: (MemoryStory) -> Unit,
 ) {
     val isSelectionMode = selectedPhotoIds.isNotEmpty()
+    var destination by rememberSaveable { mutableStateOf(MainDestination.Photos) }
     val isSearchRevisionCurrent = query == resultQuery
     val smartAlbums = remember {
         listOf(
@@ -253,62 +260,22 @@ fun MainScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Action Row
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color.White.copy(alpha = 0.52f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorder),
                 ) {
-                    RefinedActionButton(
-                        icon = Icons.Default.Storage,
-                        label = stringResource(R.string.duplicates_title),
-                        onClick = onOpenDuplicateFinder,
-                        color = AccentIndigo,
-                        enabled = searchReady && !isSelectionMode,
-                        modifier = Modifier.width(76.dp),
-                    )
-                    RefinedActionButton(
-                        icon = if (favoritesOnly) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                        label = "Favorites",
-                        onClick = onToggleFavoritesOnly,
-                        color = if (favoritesOnly) AccentPink else Color(0xFF64748B),
-                        enabled = searchReady,
-                        modifier = Modifier.width(76.dp),
-                    )
-                    RefinedActionButton(
-                        icon = Icons.Default.Slideshow,
-                        label = stringResource(R.string.reels_browsing_action),
-                        onClick = onToggleReels,
-                        color = if (reelsEnabled) AccentPink else Color(0xFF64748B),
-                        enabled = searchReady && !isSelectionMode,
-                        modifier = Modifier.width(76.dp),
-                    )
-                    RefinedActionButton(
-                        icon = Icons.Default.Archive,
-                        label = stringResource(R.string.archives_action),
-                        onClick = onOpenArchives,
-                        color = Color(0xFF0F766E),
-                        enabled = searchReady && !isSelectionMode,
-                        badgeCount = archiveCandidateCount + archiveDueDeleteCount,
-                        modifier = Modifier.width(76.dp),
-                    )
-                    RefinedActionButton(
-                        icon = Icons.Default.Lock,
-                        label = stringResource(R.string.vault_short_action),
-                        onClick = onOpenVault,
-                        color = Color(0xFF7C2D12),
-                        enabled = searchReady && !isSelectionMode,
-                        modifier = Modifier.width(76.dp),
-                    )
-                    RefinedActionButton(
-                        icon = Icons.Default.Delete,
-                        label = "Trash",
-                        onClick = onOpenTrash,
-                        color = AccentViolet,
-                        enabled = searchReady && !isSelectionMode,
-                        modifier = Modifier.width(76.dp),
-                    )
+                    Row(modifier = Modifier.padding(2.dp)) {
+                        MainDestination.entries.forEach { item ->
+                            RefinedTabButton(
+                                label = item.name,
+                                selected = destination == item,
+                                onClick = { destination = item },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
                 }
 
                 if (limitedPhotoAccess) {
@@ -316,50 +283,73 @@ fun MainScreen(
                     LimitedPhotoAccessBanner(onManagePhotoAccess = onManagePhotoAccess)
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
-
-                Text(
-                    text = stringResource(R.string.smart_albums_title),
-                    style = MaterialTheme.typography.labelLarge.copy(
-                        fontWeight = FontWeight.Black,
-                        color = Color(0xFF334155),
-                    ),
-                    modifier = Modifier.padding(start = 2.dp, bottom = 8.dp),
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    smartAlbums.forEach { album ->
-                        SmartAlbumChip(
-                            album = album,
-                            enabled = searchReady && !isSelectionMode,
-                            onClick = { openSmartAlbum(album) },
-                        )
-                    }
-                }
-
                 Spacer(modifier = Modifier.height(14.dp))
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    PhotoSource.all.forEach { source ->
-                        RefinedGlassChip(
-                            label = source.label,
-                            onClick = { onSourceSelected(source) }
+                when (destination) {
+                    MainDestination.Photos -> {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            PhotoSource.all.forEach { source ->
+                                RefinedGlassChip(
+                                    label = source.label,
+                                    onClick = { onSourceSelected(source) }
+                                )
+                            }
+                        }
+                    }
+
+                    MainDestination.Albums -> {
+                        Text(
+                            text = stringResource(R.string.smart_albums_title),
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontWeight = FontWeight.Black,
+                                color = Color(0xFF334155),
+                            ),
+                            modifier = Modifier.padding(start = 2.dp, bottom = 8.dp),
                         )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            smartAlbums.forEach { album ->
+                                SmartAlbumChip(
+                                    album = album,
+                                    enabled = searchReady && !isSelectionMode,
+                                    onClick = {
+                                        openSmartAlbum(album)
+                                        destination = MainDestination.Photos
+                                    },
+                                )
+                            }
+                        }
+                    }
+
+                    MainDestination.Tools -> {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            RefinedActionButton(Icons.Default.Storage, stringResource(R.string.duplicates_title), onOpenDuplicateFinder, AccentIndigo, searchReady && !isSelectionMode, Modifier.width(76.dp))
+                            RefinedActionButton(if (favoritesOnly) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Favorites", onToggleFavoritesOnly, if (favoritesOnly) AccentPink else Color(0xFF64748B), searchReady, Modifier.width(76.dp))
+                            RefinedActionButton(Icons.Default.Slideshow, stringResource(R.string.reels_browsing_action), onToggleReels, if (reelsEnabled) AccentPink else Color(0xFF64748B), searchReady && !isSelectionMode, Modifier.width(76.dp))
+                            RefinedActionButton(Icons.Default.Archive, stringResource(R.string.archives_action), onOpenArchives, AccentTeal, searchReady && !isSelectionMode, Modifier.width(76.dp), archiveCandidateCount + archiveDueDeleteCount)
+                            RefinedActionButton(Icons.Default.Lock, stringResource(R.string.vault_short_action), onOpenVault, Color(0xFF7C2D12), searchReady && !isSelectionMode, Modifier.width(76.dp))
+                            RefinedActionButton(Icons.Default.Delete, "Trash", onOpenTrash, AccentViolet, searchReady && !isSelectionMode, Modifier.width(76.dp))
+                        }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(18.dp))
 
-                // (Removed Timeline/Screenshots tab row — Timeline is the only feed.)
+
             }
 
             // Suggestions
