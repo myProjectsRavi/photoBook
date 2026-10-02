@@ -21,6 +21,8 @@ class MainNavigationInstrumentedTest {
 
     @Before
     fun launchMainActivity() {
+        device.executeShellCommand("pm grant ${targetContext.packageName} android.permission.READ_MEDIA_IMAGES")
+        device.executeShellCommand("pm grant ${targetContext.packageName} android.permission.ACCESS_MEDIA_LOCATION")
         val launchIntent = targetContext.packageManager
             .getLaunchIntentForPackage(targetContext.packageName)
             ?.apply {
