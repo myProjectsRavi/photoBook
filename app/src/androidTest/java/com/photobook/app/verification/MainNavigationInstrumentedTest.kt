@@ -49,7 +49,16 @@ class MainNavigationInstrumentedTest {
 
         device.findObject(By.text("Tools")).click()
         assertTrue(device.wait(Until.hasObject(By.text("Vault")), 5_000))
-        assertTrue(device.hasObject(By.text("Trash")))
+        val vault = device.findObject(By.text("Vault"))
+        val toolsRowY = vault.visibleCenter.y
+        device.swipe(
+            device.displayWidth * 4 / 5,
+            toolsRowY,
+            device.displayWidth / 5,
+            toolsRowY,
+            20,
+        )
+        assertTrue(device.wait(Until.hasObject(By.text("Trash")), 5_000))
 
         device.findObject(By.text("Photos")).click()
         assertTrue(device.wait(Until.hasObject(By.text("Photos")), 5_000))
