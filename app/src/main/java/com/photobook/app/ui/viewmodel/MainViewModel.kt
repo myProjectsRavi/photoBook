@@ -47,8 +47,12 @@ import com.photobook.app.search.TokenClassifier
 import com.photobook.app.search.UtilityKind
 import com.photobook.app.search.isUtilityPhoto
 import com.photobook.app.search.utilityKind
+import com.photobook.app.ui.model.AlbumCatalogBuilder
+import com.photobook.app.ui.model.AlbumDescriptor
+import com.photobook.app.ui.model.AlbumScope
 import com.photobook.app.ui.model.HomeFeedMode
 import com.photobook.app.ui.model.TimelineMark
+import com.photobook.app.ui.model.filterAlbumScopeRecords
 import com.photobook.app.util.Constants
 import com.photobook.app.util.PermissionUtils
 import com.photobook.app.widget.OnThisDayWidgetProvider
@@ -107,6 +111,8 @@ class MainViewModel @Inject constructor(
         val indexProgress: Float = 0f,
         val searchReady: Boolean = false,
         val query: String = "",
+        val albumCatalog: List<AlbumDescriptor> = emptyList(),
+        val activeAlbum: AlbumDescriptor? = null,
         val photoCount: Int = 0,
         val resultCount: Int = 0,
         val resultQuery: String = "",
@@ -148,20 +154,28 @@ class MainViewModel @Inject constructor(
 
     private val queryFlow = MutableStateFlow("")
     private val focusFlow = MutableStateFlow(false)
+    private var albumCatalogCacheKey: Pair<Long, Long>? = null
+    private var albumCatalogCache: List<AlbumDescriptor> = emptyList()
 
     @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
     val pagedResults: kotlinx.coroutines.flow.Flow<PagingData<PhotoRecord>> = combine(
         queryFlow.debounce(Constants.SEARCH_DEBOUNCE_MS),
         photoIndex.changes().debounce(RECORDS_UPDATE_DEBOUNCE_MS),
-        uiState.map { it.favoritesOnly }.distinctUntilChanged(),
-        uiState.map { it.feedMode }.distinctUntilChanged(),
+        uiState.map {
+            SearchFilterState(
+                favoritesOnly = it.favoritesOnly,
+                feedMode = it.feedMode,
+                albumScope = it.activeAlbum?.scope,
+            )
+        }.distinctUntilChanged(),
         photoNoteStore.changes(),
-    ) { query, indexVersion, favoritesOnly, feedMode, noteVersion ->
+    ) { query, indexVersion, filters, noteVersion ->
         SearchFlowInput(
             query = query,
             indexVersion = indexVersion,
-            favoritesOnly = favoritesOnly,
-            feedMode = feedMode,
+            favoritesOnly = filters.favoritesOnly,
+            feedMode = filters.feedMode,
+            albumScope = filters.albumScope,
             noteVersion = noteVersion,
         )
     }.flatMapLatest { input ->
@@ -171,21 +185,47 @@ class MainViewModel @Inject constructor(
         // but an older record set can never be stamped with a newer access generation.
         val accessScopedSnapshot = captureAccessScopedPhotoSnapshot(photoIndex, accessGenerationGate)
         val records = accessScopedSnapshot.records
+        val albumCatalog = albumCatalogFor(
+            records = records,
+            indexVersion = input.indexVersion,
+            accessGeneration = accessScopedSnapshot.accessGeneration,
+        )
+        val smartQueryIds = when (val scope = input.albumScope) {
+            is AlbumScope.SmartQuery -> withContext(Dispatchers.Default) {
+                filterEngine.search(scope.query, records).results.mapTo(mutableSetOf()) { it.id }
+            }
+            else -> emptySet()
+        }
+        val scopedRecords = withContext(Dispatchers.Default) {
+            filterAlbumScopeRecords(
+                records = records,
+                scope = input.albumScope,
+                smartQueryIds = smartQueryIds,
+            )
+        }
+        val scopedIds = if (input.albumScope == null) {
+            null
+        } else {
+            scopedRecords.mapTo(HashSet(scopedRecords.size)) { it.id }
+        }
         val searchResult = runSearch(
             query = input.query,
             records = records,
             expectedIndexVersion = input.indexVersion,
             noteRevision = input.noteVersion,
         )
+        val albumScopedIds = scopedIds?.let { allowed ->
+            searchResult.orderedIds.filter { it in allowed }
+        } ?: searchResult.orderedIds
         val filteredIds = if (input.favoritesOnly) {
-            searchResult.orderedIds.filter { id ->
+            albumScopedIds.filter { id ->
                 photoIndex.getByIdFromSnapshot(records, id)?.isFavorite == true
             }
         } else {
-            searchResult.orderedIds
+            albumScopedIds
         }
 
-        latestSearchResultIds = searchResult.orderedIds
+        latestSearchResultIds = albumScopedIds
         latestVisibleResultIds = filteredIds
 
         val timelineMarks = withContext(Dispatchers.Default) {
@@ -194,6 +234,10 @@ class MainViewModel @Inject constructor(
 
         uiState.update { state ->
             state.copy(
+                albumCatalog = albumCatalog,
+                activeAlbum = state.activeAlbum?.let { active ->
+                    albumCatalog.firstOrNull { descriptor -> descriptor.key == active.key }
+                },
                 photoCount = records.size,
                 resultCount = filteredIds.size,
                 resultQuery = input.query,
@@ -264,11 +308,18 @@ class MainViewModel @Inject constructor(
         val accessGeneration: Long,
     )
 
+    private data class SearchFilterState(
+        val favoritesOnly: Boolean,
+        val feedMode: HomeFeedMode,
+        val albumScope: AlbumScope?,
+    )
+
     private data class SearchFlowInput(
         val query: String,
         val indexVersion: Long,
         val favoritesOnly: Boolean,
         val feedMode: HomeFeedMode,
+        val albumScope: AlbumScope?,
         val noteVersion: Long,
     )
 
@@ -436,18 +487,34 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    fun onSourceSelected(source: PhotoSource) {
-        val query = "source:${source.token}"
-        queryFlow.value = query
+    fun onAlbumSelected(descriptor: AlbumDescriptor) {
         uiState.update {
             it.copy(
-                query = query,
+                activeAlbum = descriptor,
                 selectedPhotoIds = emptySet(),
                 viewerStartIndex = null,
                 viewerUsesVisibleWindow = false,
                 showSuggestions = false,
             )
         }
+    }
+
+    fun clearAlbumScope() {
+        uiState.update {
+            it.copy(
+                activeAlbum = null,
+                selectedPhotoIds = emptySet(),
+                viewerStartIndex = null,
+                viewerUsesVisibleWindow = false,
+            )
+        }
+    }
+
+    fun onSourceSelected(source: PhotoSource) {
+        val descriptor = uiState.value.albumCatalog.firstOrNull { item ->
+            (item.scope as? AlbumScope.Source)?.source == source
+        } ?: return
+        onAlbumSelected(descriptor)
     }
 
     fun onSuggestionSelected(suggestion: SuggestionItem) {
@@ -614,6 +681,7 @@ class MainViewModel @Inject constructor(
         uiState.update {
             it.copy(
                 query = "",
+                activeAlbum = null,
                 favoritesOnly = false,
                 feedMode = HomeFeedMode.Timeline,
                 selectedPhotoIds = emptySet(),
@@ -1631,6 +1699,27 @@ class MainViewModel @Inject constructor(
             OnThisDayWidgetProvider.cacheStory(context, null)
             nextGeneration
         }
+    }
+
+    private suspend fun albumCatalogFor(
+        records: List<PhotoRecord>,
+        indexVersion: Long,
+        accessGeneration: Long,
+    ): List<AlbumDescriptor> {
+        val key = indexVersion to accessGeneration
+        if (albumCatalogCacheKey == key) return albumCatalogCache
+
+        val smartCounts = withContext(Dispatchers.Default) {
+            AlbumCatalogBuilder.smartDefinitions.associate { definition ->
+                definition.key to filterEngine.search(definition.query, records).results.size
+            }
+        }
+        val catalog = withContext(Dispatchers.Default) {
+            AlbumCatalogBuilder.build(records, smartCounts)
+        }
+        albumCatalogCacheKey = key
+        albumCatalogCache = catalog
+        return catalog
     }
 
     private suspend fun runSearch(
