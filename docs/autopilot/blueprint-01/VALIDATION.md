@@ -119,3 +119,17 @@ Evidence source commit: `2ed75bfb50770000815accfd820197d9d783f036`
 ### Remaining S02 acceptance check
 
 This checkpoint is documentation-only and exists specifically to demonstrate that `autopilot/**` routing works without altering runtime behavior. Require Android Verification to run and pass for this exact documentation-only commit. The targeted emulator path filter should not schedule a new targeted run.
+
+
+## S05 final acceptance evidence
+
+Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
+
+- Production shell behavior under test includes the S05 changes from `82922885bfe76334f05c3d7a6b8646cef2f08e45`, the missing saveable import fix from `aceb439e274eb6f518eb5540771acadd9824fac6`, and the focused emulator regression harness finalized at the evidence source.
+- Autopilot Targeted Emulator Verification run `37030491199`: **SUCCESS** on exact head `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`. API-35 hosted x86_64 emulator, 2 GB configured AVD RAM, offline/network-isolation gate preserved. The targeted suite includes the real `MainNavigationInstrumentedTest` journey: post-permission launch exposes Photos/Albums/Tools, PRO is absent, no automatic IME is shown, Albums is reachable, Tools exposes Vault and scroll-reachable Trash, and Photos is reachable again. Artifact ID `11237730046`, digest `sha256:e0a26840da0de45e4a9c5b9f04d8c7f809f617463a60e415ae812bed38ceaed4`.
+- Android Verification run `37030491217`: **SUCCESS** on the same exact head. Artifact ID `11238015741`, digest `sha256:28b07900ae75da3c8c1ae273eec1435156eb064a466d0922a116f324c60d7c2c`.
+- Earlier failed S05 runs were retained and diagnosed rather than hidden: missing `rememberSaveable` import; test-only Truth dependency misuse; instrumentation self-termination by `am force-stop`; fresh-install onboarding due absent media permission; and an off-screen Trash assertion that was corrected to verify horizontal-row reachability. None of those failures was waived or converted to PASS.
+- Final branch comparison before documentation acceptance: 66 commits ahead / 0 behind `main`; base and merge-base remain `d693acd7c52f285b6ba475fdd3712a10e419d4e1`. Main was not modified.
+- No physical-device/OEM/camera/battery/thermal claim is made; hosted emulator evidence is labeled as such.
+
+**Decision: S05 ACCEPTED.** The Photos-first shell, Albums/Tools reachability, no automatic keyboard, no PRO badge, and preserved tested journeys have reproducible exact-source evidence.
