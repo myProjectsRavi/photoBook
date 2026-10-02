@@ -167,3 +167,17 @@ Retry only the normal GitHub contents-API update of HistoricalRoomMigrationInstr
 ### Exact next action
 
 Inspect CI for `46a65c99201f3a490203563f9c32a793a87ee721`. If green, remove the decorative PRO badge as the next narrow change, then introduce the state-preserving Photos/Albums/Tools shell with regression/visual evidence. Keep S05 IN_PROGRESS until all S05 acceptance criteria pass.
+
+
+## S05 checkpoint 2 — decorative PRO badge removed
+
+- Production commit: `88c1298fd22d20eae8764b7e54b5105e9b7687a2`.
+- Re-read canonical STATE/BACKLOG/VALIDATION/DECISIONS/REVIEW_COVERAGE, branch relationship, production `MainScreen.kt`, direct `MainActivity.kt` caller, and current S05 checkpoint before editing.
+- Smallest coherent change removed only the decorative header PRO surface/badge from `MainScreen.kt`. No search, media, storage, Vault, privacy, offline, selection, destructive-action, or original-media behavior was changed.
+- Prior no-auto-keyboard production checkpoint remains `46a65c99201f3a490203563f9c32a793a87ee721`.
+- Pre-change branch relationship was 47 commits ahead / 0 behind `main`; merge base/main remained `d693acd7c52f285b6ba475fdd3712a10e419d4e1`. Main was not modified.
+- Exact-source CI for `88c1298f...` is pending; no PASS is claimed. No physical/OEM/camera/battery/thermal evidence is claimed.
+
+### Exact next action
+
+Inspect exact-source Android Verification for `88c1298fd22d20eae8764b7e54b5105e9b7687a2`. If green, design and implement the smallest state-preserving Photos/Albums/Tools shell in `MainScreen.kt`, keeping existing search/viewer/source/Vault/Trash/Archives/duplicates/memories/selection journeys reachable. Add regression/visual evidence before accepting S05.
