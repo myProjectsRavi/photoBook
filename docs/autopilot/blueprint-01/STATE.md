@@ -264,3 +264,17 @@ Inspect Android Verification and Autopilot Targeted Emulator Verification for ex
 ### Exact next action
 
 Inspect runs `37025383499` and `37025383159`. If either fails, diagnose the exact job log and fix only the demonstrated issue. If both succeed, review the targeted instrumentation output/artifact, update VALIDATION and REVIEW_COVERAGE, change S05 to ACCEPTED in BACKLOG and canonical STATE, and leave S06 for the next run.
+
+
+## S05 checkpoint 9 — instrumentation self-termination fixed; exact CI pending
+
+- Targeted emulator run `37025383159` reached all 20 pre-existing targeted tests successfully, then failed when `MainNavigationInstrumentedTest` began.
+- Downloaded and inspected artifact `11234288991` (digest `sha256:d64758f9c821025dda639f52e4ff7ec5bcb964c3b5d2f06ea0dca4650ed64414`). Logcat proves the test itself executed `am force-stop com.photobook.app`, which killed the package hosting the instrumentation process; Android then reported `Process crashed`. This was a test-harness self-termination, not a demonstrated production crash.
+- Smallest fix committed at `4aa1b51e14f4c544b5cff3db1ed4f9142ddd5b5c`: remove force-stop from setup/teardown and use Home for cleanup, preserving all Photos/Albums/Tools, PRO-absence and no-auto-IME assertions.
+- Fresh Android Verification run `37028216748` exists for exact source `4aa1b51e...` and is currently pending. No green result is claimed yet. The targeted workflow had not surfaced for this SHA at the latest query.
+- The recurring PhotoBook Blueprint Autopilot automation was explicitly re-enabled without changing its hourly schedule.
+- S05 remains IN_PROGRESS. S06-S09 were not started because their dependency chain requires S05 acceptance first. Main remains untouched.
+
+### Exact next action
+
+Inspect exact-source CI for `4aa1b51e14f4c544b5cff3db1ed4f9142ddd5b5c`. Once Android Verification and targeted API-35 navigation instrumentation are green, finalize S05 acceptance ledgers, then begin S06. Do not skip dependency order.
