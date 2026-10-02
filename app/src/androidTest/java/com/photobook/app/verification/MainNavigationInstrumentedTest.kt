@@ -6,7 +6,9 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
-import com.google.common.truth.Truth.assertThat
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
@@ -26,7 +28,7 @@ class MainNavigationInstrumentedTest {
             ?.apply {
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
             }
-        assertThat(launchIntent).isNotNull()
+        assertNotNull(launchIntent)
         targetContext.startActivity(launchIntent)
         device.wait(Until.hasObject(By.text("Photos")), 10_000)
     }
@@ -38,25 +40,25 @@ class MainNavigationInstrumentedTest {
 
     @Test
     fun photosFirstShell_navigatesWithoutAutomaticImeOrProBadge() {
-        assertThat(device.hasObject(By.text("Photos"))).isTrue()
-        assertThat(device.hasObject(By.text("Albums"))).isTrue()
-        assertThat(device.hasObject(By.text("Tools"))).isTrue()
-        assertThat(device.hasObject(By.text("PRO"))).isFalse()
+        assertTrue(device.hasObject(By.text("Photos")))
+        assertTrue(device.hasObject(By.text("Albums")))
+        assertTrue(device.hasObject(By.text("Tools")))
+        assertFalse(device.hasObject(By.text("PRO")))
 
         val inputMethodBeforeNavigation = device.executeShellCommand("dumpsys input_method")
-        assertThat(inputMethodBeforeNavigation).doesNotContain("mInputShown=true")
+        assertFalse(inputMethodBeforeNavigation.contains("mInputShown=true"))
 
         device.findObject(By.text("Albums")).click()
-        assertThat(device.wait(Until.hasObject(By.text("Screenshots")), 5_000)).isTrue()
+        assertTrue(device.wait(Until.hasObject(By.text("Screenshots")), 5_000))
 
         device.findObject(By.text("Tools")).click()
-        assertThat(device.wait(Until.hasObject(By.text("Vault")), 5_000)).isTrue()
-        assertThat(device.hasObject(By.text("Trash"))).isTrue()
+        assertTrue(device.wait(Until.hasObject(By.text("Vault")), 5_000))
+        assertTrue(device.hasObject(By.text("Trash")))
 
         device.findObject(By.text("Photos")).click()
-        assertThat(device.wait(Until.hasObject(By.text("Photos")), 5_000)).isTrue()
+        assertTrue(device.wait(Until.hasObject(By.text("Photos")), 5_000))
 
         val inputMethodAfterNavigation = device.executeShellCommand("dumpsys input_method")
-        assertThat(inputMethodAfterNavigation).doesNotContain("mInputShown=true")
+        assertFalse(inputMethodAfterNavigation.contains("mInputShown=true"))
     }
 }
