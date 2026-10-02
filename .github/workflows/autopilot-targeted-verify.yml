@@ -1,4 +1,5 @@
 name: Autopilot Targeted Emulator Verification
+# S05 navigation evidence retrigger after instrumentation-harness fix.
 
 on:
   push:
