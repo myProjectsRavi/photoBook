@@ -5,11 +5,11 @@ authorized_branch: autopilot/epics-features-user-stories
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
 current_epic: E03 Gallery experience  
-current_feature: Navigation  
-current_story: S05 Photos-first navigation shell  
-status: IN_PROGRESS  
-source_commit_tested: 46a65c99201f3a490203563f9c32a793a87ee721 (S05 checkpoint candidate; CI pending)
-latest_checkpoint_commit: 46a65c99201f3a490203563f9c32a793a87ee721
+current_feature: Album organization  
+current_story: S06 Typed album/source catalog  
+status: NOT_STARTED  
+source_commit_tested: a286b10c306d56a14a24e7e9bece7d3d4ef9f578 (S05 ACCEPTED)
+latest_checkpoint_commit: aba3525bf085b944a0b120b169495f2d42678f6b
 
 ## Source blueprint
 
@@ -278,3 +278,8 @@ Inspect runs `37025383499` and `37025383159`. If either fails, diagnose the exac
 ### Exact next action
 
 Inspect exact-source CI for `4aa1b51e14f4c544b5cff3db1ed4f9142ddd5b5c`. Once Android Verification and targeted API-35 navigation instrumentation are green, finalize S05 acceptance ledgers, then begin S06. Do not skip dependency order.
+
+
+## S05 accepted
+
+Tested source `a286b10c306d56a14a24e7e9bece7d3d4ef9f578` passed Android Verification run `37030491217` and targeted API-35 offline emulator run `37030491199`. Exact artifact identities are recorded in VALIDATION.md. Main remains untouched. Next story is S06.
