@@ -284,15 +284,19 @@ fun MainScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         } else {
-                            AlbumKind.entries.forEach { kind ->
-                                val group = albumCatalog.filter { it.kind == kind }
+                            val groups = listOf(
+                                "Favorites" to albumCatalog.filter { it.kind == AlbumKind.Favorite },
+                                "On this device" to albumCatalog.filter {
+                                    it.kind == AlbumKind.Source || it.kind == AlbumKind.Folder
+                                },
+                                "Smart collections" to albumCatalog.filter {
+                                    it.kind == AlbumKind.SmartQuery
+                                },
+                            )
+                            groups.forEach { (title, group) ->
                                 if (group.isNotEmpty()) {
                                     Text(
-                                        text = when (kind) {
-                                            AlbumKind.Favorite -> "Favorites"
-                                            AlbumKind.Source, AlbumKind.Folder -> "On this device"
-                                            AlbumKind.SmartQuery -> "Smart collections"
-                                        },
+                                        text = title,
                                         style = MaterialTheme.typography.labelLarge.copy(
                                             fontWeight = FontWeight.Black,
                                             color = Color(0xFF334155),
