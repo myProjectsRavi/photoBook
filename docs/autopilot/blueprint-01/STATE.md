@@ -4,12 +4,12 @@ cycle: blueprint-01
 authorized_branch: autopilot/epics-features-user-stories  
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
-current_epic: E01 Execution safety  
-current_feature: Durable state  
-current_story: S04 Real historical Room upgrade evidence  
-status: ACCEPTED  
-source_commit_tested: a362b6315b6d716b39dfa281974597d042adeb15 (S04 accepted migration evidence)
-latest_checkpoint_commit: 810ae3c30a93785e5ddd1c10967d52d91f8dce0
+current_epic: E03 Gallery experience  
+current_feature: Navigation  
+current_story: S05 Photos-first navigation shell  
+status: IN_PROGRESS  
+source_commit_tested: 46a65c99201f3a490203563f9c32a793a87ee721 (S05 checkpoint candidate; CI pending)
+latest_checkpoint_commit: 46a65c99201f3a490203563f9c32a793a87ee721
 
 ## Source blueprint
 
@@ -153,3 +153,17 @@ Retry only the normal GitHub contents-API update of HistoricalRoomMigrationInstr
 - Executable evidence opens a provenance-backed SQLite v1 fixture through production `AppModule.providePhotoBookDatabase`, exercising migrations 1→12 and Room v12 validation while preserving durable photo/FTS data and checking the intentional v11→12 ML reset plus SQLite integrity.
 - No destructive migration fallback was added. No physical/OEM/camera/battery/thermal evidence is claimed.
 - S04 is ACCEPTED. Next eligible story is S05 Navigation.
+
+
+## S05 checkpoint 1 — no automatic keyboard
+
+- Active story: S05 Navigation. Dependencies are satisfied (S02 ACCEPTED); S01-S04 are ACCEPTED.
+- Inspected production `MainScreen.kt`, its `MainActivity.kt` caller, `SearchBar.kt`, and repository search for direct SearchBar/MainScreen callers before editing.
+- Confirmed defect: `MainScreen` supplied `autoFocus = searchReady && query.isBlank()`, causing `SearchBar` to request focus/show the IME when search became ready.
+- Smallest coherent change committed at `46a65c99201f3a490203563f9c32a793a87ee721`: remove the caller's automatic-focus request. Explicit user focus/search behavior is preserved; no search semantics, privacy, storage, destructive action, Vault, offline, or original-media behavior changed.
+- The decorative PRO badge and Photos/Albums/Tools shell remain open S05 work. Existing search/viewer, source, Vault, Trash, Archives, duplicates, memories and selection journeys must be preserved.
+- CI for this exact checkpoint is pending; no PASS is claimed yet. No physical/OEM/camera/battery/thermal evidence is claimed.
+
+### Exact next action
+
+Inspect CI for `46a65c99201f3a490203563f9c32a793a87ee721`. If green, remove the decorative PRO badge as the next narrow change, then introduce the state-preserving Photos/Albums/Tools shell with regression/visual evidence. Keep S05 IN_PROGRESS until all S05 acceptance criteria pass.
