@@ -181,3 +181,17 @@ Inspect CI for `46a65c99201f3a490203563f9c32a793a87ee721`. If green, remove the 
 ### Exact next action
 
 Inspect exact-source Android Verification for `88c1298fd22d20eae8764b7e54b5105e9b7687a2`. If green, design and implement the smallest state-preserving Photos/Albums/Tools shell in `MainScreen.kt`, keeping existing search/viewer/source/Vault/Trash/Archives/duplicates/memories/selection journeys reachable. Add regression/visual evidence before accepting S05.
+
+
+## S05 checkpoint 3 — Photos / Albums / Tools shell
+
+- Production commit: `82922885bfe76334f05c3d7a6b8646cef2f08e45`.
+- Re-read canonical STATE/BACKLOG/VALIDATION/DECISIONS/REVIEW_COVERAGE, branch comparison, current production `MainScreen.kt`, and prior S05 checkpoints before editing.
+- Added a local, saveable three-destination shell: Photos, Albums and Tools. Photos remains the default and keeps the photo feed/search visible; Albums contains the existing smart-album journeys; Tools contains the existing Duplicates/Favorites/Reels/Archives/Vault/Trash journeys. Selecting a smart album routes back to Photos after applying the existing query/action.
+- Existing selection overlay, duplicate sheet, limited-access management, photo source filtering, viewer callbacks and search callbacks were preserved. No media/storage/Vault/privacy/offline/destructive-action/original-media semantics were changed.
+- Branch comparison before this mutation was 49 commits ahead / 0 behind `main`; main/merge-base remained `d693acd7c52f285b6ba475fdd3712a10e419d4e1` and was not modified.
+- Exact-source Android Verification for `82922885...` is pending; no CI PASS or visual/emulator PASS is claimed yet. No physical/OEM/camera/battery/thermal evidence is claimed.
+
+### Exact next action
+
+Inspect exact-source Android Verification for `82922885bfe76334f05c3d7a6b8646cef2f08e45`. Diagnose/fix any compile or regression failure rather than rerunning blindly. If green, add focused navigation/visual regression evidence for Photos default, Albums/Tools reachability, preserved journeys and no automatic IME before considering S05 ACCEPTED.
