@@ -7,9 +7,9 @@ baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1
 current_epic: E01 Execution safety  
 current_feature: Durable state  
 current_story: S04 Real historical Room upgrade evidence  
-status: IN_PROGRESS  
-source_commit_tested: 607353b9fbee37e7dfb683a99627b5f222332e13 (S03 accepted implementation candidate)
-latest_checkpoint_commit: 607353b9fbee37e7dfb683a99627b5f222332e13
+status: ACCEPTED  
+source_commit_tested: a362b6315b6d716b39dfa281974597d042adeb15 (S04 accepted migration evidence)
+latest_checkpoint_commit: 810ae3c30a93785e5ddd1c10967d52d91f8dce0
 
 ## Source blueprint
 
@@ -142,3 +142,14 @@ Retry only the normal GitHub contents-API replacement of `HistoricalRoomMigratio
 ### Exact next action
 
 Retry only the normal GitHub contents-API update of HistoricalRoomMigrationInstrumentedTest.kt. Do not fabricate historical Room JSON. Once the executable test is committed, inspect its diff and obtain exact-head Android Verification plus targeted hosted-emulator execution before accepting S04.
+
+
+## S04 final acceptance
+
+- Tested source commit: `a362b6315b6d716b39dfa281974597d042adeb15`.
+- Historical provenance: v1 schema from `09c35afc15f3bfa087b0b78ab826f04598555c9f`, with `exportSchema=false`; no historical Room JSON was fabricated.
+- Android Verification run `36866615361`: SUCCESS on exact tested source; artifact ID `11163808933`, digest `sha256:e69ce69e9d2f1042ee192c70b822ee3589ab6066d5fc7feadbd68c75c0dacf86`.
+- Targeted API-35 emulator run `36866615388`: SUCCESS on exact tested source; artifact ID `11163587883`, digest `sha256:332ff2f0d0916f7485d0d579e87a68843fdf0bf5e0bc6b0549fd5ed4a370d373`.
+- Executable evidence opens a provenance-backed SQLite v1 fixture through production `AppModule.providePhotoBookDatabase`, exercising migrations 1→12 and Room v12 validation while preserving durable photo/FTS data and checking the intentional v11→12 ML reset plus SQLite integrity.
+- No destructive migration fallback was added. No physical/OEM/camera/battery/thermal evidence is claimed.
+- S04 is ACCEPTED. Next eligible story is S05 Navigation.
