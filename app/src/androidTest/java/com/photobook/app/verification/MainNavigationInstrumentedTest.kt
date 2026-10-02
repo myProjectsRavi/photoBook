@@ -9,7 +9,6 @@ import androidx.test.uiautomator.Until
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
-import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -22,7 +21,6 @@ class MainNavigationInstrumentedTest {
 
     @Before
     fun launchMainActivity() {
-        device.executeShellCommand("am force-stop ${targetContext.packageName}")
         val launchIntent = targetContext.packageManager
             .getLaunchIntentForPackage(targetContext.packageName)
             ?.apply {
@@ -33,10 +31,6 @@ class MainNavigationInstrumentedTest {
         device.wait(Until.hasObject(By.text("Photos")), 10_000)
     }
 
-    @After
-    fun stopApp() {
-        device.executeShellCommand("am force-stop ${targetContext.packageName}")
-    }
 
     @Test
     fun photosFirstShell_navigatesWithoutAutomaticImeOrProBadge() {
