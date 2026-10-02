@@ -7,8 +7,8 @@ baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1
 current_epic: E03 Gallery experience  
 current_feature: Album organization  
 current_story: S06 Typed album/source catalog  
-status: NOT_STARTED  
-source_commit_tested: a286b10c306d56a14a24e7e9bece7d3d4ef9f578 (S05 ACCEPTED)
+status: ACCEPTED  
+source_commit_tested: 42a2889764cd358c1885b9ff8f57e0f73abb24b6 (S06 ACCEPTED)
 latest_checkpoint_commit: aba3525bf085b944a0b120b169495f2d42678f6b
 
 ## Source blueprint
@@ -283,3 +283,17 @@ Inspect exact-source CI for `4aa1b51e14f4c544b5cff3db1ed4f9142ddd5b5c`. Once And
 ## S05 accepted
 
 Tested source `a286b10c306d56a14a24e7e9bece7d3d4ef9f578` passed Android Verification run `37030491217` and targeted API-35 offline emulator run `37030491199`. Exact artifact identities are recorded in VALIDATION.md. Main remains untouched. Next story is S06.
+
+
+## S06 final acceptance
+
+- Tested source commit: `42a2889764cd358c1885b9ff8f57e0f73abb24b6`.
+- Changed production/test scope: `AlbumCatalog.kt`, `MainViewModel.kt`, `MainScreen.kt`, `MainActivity.kt`, and `AlbumCatalogTest.kt`.
+- Typed descriptors cover Favorites, known sources, normalized folders, and smart-query albums. Known source folders are excluded from the generic folder list so a source is represented once; same-named folders are disambiguated with stable path fingerprints without exposing raw paths in descriptor keys.
+- Album scope is independent from literal text query and composes with search; selecting a descriptor routes back through the Photos result pipeline with active scope retained and clearable.
+- Android Verification run `37033776513`: SUCCESS on exact tested source.
+- Autopilot Targeted Emulator Verification run `37033776502`: SUCCESS on exact tested source; existing offline/privacy instrumentation remained green.
+- Branch was 80 commits ahead / 0 behind `main` at final source review; merge base remains the Blueprint baseline. Main was not modified.
+- No physical/OEM/camera/battery/thermal evidence is claimed.
+
+S06 is **ACCEPTED**. Next eligible story is S07 Design system; start it on the next run after refreshing canonical state and exact branch HEAD.
