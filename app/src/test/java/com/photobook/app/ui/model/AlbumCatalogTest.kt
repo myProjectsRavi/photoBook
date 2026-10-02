@@ -29,6 +29,9 @@ class AlbumCatalogTest {
         )
         assertThat(sources.count { it.key == "source:camera" }).isEqualTo(1)
         assertThat(sources.none { it.key == "source:telegram" }).isTrue()
+        val folderLabels = catalog.filter { it.kind == AlbumKind.Folder }.map { it.label }
+        assertThat(folderLabels).doesNotContain("Camera")
+        assertThat(folderLabels).doesNotContain("WhatsApp Images")
     }
 
     @Test
