@@ -250,3 +250,17 @@ Add the smallest focused regression evidence for S05 navigation and no-auto-IME 
 ### Exact next action
 
 Inspect Android Verification and Autopilot Targeted Emulator Verification for exact head `85da25f2208ab9dcee2f41401d3625ff68e66907`. Diagnose any failure from logs. If both are green, review artifacts/test output, update VALIDATION/REVIEW_COVERAGE/BACKLOG and canonical STATE, then mark S05 ACCEPTED only if no acceptance blocker remains. Do not start S06 before that decision.
+
+
+## S05 checkpoint 8 — navigation test compile blocker fixed; CI active
+
+- Exact-source runs for `85da25f2208ab9dcee2f41401d3625ff68e66907` exposed a test-only compile defect: `MainNavigationInstrumentedTest.kt` imported Google Truth, but Truth exists only in `testImplementation`, not `androidTestImplementation`.
+- Android Verification run `37023337181` failed at `:app:compileDebugAndroidTestKotlin` for unresolved `com.google.common.truth` / `assertThat`; targeted run `37023314079` failed while building instrumentation APKs for the same reason. No production app defect was indicated by these logs.
+- Smallest fix committed at `f9695912961fbfaf6e0d575751e75c0dcd69ed7f`: replace Truth assertions with existing JUnit `Assert` APIs. No dependency, workflow gate, or production behavior changed.
+- New exact-source runs are active: Android Verification `37025383499` and Autopilot Targeted Emulator Verification `37025383159`, both on `f9695912961fbfaf6e0d575751e75c0dcd69ed7f`.
+- Branch comparison before this fix was 58 commits ahead / 0 behind `main`; base/merge-base remained `d693acd7c52f285b6ba475fdd3712a10e419d4e1`. Main was not modified.
+- S05 remains IN_PROGRESS until both current runs complete and the focused navigation/IME test passes. No physical/OEM/camera/battery/thermal evidence is claimed.
+
+### Exact next action
+
+Inspect runs `37025383499` and `37025383159`. If either fails, diagnose the exact job log and fix only the demonstrated issue. If both succeed, review the targeted instrumentation output/artifact, update VALIDATION and REVIEW_COVERAGE, change S05 to ACCEPTED in BACKLOG and canonical STATE, and leave S06 for the next run.
