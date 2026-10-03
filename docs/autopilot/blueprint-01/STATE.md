@@ -5,10 +5,10 @@ authorized_branch: autopilot/epics-features-user-stories
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
 current_epic: E04 Browsing performance  
-current_feature: Grid continuity  
-current_story: S10 Grid continuity  
+current_feature: Progressive startup  
+current_story: S11 Progressive startup  
 status: IN_PROGRESS  
-source_commit_tested: 564efdd847db9c11c7740adc00fe55be78a9d2cd (S09 ACCEPTED)
+source_commit_tested: 296aa0370bce2c08b3fd8464ec422d67c9c99559 (S10 ACCEPTED)
 latest_checkpoint_commit: 4186434c680317000a7d6ee49ad9f89aed8d8bcf
 
 ## Source blueprint
@@ -442,3 +442,15 @@ S09 Decode budget is the first incomplete dependency-satisfied story. Inspect th
 ## S10 start
 
 S10 Grid continuity is now the first incomplete dependency-satisfied story. Inspect paging identity, grid state ownership, fast-scrub cancellation, viewer-return behavior and tests before editing. Preserve bounded paging and stable photo identity; do not trade continuity for unbounded retained items.
+
+
+## S10 final acceptance
+
+- S10 is **ACCEPTED** on exact tested source `296aa0370bce2c08b3fd8464ec422d67c9c99559`.
+- Android Verification `37139032192` and offline API-35 targeted verification `37139032249` both succeeded; exact artifacts are recorded in VALIDATION.md.
+- Grid continuity now uses shell-owned saveable state, stable loaded-photo identity, bounded Paging, latest-target-wins scrub cancellation and stale-result cancellation.
+- Main was not modified. No physical-device performance/thermal claim is made.
+
+## S11 start
+
+S11 Progressive startup is now the first incomplete dependency-satisfied story. Before editing, inspect permission readiness, database/index bootstrap, first-page publication, enrichment/tagging readiness and current startup tests. The next change must let safe basic browsing become available before optional enrichment completes without exposing stale/revoked media or claiming enrichment readiness early.
