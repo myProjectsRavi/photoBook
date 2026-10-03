@@ -138,6 +138,37 @@ class PhotoIndexV2ParityTest {
         assertEquals(before.map { it.id }, after.map { it.id })
     }
 
+    @Test
+    fun typedRevisions_distinguishStructuralIntelligenceAndFavoriteChanges() = runBlocking {
+        val index = PhotoIndex(PhotoIndexStrategy.V2)
+        val record = deterministicRecords(1).single()
+
+        assertEquals(PhotoIndexRevisions(), index.revisions().value)
+
+        index.setRecords(listOf(record))
+        assertEquals(1L, index.revisions().value.structural)
+        assertEquals(0L, index.revisions().value.intelligence)
+        assertEquals(0L, index.revisions().value.favorite)
+
+        index.updatePhotoIntelligence(
+            id = record.id,
+            tags = listOf(MLTag("document", 0.9f)),
+            isMlProcessed = true,
+            mlStatus = IntelligenceStatus.PROCESSED,
+        )
+        assertEquals(1L, index.revisions().value.structural)
+        assertEquals(1L, index.revisions().value.intelligence)
+        assertEquals(0L, index.revisions().value.favorite)
+
+        index.setFavorite(record.id, true)
+        assertEquals(1L, index.revisions().value.structural)
+        assertEquals(1L, index.revisions().value.intelligence)
+        assertEquals(1L, index.revisions().value.favorite)
+
+        index.removeRecords(setOf(record.id))
+        assertEquals(2L, index.revisions().value.structural)
+    }
+
     private fun assertParity(legacy: PhotoIndex, v2: PhotoIndex, label: String) {
         assertEquals("size mismatch at $label", legacy.size(), v2.size())
         assertEquals("version mismatch at $label", legacy.version(), v2.version())
