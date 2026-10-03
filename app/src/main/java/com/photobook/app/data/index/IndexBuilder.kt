@@ -14,6 +14,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 class IndexBuilder @Inject constructor(
@@ -62,6 +64,7 @@ class IndexBuilder @Inject constructor(
 
             var startIndex = 0
             while (startIndex < rawPhotos.size) {
+                currentCoroutineContext().ensureActive()
                 val endIndex = (startIndex + RECORD_BUILD_PARALLELISM).coerceAtMost(rawPhotos.size)
                 val batchResults = coroutineScope {
                     (startIndex until endIndex)
