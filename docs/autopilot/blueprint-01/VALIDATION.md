@@ -199,3 +199,13 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - Memory curation invalidates only on structural/access-generation changes, avoiding intelligence-only re-curation.
 - Whole-library optional intelligence maintenance yields while the app process is foreground; focused-photo work retains its higher-priority path.
 - No search revision was suppressed and no privacy/offline/Vault/media-safety gate was weakened.
+
+
+## S14 Search correctness — ACCEPTED
+
+- Tested source: `d15586ae3151412a4fd40724216e6a43519cea81`.
+- Android Verification `37143132914`: SUCCESS, artifact `11281965345`, digest `sha256:76c1099e3f10eeccf2c70c265424d93619624c0aed26b330d14bebf936432908`.
+- Offline API-35 targeted `37143132942`: SUCCESS, artifact `11281855266`, digest `sha256:a3f80e60ce11619c4700cb1ec13db374640c85518c7ffa14c244535fb48cae25`.
+- Added a hard-coded truth-table oracle covering temporal, source, favorites, location, OCR, semantic tag, compound, recent and oldest semantics with exact eligibility/order assertions against both legacy and v2.
+- Existing scale parity covers 10k/50k/100k deterministic corpora; existing cancellation tests prove bounded cooperative abort; stale generation and missing-candidate paths fail closed rather than publish partial results.
+- Production search semantics were not narrowed or optimized through an unproven candidate subset.
