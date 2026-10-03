@@ -66,4 +66,36 @@ class MainNavigationInstrumentedTest {
         val inputMethodAfterNavigation = device.executeShellCommand("dumpsys input_method")
         assertFalse(inputMethodAfterNavigation.contains("mInputShown=true"))
     }
+
+    @Test
+    fun mainShell_largeFont_keepsPrimaryNavigationReachable() {
+        val originalFontScale = device.executeShellCommand("settings get system font_scale").trim()
+        try {
+            device.executeShellCommand("settings put system font_scale 2.0")
+            device.executeShellCommand("am force-stop ${targetContext.packageName}")
+            val launchIntent = targetContext.packageManager
+                .getLaunchIntentForPackage(targetContext.packageName)
+                ?.apply {
+                    addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            assertNotNull(launchIntent)
+            targetContext.startActivity(launchIntent)
+
+            assertTrue(device.wait(Until.hasObject(By.text("Photos")), 10_000))
+            assertTrue(device.hasObject(By.text("Albums")))
+            assertTrue(device.hasObject(By.text("Tools")))
+
+            device.findObject(By.text("Albums")).click()
+            assertTrue(device.wait(Until.hasObject(By.text("No albums in current access")), 5_000))
+            device.findObject(By.text("Tools")).click()
+            assertTrue(device.wait(Until.hasObject(By.text("Vault")), 5_000))
+
+            val window = device.executeShellCommand("dumpsys window")
+            assertFalse(window.contains("mSystemUiVisibility=0x0"))
+        } finally {
+            val restored = originalFontScale.toFloatOrNull()?.toString() ?: "1.0"
+            device.executeShellCommand("settings put system font_scale $restored")
+        }
+    }
+
 }
