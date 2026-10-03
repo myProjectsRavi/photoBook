@@ -72,6 +72,12 @@ fun PhotoGrid(
     var lastScrubTargetIndex by remember(photos.itemCount) { mutableIntStateOf(-1) }
     var scrubScrollJob by remember { mutableStateOf<Job?>(null) }
 
+    LaunchedEffect(photos.itemCount) {
+        scrubScrollJob?.cancel()
+        scrubScrollJob = null
+        lastScrubTargetIndex = -1
+    }
+
     val sortedMarks = remember(timelineMarks) { timelineMarks.sortedBy { mark -> mark.index } }
 
     fun updateScrubPosition(rawY: Float) {
