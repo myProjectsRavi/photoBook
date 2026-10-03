@@ -5,11 +5,11 @@ authorized_branch: autopilot/epics-features-user-stories
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
 current_epic: E03 Gallery experience  
-current_feature: Album organization  
-current_story: S06 Typed album/source catalog  
-status: ACCEPTED  
-source_commit_tested: 42a2889764cd358c1885b9ff8f57e0f73abb24b6 (S06 ACCEPTED)
-latest_checkpoint_commit: aba3525bf085b944a0b120b169495f2d42678f6b
+current_feature: Local personalization  
+current_story: S08 Local personalization  
+status: IN_PROGRESS  
+source_commit_tested: ca2327b29d19d76d5d8b05e1afa2a28f65533151 (S07 ACCEPTED; targeted API-35 evidence)
+latest_checkpoint_commit: 4186434c680317000a7d6ee49ad9f89aed8d8bcf
 
 ## Source blueprint
 
@@ -358,3 +358,20 @@ Inspect push-triggered Android Verification and targeted emulator runs for `8333
 ### Exact next action
 
 Inspect push-triggered Android Verification and Autopilot Targeted Emulator Verification for `ca2327b29d19d76d5d8b05e1afa2a28f65533151`. If green, finish S07 inset/diff review and reconcile BACKLOG/VALIDATION/REVIEW_COVERAGE before ACCEPTED. If either fails, diagnose the exact log and fix only the demonstrated issue. Do not start S08.
+
+
+## S07 final acceptance
+
+- S07 is ACCEPTED. Production/test source `ca2327b29d19d76d5d8b05e1afa2a28f65533151` passed targeted offline API-35 run `37094401227`, including the 200% font-scale regression.
+- Documentation checkpoint `6804830f7695071e3117c380d162e28efa7d093e` passed Android Verification run `37094408772`.
+- BACKLOG acceptance checkpoint `4186434c680317000a7d6ee49ad9f89aed8d8bcf` passed Android Verification run `37100976065`.
+- Final S07 scope preserves 48dp logo target, centralized gallery semantic color roles, bounded selection actions with all prior operations reachable, and large-font accessibility coverage.
+- No physical/OEM/camera/battery/thermal evidence is claimed. Main was not modified.
+
+## S08 start
+
+S08 Local personalization is now the first incomplete story. Dependencies S06 and S07 are ACCEPTED.
+
+### Exact next action
+
+Inspect production album catalog/UI, memory presentation, direct callers and tests. Implement local-only personalization with at most six pinned typed album descriptors and a local hide-Memories preference, without duplicating album membership or adding network/account behavior. Keep S08 IN_PROGRESS until reproducible tests and exact-source CI pass.
