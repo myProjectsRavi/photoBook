@@ -54,18 +54,29 @@ import com.photobook.app.ui.model.AlbumDescriptor
 import com.photobook.app.ui.model.AlbumKind
 import com.photobook.app.ui.model.AlbumScope
 import com.photobook.app.ui.model.TimelineMark
+import com.photobook.app.ui.theme.PhotoBookGalleryAccentAmber
+import com.photobook.app.ui.theme.PhotoBookGalleryAccentIndigo
+import com.photobook.app.ui.theme.PhotoBookGalleryAccentPink
+import com.photobook.app.ui.theme.PhotoBookGalleryAccentTeal
+import com.photobook.app.ui.theme.PhotoBookGalleryAccentViolet
+import com.photobook.app.ui.theme.PhotoBookGalleryGlassBorder
+import com.photobook.app.ui.theme.PhotoBookGalleryGlassSurface
+import com.photobook.app.ui.theme.PhotoBookGalleryMeshBase
+import com.photobook.app.ui.theme.PhotoBookGalleryMeshMint
+import com.photobook.app.ui.theme.PhotoBookGalleryMeshRose
+import com.photobook.app.ui.theme.PhotoBookGalleryMeshWarm
 
-private val MeshBase = Color(0xFFFFF0E4)
-private val MeshWarm = Color(0xFFFFD8B8)
-private val MeshRose = Color(0xFFFFD4E4)
-private val MeshMint = Color(0xFFE9F3FF)
-private val GlassSurface = Color(0xCCFFFFFF)
-private val GlassBorder = Color(0xF2FFFFFF)
-private val AccentIndigo = Color(0xFF4F46E5)
-private val AccentPink = Color(0xFFEC4899)
-private val AccentViolet = Color(0xFF8B5CF6)
-private val AccentTeal = Color(0xFF0F766E)
-private val AccentAmber = Color(0xFFB45309)
+private val MeshBase = PhotoBookGalleryMeshBase
+private val MeshWarm = PhotoBookGalleryMeshWarm
+private val MeshRose = PhotoBookGalleryMeshRose
+private val MeshMint = PhotoBookGalleryMeshMint
+private val GlassSurface = PhotoBookGalleryGlassSurface
+private val GlassBorder = PhotoBookGalleryGlassBorder
+private val AccentIndigo = PhotoBookGalleryAccentIndigo
+private val AccentPink = PhotoBookGalleryAccentPink
+private val AccentViolet = PhotoBookGalleryAccentViolet
+private val AccentTeal = PhotoBookGalleryAccentTeal
+private val AccentAmber = PhotoBookGalleryAccentAmber
 
 private enum class MainDestination {
     Photos,
