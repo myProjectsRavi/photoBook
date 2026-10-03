@@ -1,5 +1,6 @@
 package com.photobook.app.ml
 
+import android.app.ActivityManager
 import android.content.Context
 import android.os.BatteryManager
 import androidx.hilt.work.HiltWorker
@@ -75,6 +76,14 @@ class TaggingWorker @AssistedInject constructor(
             val hasRemainingFocusedWork = indexPersistence.getByIdsOrdered(requestedIdList)
                 .any { photo -> photo.needsIntelligenceWork() }
             return resultForRemainingWork(hasRemainingFocusedWork)
+        }
+
+        if (!IntelligenceSchedulingPolicy.shouldRunLibraryMaintenance(
+                appInForeground = isAppInForeground(),
+                batteryTooLow = false,
+            )
+        ) {
+            return Result.retry()
         }
 
         val accessMode = PermissionUtils.photoAccessMode(applicationContext)
@@ -283,6 +292,13 @@ class TaggingWorker @AssistedInject constructor(
             ?: return false
         val level = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         return level in 1..14
+    }
+
+
+    private fun isAppInForeground(): Boolean {
+        val processInfo = ActivityManager.RunningAppProcessInfo()
+        ActivityManager.getMyMemoryState(processInfo)
+        return processInfo.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
     }
 
     companion object {
