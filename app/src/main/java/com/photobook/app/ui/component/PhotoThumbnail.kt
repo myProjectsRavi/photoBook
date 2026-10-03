@@ -32,7 +32,6 @@ import coil.request.CachePolicy
 import coil.request.ImageRequest
 import coil.size.Precision
 import com.photobook.app.data.model.PhotoRecord
-import com.photobook.app.util.PerformanceProfiler
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -42,6 +41,7 @@ fun PhotoThumbnail(
     showSelectionState: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    requestSizePx: Int,
     modifier: Modifier = Modifier,
 ) {
     val cardShape = remember { RoundedCornerShape(10.dp) }
@@ -51,16 +51,13 @@ fun PhotoThumbnail(
         label = "selected_overlay_alpha",
     )
     val context = LocalContext.current
-    val thumbSize = remember {
-        PerformanceProfiler.from(context).thumbnailRequestSizePx
-    }
-    val imageRequest = remember(photo.uriString, thumbSize) {
+    val imageRequest = remember(photo.uriString, requestSizePx) {
         ImageRequest.Builder(context)
             .data(photo.uriString)
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
             .allowHardware(true)
-            .size(thumbSize)
+            .size(requestSizePx)
             .precision(Precision.EXACT)
             .build()
     }
