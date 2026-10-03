@@ -294,3 +294,8 @@ Reviewed changed production/direct-call/test scope: `util/ThumbnailDecodePolicy.
 ## S10 targeted review closure
 
 Reviewed changed production/direct-call/test scope: `ui/component/PhotoGrid.kt`, `ui/component/GridContinuityPolicy.kt`, `ui/screen/MainScreen.kt`, `ui/viewmodel/MainViewModel.kt`, `MainActivity.kt`, and `GridContinuityPolicyTest.kt`. Paging remains bounded and viewer presentation still overlays the retained Photos shell; S10 does not retain the full library in Compose state.
+
+
+## S11 targeted review closure
+
+Reviewed changed production/direct-call/test scope: `ui/viewmodel/StartupReadinessPolicy.kt`, `ui/viewmodel/MainViewModel.kt`, `MainActivity.kt`, and `StartupReadinessPolicyTest.kt`. Access-generation checks and limited-access filtering remain before any persisted-row publication; enrichment scheduling stays asynchronous and separate from browse readiness.
