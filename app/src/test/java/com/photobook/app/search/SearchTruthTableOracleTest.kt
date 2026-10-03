@@ -73,9 +73,9 @@ class SearchTruthTableOracleTest {
                 expectedIndexVersion = index.version(),
             )
 
-            assertThat(legacyIds).named("legacy $query").containsExactlyElementsIn(expectedIds).inOrder()
-            assertThat(v2Result.complete).named("complete $query").isTrue()
-            assertThat(v2Result.orderedIds).named("v2 $query").containsExactlyElementsIn(expectedIds).inOrder()
+            assertThat(legacyIds).containsExactlyElementsIn(expectedIds).inOrder()
+            assertThat(v2Result.complete).isTrue()
+            assertThat(v2Result.orderedIds).containsExactlyElementsIn(expectedIds).inOrder()
         }
     }
 
