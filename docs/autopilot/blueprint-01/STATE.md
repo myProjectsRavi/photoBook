@@ -5,10 +5,10 @@ authorized_branch: autopilot/epics-features-user-stories
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
 current_epic: E04 Browsing performance  
-current_feature: Resource scheduling  
-current_story: S13 Resource scheduling  
+current_feature: Search correctness  
+current_story: S14 Search correctness  
 status: IN_PROGRESS  
-source_commit_tested: 19714f05851e4d75af589033c0167beb0c66a3a3 (S12 ACCEPTED)
+source_commit_tested: 30e914e112d5c7c1ca77d4781b14d2b1c13647c9 (S13 ACCEPTED)
 latest_checkpoint_commit: 4186434c680317000a7d6ee49ad9f89aed8d8bcf
 
 ## Source blueprint
@@ -474,3 +474,12 @@ S12 is ACCEPTED on exact tested source `19714f05851e4d75af589033c0167beb0c66a3a3
 ## S13 start
 
 S13 Resource scheduling is active. Inspect PhotoIndex revision semantics, full-feed rebuild triggers, optional analysis scheduling, and foreground-browse coordination before editing.
+
+
+## S13 final acceptance
+
+S13 is ACCEPTED on exact tested source `30e914e112d5c7c1ca77d4781b14d2b1c13647c9`. Typed revisions reduce unrelated memory rebuilds and optional library intelligence yields to active foreground browsing without suppressing search-relevant revisions.
+
+## S14 start
+
+S14 Search correctness is active. Inspect SearchEngineV2, FilterEngine, parser/classifier, parity/cancellation tests and deterministic ordering before changing semantics. Add a truth-table oracle if coverage is incomplete; do not optimize by narrowing authoritative matches.
