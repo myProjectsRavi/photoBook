@@ -375,3 +375,17 @@ S08 Local personalization is now the first incomplete story. Dependencies S06 an
 ### Exact next action
 
 Inspect production album catalog/UI, memory presentation, direct callers and tests. Implement local-only personalization with at most six pinned typed album descriptors and a local hide-Memories preference, without duplicating album membership or adding network/account behavior. Keep S08 IN_PROGRESS until reproducible tests and exact-source CI pass.
+
+
+## S08 checkpoint — personalization policy write blocked
+
+- Active story: S08 Local personalization. S06 and S07 are ACCEPTED; S08 is the first incomplete dependency-satisfied story.
+- Branch at run start: 93 commits ahead / 0 behind `main`; baseline/merge-base remains `d693acd7c52f285b6ba475fdd3712a10e419d4e1`. Main was not modified.
+- Re-read STATE/BACKLOG/VALIDATION/DECISIONS/REVIEW_COVERAGE and inspected production `AlbumCatalog.kt`, `MainViewModel.kt`, `MainScreen.kt`, direct `MainActivity.kt` caller, and `AlbumCatalogTest.kt`.
+- Prepared the smallest pure S08 change in `AlbumCatalog.kt`: local-only typed descriptor-key policy, maximum six pins, stale-key sanitization, stable de-duplication, and pinned/unpinned partitioning without duplicated catalog membership.
+- The normal authenticated GitHub contents update was rejected by the connector safety layer before mutation. No lower-level Git-object bypass was attempted. No source commit or CI PASS is claimed.
+- No privacy, storage, Vault, offline, original-media, cancellation, destructive-confirmation, or package gate was changed.
+
+### Exact next action
+
+Retry only the pure `AlbumCatalog.kt` personalization-policy mutation through the normal GitHub contents API. If it commits, add focused `AlbumCatalogTest.kt` unit tests for max-six, stale-key removal, stable de-duplication, and zero duplicated descriptors, then inspect exact-source CI before wiring SharedPreferences/UI. Keep S08 IN_PROGRESS; do not start S09.
