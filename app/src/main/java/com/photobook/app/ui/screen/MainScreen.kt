@@ -445,25 +445,68 @@ fun MainScreen(
                         text = stringResource(R.string.selection_count, selectedPhotoIds.size),
                         fontWeight = FontWeight.Black
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        IconButton(onClick = onClearSelection) { Icon(Icons.Default.Close, null) }
-                        if (selectedPhotoIds.size == 1) {
-                            IconButton(onClick = { onCopyTextFromPhoto(selectedPhotoIds.first()) }) { Icon(Icons.Default.ContentCopy, contentDescription = "Copy text from photo") }
-                        }
-                        IconButton(onClick = { onCreatePdfSelected(selectedPhotoIds) }) {
-                            Icon(Icons.Default.PictureAsPdf, contentDescription = stringResource(R.string.create_pdf_selected))
+                    var selectionMenuExpanded by remember { mutableStateOf(false) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        IconButton(onClick = onClearSelection) {
+                            Icon(Icons.Default.Close, contentDescription = "Clear selection")
                         }
                         IconButton(onClick = { onShareSelected(selectedPhotoIds) }) {
                             Icon(Icons.Default.Share, contentDescription = stringResource(R.string.share_selected))
                         }
-                        IconButton(onClick = { onAddSelectedToVault(selectedPhotoIds) }) {
-                            Icon(Icons.Default.Lock, contentDescription = stringResource(R.string.vault_add_selected))
-                        }
-                        IconButton(
-                            onClick = { onMoveSelectedToTrash(selectedPhotoIds) },
-                            colors = IconButtonDefaults.iconButtonColors(contentColor = Color.Red),
-                        ) {
-                            Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.trash_selected))
+                        Box {
+                            IconButton(onClick = { selectionMenuExpanded = true }) {
+                                Icon(Icons.Default.MoreVert, contentDescription = "More selection actions")
+                            }
+                            DropdownMenu(
+                                expanded = selectionMenuExpanded,
+                                onDismissRequest = { selectionMenuExpanded = false },
+                            ) {
+                                if (selectedPhotoIds.size == 1) {
+                                    DropdownMenuItem(
+                                        text = { Text("Copy text from photo") },
+                                        leadingIcon = { Icon(Icons.Default.ContentCopy, null) },
+                                        onClick = {
+                                            selectionMenuExpanded = false
+                                            onCopyTextFromPhoto(selectedPhotoIds.first())
+                                        },
+                                    )
+                                }
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.create_pdf_selected)) },
+                                    leadingIcon = { Icon(Icons.Default.PictureAsPdf, null) },
+                                    onClick = {
+                                        selectionMenuExpanded = false
+                                        onCreatePdfSelected(selectedPhotoIds)
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.vault_add_selected)) },
+                                    leadingIcon = { Icon(Icons.Default.Lock, null) },
+                                    onClick = {
+                                        selectionMenuExpanded = false
+                                        onAddSelectedToVault(selectedPhotoIds)
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            stringResource(R.string.trash_selected),
+                                            color = MaterialTheme.colorScheme.error,
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Default.Delete,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.error,
+                                        )
+                                    },
+                                    onClick = {
+                                        selectionMenuExpanded = false
+                                        onMoveSelectedToTrash(selectedPhotoIds)
+                                    },
+                                )
+                            }
                         }
                     }
                 }
