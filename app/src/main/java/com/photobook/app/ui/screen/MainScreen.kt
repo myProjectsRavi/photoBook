@@ -180,7 +180,7 @@ fun MainScreen(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(44.dp)
+                            .size(48.dp)
                             .rotate(3f)
                             .background(
                                 Brush.linearGradient(
