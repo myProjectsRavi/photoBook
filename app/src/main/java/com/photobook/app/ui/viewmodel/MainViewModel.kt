@@ -110,6 +110,8 @@ class MainViewModel @Inject constructor(
         val photoAccessMode: PermissionUtils.PhotoAccessMode = PermissionUtils.PhotoAccessMode.None,
         val isIndexing: Boolean = false,
         val indexProgress: Float = 0f,
+        val basicBrowseReady: Boolean = false,
+        val enrichmentScheduled: Boolean = false,
         val searchReady: Boolean = false,
         val query: String = "",
         val albumCatalog: List<AlbumDescriptor> = emptyList(),
@@ -1159,6 +1161,8 @@ class MainViewModel @Inject constructor(
                 it.copy(
                     isIndexing = true,
                     indexProgress = 0f,
+                    basicBrowseReady = false,
+                    enrichmentScheduled = false,
                     searchReady = false,
                 )
             }
@@ -1191,21 +1195,38 @@ class MainViewModel @Inject constructor(
                 accessGenerationGate.markPublished(accessGeneration)
             }
 
+            val accessSafePersistedCount = photoIndex.snapshot().size
+            uiState.update { state ->
+                state.copy(
+                    basicBrowseReady = StartupReadinessPolicy.canBrowse(
+                        hasPhotoPermission = state.hasPhotoPermission,
+                        publishedVisiblePhotoCount = accessSafePersistedCount,
+                        baseSyncComplete = false,
+                    ),
+                )
+            }
+
             syncMediaStoreIncremental(
                 forceFullSync = photoIndex.snapshot().isEmpty(),
                 accessGenerationHint = accessGeneration,
             )
 
-            uiState.update {
-                it.copy(
+            uiState.update { state ->
+                state.copy(
                     isIndexing = false,
                     indexProgress = 1f,
+                    basicBrowseReady = StartupReadinessPolicy.canBrowse(
+                        hasPhotoPermission = state.hasPhotoPermission,
+                        publishedVisiblePhotoCount = photoIndex.snapshot().size,
+                        baseSyncComplete = true,
+                    ),
                     searchReady = true,
                 )
             }
             tryConsumePendingStoryLaunch()
 
             TaggingWorker.enqueueLibraryMaintenance(context)
+            uiState.update { it.copy(enrichmentScheduled = true) }
             TrashPurgeWorker.enqueueDaily(context)
             if (archiveService.isEnabled()) {
                 ArchiveScanWorker.enqueueDaily(context)
