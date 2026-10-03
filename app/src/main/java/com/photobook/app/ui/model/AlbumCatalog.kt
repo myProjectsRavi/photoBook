@@ -159,3 +159,33 @@ fun filterAlbumScopeRecords(
     }
     is AlbumScope.SmartQuery -> records.filter { it.id in smartQueryIds }
 }
+
+
+object AlbumPersonalizationPolicy {
+    const val MAX_PINNED_ALBUMS = 6
+
+    fun sanitizePinnedKeys(
+        requestedKeys: List<String>,
+        catalog: List<AlbumDescriptor>,
+    ): List<String> {
+        val validKeys = catalog.asSequence().map(AlbumDescriptor::key).toHashSet()
+        return requestedKeys
+            .asSequence()
+            .filter(validKeys::contains)
+            .distinct()
+            .take(MAX_PINNED_ALBUMS)
+            .toList()
+    }
+
+    fun partition(
+        catalog: List<AlbumDescriptor>,
+        requestedKeys: List<String>,
+    ): Pair<List<AlbumDescriptor>, List<AlbumDescriptor>> {
+        val pinnedKeys = sanitizePinnedKeys(requestedKeys, catalog)
+        val byKey = catalog.associateBy(AlbumDescriptor::key)
+        val pinned = pinnedKeys.mapNotNull(byKey::get)
+        val pinnedKeySet = pinnedKeys.toHashSet()
+        val unpinned = catalog.filterNot { it.key in pinnedKeySet }
+        return pinned to unpinned
+    }
+}
