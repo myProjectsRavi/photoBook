@@ -3,6 +3,7 @@ package com.photobook.app.ui.component
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,12 +33,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.paging.compose.LazyPagingItems
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.ui.model.TimelineMark
+import com.photobook.app.util.PerformanceProfiler
+import com.photobook.app.util.ThumbnailDecodePolicy
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
@@ -56,6 +60,10 @@ fun PhotoGrid(
     val haptics = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
     val density = LocalDensity.current
+    val context = LocalContext.current
+    val maxThumbnailRequestSizePx = remember {
+        PerformanceProfiler.from(context).thumbnailRequestSizePx
+    }
 
     var scrubTrackHeightPx by remember { mutableFloatStateOf(1f) }
     var scrubY by remember { mutableFloatStateOf(0f) }
@@ -88,7 +96,18 @@ fun PhotoGrid(
         }
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val viewportWidthPx = with(density) {
+            maxWidth.toPx().roundToInt().coerceAtLeast(1)
+        }
+        val thumbnailBudget = remember(viewportWidthPx, columns, maxThumbnailRequestSizePx) {
+            ThumbnailDecodePolicy.forGrid(
+                viewportWidthPx = viewportWidthPx,
+                columns = columns,
+                maxRequestSizePx = maxThumbnailRequestSizePx,
+            )
+        }
+
         LazyVerticalGrid(
             state = gridState,
             columns = GridCells.Fixed(columns),
@@ -109,6 +128,7 @@ fun PhotoGrid(
                     showSelectionState = isSelectionMode,
                     onClick = { onPhotoClick(photo) },
                     onLongClick = { onPhotoLongClick(photo) },
+                    requestSizePx = thumbnailBudget.requestSizePx,
                 )
             }
         }
