@@ -178,3 +178,13 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - Startup readiness now distinguishes permission, safe basic browsing, base-sync/search readiness, and whether optional enrichment was merely scheduled. Access-filtered persisted rows may be browsed while base reconciliation continues; no ungranted persisted rows are published.
 - Empty first launch still waits for base sync before browsing; optional enrichment is never reported as complete merely because browsing is available.
 - Main remains untouched. No physical/OEM/camera/battery/thermal evidence is claimed.
+
+
+## S12 Durable scanning — ACCEPTED
+
+- Tested source: `19714f05851e4d75af589033c0167beb0c66a3a3`.
+- Android Verification `37141371232`: SUCCESS, artifact `11280413100`, digest `sha256:476d7e90c522bdb8454dbfb01b1c95e2982570e8eb2335431e605805b7164299`.
+- Offline API-35 targeted `37141371142`: SUCCESS, artifact `11280372822`, digest `sha256:2221d39f10fb69d3a574f7966d19d959c53186eb5d24d3a976b95ebc4b7c8fa4`.
+- Full and generation-delta MediaStore scans are now cooperative-cancellation aware every 256 rows; index construction checks cancellation between bounded record-build batches.
+- Deterministic batching tests cover 10k/50k/100k libraries (40/196/391 checkpoints at 256 rows). Existing Room persistence remains bounded at 200-row batches and access-generation commit gates remain unchanged.
+- No claim is made that manifest-only scale tests equal physical-device scan timing. No physical/OEM/battery/thermal evidence is claimed.
