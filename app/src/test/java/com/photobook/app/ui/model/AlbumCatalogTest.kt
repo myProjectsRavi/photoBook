@@ -145,6 +145,17 @@ class AlbumCatalogTest {
         assertThat(pinned.map { it.key }.toSet().intersect(unpinned.map { it.key }.toSet())).isEmpty()
     }
 
+    @Test
+    fun personalization_pinCodec_preservesStableOrder() {
+        val keys = listOf("source:camera", "folder:abc", "smart:documents")
+
+        val encoded = AlbumPersonalizationPolicy.encodePinnedKeys(keys)
+        val decoded = AlbumPersonalizationPolicy.decodePinnedKeys(encoded)
+
+        assertThat(decoded).containsExactlyElementsIn(keys).inOrder()
+        assertThat(AlbumPersonalizationPolicy.decodePinnedKeys("")).isEmpty()
+    }
+
     private fun photo(
         id: Long,
         path: String,
