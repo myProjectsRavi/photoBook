@@ -328,3 +328,17 @@ Retry the normal contents-API MainScreen update changing only the clickable logo
 ### Exact next action
 
 Wait only for GitHub to surface the push-triggered runs for `e2f9892049479a9314b02beb557c378d70d42ca5`; inspect logs and fix demonstrated failures. Add focused large-font/inset regression evidence against production UI before marking S07 ACCEPTED. Do not start S08 until S07 is accepted.
+
+
+## S07 checkpoint — large-font regression committed
+
+- Active story: S07 Design system.
+- Prior S07 implementation is now backed by Android Verification run `37090184375`: SUCCESS on checkpoint head `d16efd81849fc27b14b135cf8dc88587d8c7f40c`, artifact `11262542363`, digest `sha256:d9e1926aa19c05de9b971c1f2f9ce92b160d32fcb7c7be0a153dcdd8545767f6`.
+- Targeted API-35 offline emulator run `37090158228`: SUCCESS on production source `e2f9892049479a9314b02beb557c378d70d42ca5`, artifact `11261568715`, digest `sha256:3860b5cc9fb8d35649c49ca316d236a980ae4657ec7ffc90d94ccb7a6cc2a477`.
+- Added focused 200% font-scale navigation regression in `MainNavigationInstrumentedTest.kt` at source commit `833337684a81cde4a31ad4735783a63cc5925ace`. It relaunches the real activity at font scale 2.0 and verifies Photos/Albums/Tools plus Albums/Tools content remain reachable, restoring font scale afterward.
+- Exact-source CI for `833337684a81cde4a31ad4735783a63cc5925ace` is pending; no PASS is claimed for the new test yet.
+- S07 remains IN_PROGRESS until the new instrumentation compiles/runs and final inset/accessibility review is complete. Main remains untouched.
+
+### Exact next action
+
+Inspect push-triggered Android Verification and targeted emulator runs for `833337684a81cde4a31ad4735783a63cc5925ace`. Diagnose any failure from logs. If green, complete final S07 diff/inset review, reconcile BACKLOG/VALIDATION/REVIEW_COVERAGE, and mark S07 ACCEPTED only if all acceptance anchors are satisfied. Do not start S08 before that decision.
