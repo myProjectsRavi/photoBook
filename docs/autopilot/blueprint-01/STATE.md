@@ -5,10 +5,10 @@ authorized_branch: autopilot/epics-features-user-stories
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
 current_epic: E04 Browsing performance  
-current_feature: Search correctness  
-current_story: S14 Search correctness  
+current_feature: Search feedback  
+current_story: S15 Search feedback  
 status: IN_PROGRESS  
-source_commit_tested: 30e914e112d5c7c1ca77d4781b14d2b1c13647c9 (S13 ACCEPTED)
+source_commit_tested: d15586ae3151412a4fd40724216e6a43519cea81 (S14 ACCEPTED)
 latest_checkpoint_commit: 4186434c680317000a7d6ee49ad9f89aed8d8bcf
 
 ## Source blueprint
@@ -483,3 +483,12 @@ S13 is ACCEPTED on exact tested source `30e914e112d5c7c1ca77d4781b14d2b1c13647c9
 ## S14 start
 
 S14 Search correctness is active. Inspect SearchEngineV2, FilterEngine, parser/classifier, parity/cancellation tests and deterministic ordering before changing semantics. Add a truth-table oracle if coverage is incomplete; do not optimize by narrowing authoritative matches.
+
+
+## S14 final acceptance
+
+S14 is ACCEPTED on exact tested source `d15586ae3151412a4fd40724216e6a43519cea81`. Truth-table, deterministic ordering, scale parity, cancellation and stale-generation fail-closed behavior are all reproducibly covered.
+
+## S15 start
+
+S15 Search feedback is active. Inspect readiness/result-query publication, stale-query suppression, empty/limited/failure UX and existing search UI tests before editing. Feedback must be truthful and must not render stale results as current.
