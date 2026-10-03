@@ -5,10 +5,10 @@ authorized_branch: autopilot/epics-features-user-stories
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
 current_epic: E04 Browsing performance  
-current_feature: Durable scanning  
-current_story: S12 Durable scanning  
+current_feature: Resource scheduling  
+current_story: S13 Resource scheduling  
 status: IN_PROGRESS  
-source_commit_tested: 7efea3564b3aa513c9097de28e3e71755dba6c72 (S11 ACCEPTED)
+source_commit_tested: 19714f05851e4d75af589033c0167beb0c66a3a3 (S12 ACCEPTED)
 latest_checkpoint_commit: 4186434c680317000a7d6ee49ad9f89aed8d8bcf
 
 ## Source blueprint
@@ -465,3 +465,12 @@ S11 Progressive startup is now the first incomplete dependency-satisfied story. 
 ## S12 start
 
 S12 Durable scanning is now the first incomplete dependency-satisfied story. Inspect MediaStoreScanner batching, IndexBuilder/persistence commit behavior, cancellation points, access reconciliation and existing 10k/50k/100k fixture tooling before editing. Keep ingestion bounded and cancellation-safe.
+
+
+## S12 final acceptance
+
+S12 is ACCEPTED on exact tested source `19714f05851e4d75af589033c0167beb0c66a3a3`. Cooperative scan/build cancellation, bounded persistence and access-safe reconciliation are preserved.
+
+## S13 start
+
+S13 Resource scheduling is active. Inspect PhotoIndex revision semantics, full-feed rebuild triggers, optional analysis scheduling, and foreground-browse coordination before editing.
