@@ -314,7 +314,7 @@ class MainViewModel @Inject constructor(
     }
     private var latestSearchResultIds: List<Long> = emptyList()
     private var latestVisibleResultIds: List<Long> = emptyList()
-    private var lastMemoryRecordsIdentity: Int = 0
+    private var lastMemoryStructuralRevision: Long = -1L
     private var lastMemoryAccessGeneration: Long = -1L
     private var pendingStoryLaunch: PendingStoryLaunch? = null
 
@@ -1727,14 +1727,14 @@ class MainViewModel @Inject constructor(
     }
 
     private fun maybeRefreshMemoryStories(snapshot: AccessScopedPhotoSnapshot) {
-        val identity = System.identityHashCode(snapshot.records)
+        val structuralRevision = photoIndex.structuralRevision()
         if (
-            identity == lastMemoryRecordsIdentity &&
+            structuralRevision == lastMemoryStructuralRevision &&
             snapshot.accessGeneration == lastMemoryAccessGeneration
         ) {
             return
         }
-        lastMemoryRecordsIdentity = identity
+        lastMemoryStructuralRevision = structuralRevision
         lastMemoryAccessGeneration = snapshot.accessGeneration
         memoryRefreshRequests.trySend(
             MemoryRefreshRequest(
@@ -1747,7 +1747,7 @@ class MainViewModel @Inject constructor(
     private fun invalidateAccessDerivedMemories(): Long {
         return synchronized(memoryPublicationLock) {
             val nextGeneration = accessGenerationGate.advance()
-            lastMemoryRecordsIdentity = 0
+            lastMemoryStructuralRevision = -1L
             lastMemoryAccessGeneration = -1L
             uiState.update { state ->
                 state.copy(
