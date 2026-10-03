@@ -403,3 +403,18 @@ Retry only the pure `AlbumCatalog.kt` personalization-policy mutation through th
 ### Exact next action
 
 Retry the same bounded `AlbumCatalog.kt` policy through the normal contents API. If accepted, add focused unit tests for max-six, stale-key removal, stable de-duplication, and zero duplicate descriptors, then inspect exact-source CI before wiring persistence/UI. Keep S08 IN_PROGRESS; do not start S09.
+
+
+## S08 checkpoint — source mutation blocked again
+
+- Active story: S08 Local personalization; S06 and S07 remain ACCEPTED.
+- Branch comparison at run start: 95 commits ahead / 0 behind main; merge base remains `d693acd7c52f285b6ba475fdd3712a10e419d4e1`. Main was not modified.
+- Re-read canonical STATE/BACKLOG/VALIDATION/DECISIONS/REVIEW_COVERAGE, confirmed no root AGENTS.md or CONTRIBUTING.md exists on the branch, and re-inspected `AlbumCatalog.kt`, `AlbumCatalogTest.kt`, `MainViewModel.kt`, `MainScreen.kt`, and direct `MainActivity.kt` caller.
+- Retried the bounded S08 album-pin policy through the normal authenticated contents API. The update of `AlbumCatalog.kt` was rejected by the connector safety layer before mutation.
+- Tried the same smallest coherent policy as a separate production model file through the normal authenticated create-file API; that mutation was also rejected before repository change.
+- No lower-level Git object/ref operation was attempted. No source commit, test result, or CI PASS is claimed.
+- No privacy, storage, Vault, offline, original-media, cancellation, destructive-confirmation, or package gate was changed.
+
+### Exact next action
+
+Retry the bounded pure S08 personalization policy through the normal authenticated GitHub contents API. Once a production source mutation is accepted, add focused unit tests for maximum six pins, stale-key removal, stable de-duplication, and zero duplicated descriptors, then inspect exact-source CI before wiring local persistence/UI and hide-Memories. Keep S08 IN_PROGRESS; do not start S09.
