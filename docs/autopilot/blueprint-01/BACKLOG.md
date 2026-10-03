@@ -20,7 +20,7 @@ Execution rule: select the first incomplete story whose dependencies pass. Do no
 | S12 | E04 Browsing performance | Durable scanning | S11 | ACCEPTED | Batch/cancellation-aware MediaStore ingestion and access-safe reconciliation at 10k/50k/100k. |
 | S13 | E04 Browsing performance | Resource scheduling | S10,S12 | ACCEPTED | Reduce rebuild work, type revisions, coordinate heavy optional analysis with foreground browsing. |
 | S14 | E05 Search and intelligence | Search correctness | S13 | ACCEPTED | Preserve complete search semantics with truth-table oracle, deterministic ordering and parity/cancellation tests. |
-| S15 | E05 Search and intelligence | Search feedback | S14 | NOT_STARTED | Explicit readiness/failure states; no stale-query results; truthful partial/limited/failed UX. |
+| S15 | E05 Search and intelligence | Search feedback | S14 | ACCEPTED | Explicit readiness/failure states; no stale-query results; truthful partial/limited/failed UX. |
 | S16 | E05 Search and intelligence | In-photo search | S15 | NOT_STARTED | Preserve one OCR layout/session, geometry/insets/reveal behavior; reject stale lifecycle results. |
 | S17 | E05 Search and intelligence | Offline maintenance | S16 | NOT_STARTED | Resumable TaggingWorker and local Index status; bounded retries; first-use offline packaged inference. |
 | S18 | E06 Viewer and exports | Editing | S03,S07 | NOT_STARTED | Shared EditTransform; preview/export pixel/geometry parity across crop/rotation/tone/orientation. |
