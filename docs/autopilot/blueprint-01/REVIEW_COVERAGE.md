@@ -289,3 +289,8 @@ Reviewed production/direct-call/test scope: `ui/model/AlbumCatalog.kt`, `ui/view
 ## S09 targeted review closure
 
 Reviewed changed production/direct-call/test scope: `util/ThumbnailDecodePolicy.kt`, `util/PerformanceProfiler.kt`, `ui/component/PhotoThumbnail.kt`, `ui/component/PhotoGrid.kt`, `di/AppModule.kt`, `PhotoBookApplication.kt`, `ThumbnailDecodePolicyTest.kt`, and `PerformanceProfilerTest.kt`. Existing Coil cache policies and low-memory trimming were preserved; no full-resolution gallery decode path was introduced.
+
+
+## S10 targeted review closure
+
+Reviewed changed production/direct-call/test scope: `ui/component/PhotoGrid.kt`, `ui/component/GridContinuityPolicy.kt`, `ui/screen/MainScreen.kt`, `ui/viewmodel/MainViewModel.kt`, `MainActivity.kt`, and `GridContinuityPolicyTest.kt`. Paging remains bounded and viewer presentation still overlays the retained Photos shell; S10 does not retain the full library in Compose state.
