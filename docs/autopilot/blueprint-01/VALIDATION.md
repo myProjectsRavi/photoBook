@@ -133,3 +133,15 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - No physical-device/OEM/camera/battery/thermal claim is made; hosted emulator evidence is labeled as such.
 
 **Decision: S05 ACCEPTED.** The Photos-first shell, Albums/Tools reachability, no automatic keyboard, no PRO badge, and preserved tested journeys have reproducible exact-source evidence.
+
+
+## S08 Local personalization — ACCEPTED
+
+- Tested source: `b58e09c901a5559d0c80136a5283d37b6a15813a`.
+- Android Verification run `37135944789`: SUCCESS. Artifact `11278023491`, digest `sha256:9b51fb39ad99d174d46c1fe6527f3591d85f787e6d7501a8b0cdca50f55e1609`.
+- Offline API-35 targeted run `37135944729`: SUCCESS. Artifact `11278472290`, digest `sha256:fb13cc7b558958a996ffb3adf9205e7f0f2afca9438171a0b8ed0be8f1e93eac`.
+- Production behavior persists only typed album descriptor keys locally, removes stale/duplicate keys, preserves stable order, caps pins at six, and partitions pinned/unpinned albums without duplicate membership.
+- Local Memories visibility is persisted independently and suppresses home presentation without deleting or mutating curated memory data.
+- The previously failing 200%-font navigation evidence was fixed by bounded UI synchronization rather than weakening the accessibility assertion; the corrected targeted suite is green.
+- No account, network, telemetry, cloud, storage-permission, Vault, destructive-action, original-media, or cancellation contract was broadened.
+- No physical/OEM/camera/battery/thermal evidence is claimed.
