@@ -342,3 +342,19 @@ Wait only for GitHub to surface the push-triggered runs for `e2f9892049479a9314b
 ### Exact next action
 
 Inspect push-triggered Android Verification and targeted emulator runs for `833337684a81cde4a31ad4735783a63cc5925ace`. Diagnose any failure from logs. If green, complete final S07 diff/inset review, reconcile BACKLOG/VALIDATION/REVIEW_COVERAGE, and mark S07 ACCEPTED only if all acceptance anchors are satisfied. Do not start S08 before that decision.
+
+
+## S07 checkpoint — large-font harness crash diagnosed and fixed
+
+- Active story: S07 Design system.
+- Android Verification run `37091002926` succeeded on checkpoint head `1330f2c5be04e557be48d5ed0d32878ce556f6a5`, which contains the S07 production changes and large-font test source.
+- Targeted emulator run `37090993788` failed only when `mainShell_largeFont_keepsPrimaryNavigationReachable` began. Job `111111112603` shows all preceding targeted tests green, then `Process crashed`.
+- Root cause is test-harness self-termination: the new large-font test called `am force-stop com.photobook.app` while AndroidJUnitRunner is hosted in that package, reproducing the same harness class of failure previously fixed in S05. No production crash is inferred.
+- Smallest test-only fix committed at `ca2327b29d19d76d5d8b05e1afa2a28f65533151`: replace force-stop with HOME + relaunch while retaining 2.0 font scale, primary-navigation reachability assertions, and font-scale restoration.
+- Failed-run artifact: `11262308746`, digest `sha256:18c00deb9617f7eff893759c9fe0f5fed693bdf67864d4a17a89cdabae4f24d1`.
+- No production behavior, privacy/offline/storage/Vault/original-media/destructive-action/cancellation gate was weakened. Main was not modified.
+- Exact-source CI for `ca2327b2...` is pending; no PASS is claimed for the corrected large-font test yet.
+
+### Exact next action
+
+Inspect push-triggered Android Verification and Autopilot Targeted Emulator Verification for `ca2327b29d19d76d5d8b05e1afa2a28f65533151`. If green, finish S07 inset/diff review and reconcile BACKLOG/VALIDATION/REVIEW_COVERAGE before ACCEPTED. If either fails, diagnose the exact log and fix only the demonstrated issue. Do not start S08.
