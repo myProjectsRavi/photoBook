@@ -72,7 +72,11 @@ class MainNavigationInstrumentedTest {
         val originalFontScale = device.executeShellCommand("settings get system font_scale").trim()
         try {
             device.executeShellCommand("settings put system font_scale 2.0")
-            device.executeShellCommand("am force-stop ${targetContext.packageName}")
+            // Do not force-stop the target package: instrumentation is hosted in the same
+            // package process and force-stop would terminate the test runner itself.
+            // HOME backgrounds the activity; launching the package again recreates the
+            // activity with the updated font-scale configuration.
+            device.pressHome()
             val launchIntent = targetContext.packageManager
                 .getLaunchIntentForPackage(targetContext.packageName)
                 ?.apply {
