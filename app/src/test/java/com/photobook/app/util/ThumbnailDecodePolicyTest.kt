@@ -30,7 +30,7 @@ class ThumbnailDecodePolicyTest {
     }
 
     @Test
-    fun compactFourColumn720Viewport_uses192Bucket() {
+    fun compactFourColumn720Viewport_uses256Bucket() {
         val budget = ThumbnailDecodePolicy.forGrid(
             viewportWidthPx = 720,
             columns = 4,
