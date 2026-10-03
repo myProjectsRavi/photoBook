@@ -101,7 +101,7 @@ class MediaStoreScanner @Inject constructor(
 
             var scanned = 0
             while (cursor.moveToNext()) {
-                if (scanned % SCAN_CANCELLATION_CHECK_INTERVAL == 0) {
+                if (scanned % MediaScanBatchPolicy.DEFAULT_BATCH_SIZE == 0) {
                     currentCoroutineContext().ensureActive()
                 }
                 val id = cursor.getLong(idIndex)
@@ -154,9 +154,6 @@ class MediaStoreScanner @Inject constructor(
         return photos
     }
 
-    private companion object {
-        const val SCAN_CANCELLATION_CHECK_INTERVAL = 256
-    }
 }
 
 @Suppress("DEPRECATION")
