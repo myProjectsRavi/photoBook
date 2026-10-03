@@ -12,9 +12,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +43,7 @@ import com.photobook.app.ui.model.TimelineMark
 import com.photobook.app.util.PerformanceProfiler
 import com.photobook.app.util.ThumbnailDecodePolicy
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 @Composable
@@ -54,9 +55,9 @@ fun PhotoGrid(
     isSelectionMode: Boolean,
     onPhotoClick: (PhotoRecord) -> Unit,
     onPhotoLongClick: (PhotoRecord) -> Unit,
+    gridState: LazyGridState,
     modifier: Modifier = Modifier,
 ) {
-    val gridState = rememberLazyGridState()
     val haptics = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
     val density = LocalDensity.current
@@ -69,7 +70,8 @@ fun PhotoGrid(
     var scrubY by remember { mutableFloatStateOf(0f) }
     var isScrubbing by remember { mutableStateOf(false) }
     var activeTimelineLabel by remember { mutableStateOf<String?>(null) }
-    var lastScrubTargetIndex by remember { mutableIntStateOf(-1) }
+    var lastScrubTargetIndex by remember(photos.itemCount) { mutableIntStateOf(-1) }
+    var scrubScrollJob by remember { mutableStateOf<Job?>(null) }
 
     val sortedMarks = remember(timelineMarks) { timelineMarks.sortedBy { mark -> mark.index } }
 
@@ -84,7 +86,8 @@ fun PhotoGrid(
 
         if (targetIndex != lastScrubTargetIndex) {
             lastScrubTargetIndex = targetIndex
-            coroutineScope.launch {
+            scrubScrollJob?.cancel()
+            scrubScrollJob = coroutineScope.launch {
                 gridState.scrollToItem(targetIndex)
             }
         }
@@ -154,6 +157,7 @@ fun PhotoGrid(
                                 activeTimelineLabel = null
                             },
                             onDragCancel = {
+                                scrubScrollJob?.cancel()
                                 isScrubbing = false
                                 activeTimelineLabel = null
                             },
