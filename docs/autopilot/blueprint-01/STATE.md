@@ -4,11 +4,11 @@ cycle: blueprint-01
 authorized_branch: autopilot/epics-features-user-stories  
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
-current_epic: E03 Gallery experience  
-current_feature: Local personalization  
-current_story: S08 Local personalization  
+current_epic: E04 Browsing performance  
+current_feature: Decode budget  
+current_story: S09 Decode budget  
 status: IN_PROGRESS  
-source_commit_tested: ca2327b29d19d76d5d8b05e1afa2a28f65533151 (S07 ACCEPTED; targeted API-35 evidence)
+source_commit_tested: b58e09c901a5559d0c80136a5283d37b6a15813a (S08 ACCEPTED)
 latest_checkpoint_commit: 4186434c680317000a7d6ee49ad9f89aed8d8bcf
 
 ## Source blueprint
@@ -418,3 +418,15 @@ Retry the same bounded `AlbumCatalog.kt` policy through the normal contents API.
 ### Exact next action
 
 Retry the bounded pure S08 personalization policy through the normal authenticated GitHub contents API. Once a production source mutation is accepted, add focused unit tests for maximum six pins, stale-key removal, stable de-duplication, and zero duplicated descriptors, then inspect exact-source CI before wiring local persistence/UI and hide-Memories. Keep S08 IN_PROGRESS; do not start S09.
+
+
+## S08 final acceptance
+
+- S08 is **ACCEPTED** on exact tested source `b58e09c901a5559d0c80136a5283d37b6a15813a`.
+- Android Verification `37135944789` and offline API-35 targeted verification `37135944729` both succeeded; exact artifact identities are recorded in VALIDATION.md.
+- Local personalization provides at most six typed pinned album descriptors, sanitizes stale/duplicate keys, never duplicates membership between pinned and ordinary sections, and persists a device-local Memories visibility preference without deleting curated data.
+- Main was not modified. No physical-device claims are made.
+
+## S09 start
+
+S09 Decode budget is the first incomplete dependency-satisfied story. Inspect thumbnail/decode production paths, direct callers, caches and tests before changing decode behavior. Measure viewport-sized bucket/cache/resource policy first; do not claim performance improvements without measured evidence.
