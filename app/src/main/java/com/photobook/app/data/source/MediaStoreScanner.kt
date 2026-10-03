@@ -7,13 +7,15 @@ import android.provider.MediaStore
 import com.photobook.app.data.model.RawPhotoData
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 class MediaStoreScanner @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
 
     @Suppress("DEPRECATION")
-    fun scanAll(): List<RawPhotoData> {
+    suspend fun scanAll(): List<RawPhotoData> {
         return queryPhotos(
             selection = null,
             selectionArgs = null,
@@ -21,7 +23,7 @@ class MediaStoreScanner @Inject constructor(
     }
 
     @Suppress("DEPRECATION")
-    fun scanChangedSince(lastGeneration: Long): List<RawPhotoData> {
+    suspend fun scanChangedSince(lastGeneration: Long): List<RawPhotoData> {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             return emptyList()
         }
@@ -63,7 +65,7 @@ class MediaStoreScanner @Inject constructor(
     }
 
     @Suppress("DEPRECATION")
-    private fun queryPhotos(
+    private suspend fun queryPhotos(
         selection: String?,
         selectionArgs: Array<String>?,
     ): List<RawPhotoData> {
@@ -97,7 +99,11 @@ class MediaStoreScanner @Inject constructor(
                 -1
             }
 
+            var scanned = 0
             while (cursor.moveToNext()) {
+                if (scanned % SCAN_CANCELLATION_CHECK_INTERVAL == 0) {
+                    currentCoroutineContext().ensureActive()
+                }
                 val id = cursor.getLong(idIndex)
                 val displayName = cursor.getString(displayNameIndex).orEmpty()
                 val uriString = ContentUris.withAppendedId(
@@ -142,9 +148,14 @@ class MediaStoreScanner @Inject constructor(
                     folderPath = folderPath,
                     generationModified = if (generationIndex >= 0) cursor.getLong(generationIndex) else null,
                 )
+                scanned += 1
             }
         }
         return photos
+    }
+
+    private companion object {
+        const val SCAN_CANCELLATION_CHECK_INTERVAL = 256
     }
 }
 
