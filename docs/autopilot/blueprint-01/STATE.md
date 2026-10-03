@@ -5,10 +5,10 @@ authorized_branch: autopilot/epics-features-user-stories
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
 current_epic: E04 Browsing performance  
-current_feature: Decode budget  
-current_story: S09 Decode budget  
+current_feature: Grid continuity  
+current_story: S10 Grid continuity  
 status: IN_PROGRESS  
-source_commit_tested: b58e09c901a5559d0c80136a5283d37b6a15813a (S08 ACCEPTED)
+source_commit_tested: 564efdd847db9c11c7740adc00fe55be78a9d2cd (S09 ACCEPTED)
 latest_checkpoint_commit: 4186434c680317000a7d6ee49ad9f89aed8d8bcf
 
 ## Source blueprint
@@ -430,3 +430,15 @@ Retry the bounded pure S08 personalization policy through the normal authenticat
 ## S09 start
 
 S09 Decode budget is the first incomplete dependency-satisfied story. Inspect thumbnail/decode production paths, direct callers, caches and tests before changing decode behavior. Measure viewport-sized bucket/cache/resource policy first; do not claim performance improvements without measured evidence.
+
+
+## S09 final acceptance
+
+- S09 is **ACCEPTED** on exact tested source `564efdd847db9c11c7740adc00fe55be78a9d2cd`.
+- Android Verification `37137095760` and offline API-35 targeted verification `37137095732` both succeeded; exact artifact IDs/digests are recorded in VALIDATION.md.
+- Thumbnail decode requests are now bounded by viewport-derived stable buckets plus the existing lite/standard tier cap. Cache/resource budgets and low-memory trimming remain intact.
+- Main was not modified. Hosted x86_64 emulator evidence is not native-ARM performance certification and no physical-device claim is made.
+
+## S10 start
+
+S10 Grid continuity is now the first incomplete dependency-satisfied story. Inspect paging identity, grid state ownership, fast-scrub cancellation, viewer-return behavior and tests before editing. Preserve bounded paging and stable photo identity; do not trade continuity for unbounded retained items.
