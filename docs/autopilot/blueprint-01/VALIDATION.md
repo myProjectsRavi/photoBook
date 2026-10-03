@@ -145,3 +145,14 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - The previously failing 200%-font navigation evidence was fixed by bounded UI synchronization rather than weakening the accessibility assertion; the corrected targeted suite is green.
 - No account, network, telemetry, cloud, storage-permission, Vault, destructive-action, original-media, or cancellation contract was broadened.
 - No physical/OEM/camera/battery/thermal evidence is claimed.
+
+
+## S09 Decode budget — ACCEPTED
+
+- Tested source: `564efdd847db9c11c7740adc00fe55be78a9d2cd`.
+- Android Verification run `37137095760`: SUCCESS. Artifact `11278987191`, digest `sha256:fd6641c72b35b9b22a6defa2f005a594adf3a1155a280180773fa9f1a5149b19`.
+- Offline API-35 targeted run `37137095732`: SUCCESS. Artifact `11278774921`, digest `sha256:375c804632d5598dc705df9c7d443e53caa42f0599fd9a45e0280729c63f9e5f`.
+- Gallery thumbnail requests now use stable viewport/column decode buckets with a 5% overscan and the existing device-tier cap. A standard 1080px/3-column viewport resolves to 384px instead of a fixed 512px request; a 720px/4-column viewport resolves to 192px; lite devices remain capped at 256px.
+- Unit evidence covers request dimensions, estimated ARGB byte budgets, invalid inputs, and the existing lite/standard image-cache caps. Existing Coil memory/disk caching, hardware bitmaps, and application low-memory cache trimming remain in place.
+- The first S09 test expectation exposed a real bucket mismatch and failed Android Verification; the policy/test was corrected based on the actual geometry rather than waiving the failure.
+- Hosted emulator evidence is correctness/privacy evidence, not native-ARM decode timing certification. No physical/OEM/camera/battery/thermal evidence is claimed.
