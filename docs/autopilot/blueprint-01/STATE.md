@@ -310,3 +310,21 @@ S06 is **ACCEPTED**. Next eligible story is S07 Design system; start it on the n
 ### Exact next action
 
 Retry the normal contents-API MainScreen update changing only the clickable logo target from 44dp to 48dp. After it commits, inspect exact-source CI, then continue S07 with centralized theme roles, bounded selection actions, and reproducible 200% font/inset accessibility evidence. Keep S07 IN_PROGRESS; do not start S08.
+
+
+## S07 checkpoint — implementation advanced
+
+- Active story: S07 Design system.
+- Production commits this run:
+  - `553435fc56913cd22200c3b2e521e9bc378d88e4`: clickable PhotoBook logo target increased from 44dp to 48dp.
+  - `1912816805d745dce5019f3b1bda282e455fbf07`: centralized gallery semantic color roles in `ui/theme/Color.kt`.
+  - `9f76604cc9b4b7f56c9920387f418190f3d3b88d`: migrated MainScreen gallery palette to named semantic roles.
+  - `e2f9892049479a9314b02beb557c378d70d42ca5`: bounded selection actions to Clear + Share + overflow; Copy text/PDF/Vault/Trash remain reachable from overflow.
+- No privacy, storage, Vault, original-media, offline, destructive-confirmation, cancellation, package-size, or Internet-permission gate was weakened.
+- GitHub Actions had not yet surfaced exact-head runs for `e2f9892049479a9314b02beb557c378d70d42ca5` at the immediate query, so no CI PASS is claimed.
+- Remaining S07 acceptance work: reproducible large-font/inset accessibility evidence, exact-source Android Verification, hosted API-35 targeted evidence where required, final diff review, and secondary ledger reconciliation.
+- Main was not modified.
+
+### Exact next action
+
+Wait only for GitHub to surface the push-triggered runs for `e2f9892049479a9314b02beb557c378d70d42ca5`; inspect logs and fix demonstrated failures. Add focused large-font/inset regression evidence against production UI before marking S07 ACCEPTED. Do not start S08 until S07 is accepted.
