@@ -5,10 +5,10 @@ authorized_branch: autopilot/epics-features-user-stories
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
 current_epic: E04 Browsing performance  
-current_feature: Progressive startup  
-current_story: S11 Progressive startup  
+current_feature: Durable scanning  
+current_story: S12 Durable scanning  
 status: IN_PROGRESS  
-source_commit_tested: 296aa0370bce2c08b3fd8464ec422d67c9c99559 (S10 ACCEPTED)
+source_commit_tested: 7efea3564b3aa513c9097de28e3e71755dba6c72 (S11 ACCEPTED)
 latest_checkpoint_commit: 4186434c680317000a7d6ee49ad9f89aed8d8bcf
 
 ## Source blueprint
@@ -454,3 +454,14 @@ S10 Grid continuity is now the first incomplete dependency-satisfied story. Insp
 ## S11 start
 
 S11 Progressive startup is now the first incomplete dependency-satisfied story. Before editing, inspect permission readiness, database/index bootstrap, first-page publication, enrichment/tagging readiness and current startup tests. The next change must let safe basic browsing become available before optional enrichment completes without exposing stale/revoked media or claiming enrichment readiness early.
+
+
+## S11 final acceptance
+
+- S11 is **ACCEPTED** on exact tested source `7efea3564b3aa513c9097de28e3e71755dba6c72`.
+- Android Verification `37140788377` and offline API-35 targeted verification `37140788469` both succeeded.
+- Safe access-filtered persisted rows can be browsed before base reconciliation ends; search/enrichment readiness remains independently truthful.
+
+## S12 start
+
+S12 Durable scanning is now the first incomplete dependency-satisfied story. Inspect MediaStoreScanner batching, IndexBuilder/persistence commit behavior, cancellation points, access reconciliation and existing 10k/50k/100k fixture tooling before editing. Keep ingestion bounded and cancellation-safe.
