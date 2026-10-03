@@ -586,9 +586,9 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         return
     }
 
-    if (uiState.isIndexing) {
+    if (!uiState.basicBrowseReady) {
         OnboardingScreen(
-            isIndexing = true,
+            isIndexing = uiState.isIndexing,
             progress = uiState.indexProgress,
             onGrantPermission = {}
         )
