@@ -42,7 +42,6 @@ import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.ui.model.TimelineMark
 import com.photobook.app.util.PerformanceProfiler
 import com.photobook.app.util.ThumbnailDecodePolicy
-import kotlin.math.roundToInt
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -80,8 +79,11 @@ fun PhotoGrid(
         if (itemCount <= 0) return
 
         val clampedY = rawY.coerceIn(0f, scrubTrackHeightPx)
-        val fraction = (clampedY / scrubTrackHeightPx).coerceIn(0f, 1f)
-        val targetIndex = ((itemCount - 1) * fraction).roundToInt().coerceIn(0, itemCount - 1)
+        val targetIndex = GridContinuityPolicy.scrubTargetIndex(
+            rawY = clampedY,
+            trackHeightPx = scrubTrackHeightPx,
+            itemCount = itemCount,
+        ) ?: return
         scrubY = clampedY
 
         if (targetIndex != lastScrubTargetIndex) {
