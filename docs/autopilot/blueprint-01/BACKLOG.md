@@ -18,7 +18,7 @@ Execution rule: select the first incomplete story whose dependencies pass. Do no
 | S10 | E04 Browsing performance | Grid continuity | S09 | ACCEPTED | Stable feed identity/anchor, bounded paging, cancellation-correct scrub and return continuity. |
 | S11 | E04 Browsing performance | Progressive startup | S04 | ACCEPTED | Separate permission/basic/enrichment readiness; safely browse first page before enrichment completes. |
 | S12 | E04 Browsing performance | Durable scanning | S11 | ACCEPTED | Batch/cancellation-aware MediaStore ingestion and access-safe reconciliation at 10k/50k/100k. |
-| S13 | E04 Browsing performance | Resource scheduling | S10,S12 | NOT_STARTED | Reduce rebuild work, type revisions, coordinate heavy optional analysis with foreground browsing. |
+| S13 | E04 Browsing performance | Resource scheduling | S10,S12 | ACCEPTED | Reduce rebuild work, type revisions, coordinate heavy optional analysis with foreground browsing. |
 | S14 | E05 Search and intelligence | Search correctness | S13 | NOT_STARTED | Preserve complete search semantics with truth-table oracle, deterministic ordering and parity/cancellation tests. |
 | S15 | E05 Search and intelligence | Search feedback | S14 | NOT_STARTED | Explicit readiness/failure states; no stale-query results; truthful partial/limited/failed UX. |
 | S16 | E05 Search and intelligence | In-photo search | S15 | NOT_STARTED | Preserve one OCR layout/session, geometry/insets/reveal behavior; reject stale lifecycle results. |
