@@ -168,3 +168,13 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - Unit evidence covers deterministic edge/midpoint mapping, out-of-range clamping and fail-closed empty/invalid tracks.
 - The first exact-source validation correctly failed because two imports were missing after the refactor. Commit `296aa037...` fixed only those compile imports; the continuity behavior was unchanged and both authoritative gates then passed.
 - No unbounded retained-photo list, network behavior, privacy boundary, Vault behavior, destructive-action contract or original-media behavior was changed. No physical/OEM/camera/battery/thermal evidence is claimed.
+
+
+## S11 Progressive startup — ACCEPTED
+
+- Tested source: `7efea3564b3aa513c9097de28e3e71755dba6c72`.
+- Android Verification run `37140788377`: SUCCESS. Artifact `11280840914`, digest `sha256:557a5839e44569660a28734b1a0e6b38361b9f6ec1b481ece61734d99352c9ec`.
+- Offline API-35 targeted run `37140788469`: SUCCESS. Artifact `11280671264`, digest `sha256:099a0cdc9cf71a1894b8b651278c3f57feacd549a478f2201987acd15548171a`.
+- Startup readiness now distinguishes permission, safe basic browsing, base-sync/search readiness, and whether optional enrichment was merely scheduled. Access-filtered persisted rows may be browsed while base reconciliation continues; no ungranted persisted rows are published.
+- Empty first launch still waits for base sync before browsing; optional enrichment is never reported as complete merely because browsing is available.
+- Main remains untouched. No physical/OEM/camera/battery/thermal evidence is claimed.
