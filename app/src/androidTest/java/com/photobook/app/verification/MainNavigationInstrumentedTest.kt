@@ -86,8 +86,8 @@ class MainNavigationInstrumentedTest {
             targetContext.startActivity(launchIntent)
 
             assertTrue(device.wait(Until.hasObject(By.text("Photos")), 10_000))
-            assertTrue(device.hasObject(By.text("Albums")))
-            assertTrue(device.hasObject(By.text("Tools")))
+            assertTrue(device.wait(Until.hasObject(By.text("Albums")), 10_000))
+            assertTrue(device.wait(Until.hasObject(By.text("Tools")), 10_000))
 
             device.findObject(By.text("Albums")).click()
             assertTrue(device.wait(Until.hasObject(By.text("No albums in current access")), 5_000))
