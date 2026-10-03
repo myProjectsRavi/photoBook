@@ -163,6 +163,14 @@ fun filterAlbumScopeRecords(
 
 object AlbumPersonalizationPolicy {
     const val MAX_PINNED_ALBUMS = 6
+    private const val PIN_SEPARATOR = "\u001F"
+
+    fun encodePinnedKeys(keys: List<String>): String = keys.joinToString(PIN_SEPARATOR)
+
+    fun decodePinnedKeys(encoded: String?): List<String> =
+        encoded.orEmpty()
+            .split(PIN_SEPARATOR)
+            .filter(String::isNotBlank)
 
     fun sanitizePinnedKeys(
         requestedKeys: List<String>,
