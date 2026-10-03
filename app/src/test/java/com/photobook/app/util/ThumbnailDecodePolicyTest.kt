@@ -30,15 +30,15 @@ class ThumbnailDecodePolicyTest {
     }
 
     @Test
-    fun compactFourColumn720Viewport_uses256Bucket() {
+    fun compactFourColumn720Viewport_uses192Bucket() {
         val budget = ThumbnailDecodePolicy.forGrid(
             viewportWidthPx = 720,
             columns = 4,
             maxRequestSizePx = 512,
         )
 
-        assertThat(budget.requestSizePx).isEqualTo(256)
-        assertThat(budget.estimatedArgbBytes).isEqualTo(262_144L)
+        assertThat(budget.requestSizePx).isEqualTo(192)
+        assertThat(budget.estimatedArgbBytes).isEqualTo(147_456L)
     }
 
     @Test(expected = IllegalArgumentException::class)
