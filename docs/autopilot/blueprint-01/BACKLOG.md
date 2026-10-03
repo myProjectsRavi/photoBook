@@ -14,7 +14,7 @@ Execution rule: select the first incomplete story whose dependencies pass. Do no
 | S06 | E03 Gallery experience | Album organization | S05 | ACCEPTED | One typed album/source catalog; source appears once; route filters into Photos with clear scope. |
 | S07 | E03 Gallery experience | Design system | S05 | ACCEPTED | 48dp targets, theme roles, 200% font/accessibility/insets, simplify selection actions. |
 | S08 | E03 Gallery experience | Local personalization | S06,S07 | ACCEPTED | Max six local pinned album descriptors; hide Memories locally; no duplicated membership. |
-| S09 | E04 Browsing performance | Decode budget | S02 | NOT_STARTED | Measure viewport-sized thumbnail buckets/cache/resource policy before changing decode behavior. |
+| S09 | E04 Browsing performance | Decode budget | S02 | ACCEPTED | Measure viewport-sized thumbnail buckets/cache/resource policy before changing decode behavior. |
 | S10 | E04 Browsing performance | Grid continuity | S09 | NOT_STARTED | Stable feed identity/anchor, bounded paging, cancellation-correct scrub and return continuity. |
 | S11 | E04 Browsing performance | Progressive startup | S04 | NOT_STARTED | Separate permission/basic/enrichment readiness; safely browse first page before enrichment completes. |
 | S12 | E04 Browsing performance | Durable scanning | S11 | NOT_STARTED | Batch/cancellation-aware MediaStore ingestion and access-safe reconciliation at 10k/50k/100k. |
