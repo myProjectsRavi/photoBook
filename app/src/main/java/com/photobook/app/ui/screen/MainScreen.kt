@@ -38,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import coil.compose.AsyncImage
 import com.photobook.app.R
@@ -55,6 +56,8 @@ import com.photobook.app.ui.model.AlbumDescriptor
 import com.photobook.app.ui.model.AlbumKind
 import com.photobook.app.ui.model.AlbumPersonalizationPolicy
 import com.photobook.app.ui.model.AlbumScope
+import com.photobook.app.ui.model.SearchFeedbackPolicy
+import com.photobook.app.ui.model.SearchFeedbackState
 import com.photobook.app.ui.model.TimelineMark
 import com.photobook.app.ui.theme.PhotoBookGalleryAccentAmber
 import com.photobook.app.ui.theme.PhotoBookGalleryAccentIndigo
@@ -146,7 +149,13 @@ fun MainScreen(
     val isSelectionMode = selectedPhotoIds.isNotEmpty()
     var destination by rememberSaveable { mutableStateOf(MainDestination.Photos) }
     val photoGridState = rememberLazyGridState()
-    val isSearchRevisionCurrent = query == resultQuery
+    val searchFeedback = SearchFeedbackPolicy.resolve(
+        searchReady = searchReady,
+        query = query,
+        resultQuery = resultQuery,
+        resultCount = resultCount,
+        refreshFailed = results.loadState.refresh is LoadState.Error,
+    )
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -414,8 +423,8 @@ fun MainScreen(
                     .fillMaxSize()
                     .padding(horizontal = 20.dp)
             ) {
-                when {
-                    !searchReady -> {
+                when (searchFeedback) {
+                    SearchFeedbackState.NOT_READY -> {
                         WelcomeState(
                             memories = if (memoriesHidden) emptyList() else memoryStories,
                             onThisDayStory = if (memoriesHidden) null else onThisDayStory,
@@ -425,7 +434,7 @@ fun MainScreen(
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
-                    !isSearchRevisionCurrent -> {
+                    SearchFeedbackState.SEARCHING -> {
                         Box(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center,
@@ -433,20 +442,24 @@ fun MainScreen(
                             CircularProgressIndicator()
                         }
                     }
-                    query.isBlank() && resultCount == 0 -> {
-                        WelcomeState(
-                            memories = if (memoriesHidden) emptyList() else memoryStories,
-                            onThisDayStory = if (memoriesHidden) null else onThisDayStory,
-                            onOnThisDayClick = onOpenOnThisDayStory,
-                            onMemoryClick = onMemoryStorySelected,
-                            compact = true,
-                            modifier = Modifier.fillMaxSize(),
-                        )
+                    SearchFeedbackState.FAILED -> {
+                        SearchFailureState(modifier = Modifier.fillMaxSize())
                     }
-                    query.isNotBlank() && resultCount == 0 -> {
-                        EmptyState(modifier = Modifier.fillMaxSize())
+                    SearchFeedbackState.EMPTY -> {
+                        if (query.isBlank()) {
+                            WelcomeState(
+                                memories = if (memoriesHidden) emptyList() else memoryStories,
+                                onThisDayStory = if (memoriesHidden) null else onThisDayStory,
+                                onOnThisDayClick = onOpenOnThisDayStory,
+                                onMemoryClick = onMemoryStorySelected,
+                                compact = true,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        } else {
+                            EmptyState(modifier = Modifier.fillMaxSize())
+                        }
                     }
-                    else -> {
+                    SearchFeedbackState.RESULTS -> {
                         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                             val columns = if (maxWidth >= 700.dp) 5 else if (maxWidth >= 520.dp) 4 else 3
                             PhotoGrid(
@@ -564,6 +577,35 @@ fun MainScreen(
                 onPhotoClick = onDuplicatePhotoClick,
             )
         }
+    }
+}
+
+@Composable
+private fun SearchFailureState(modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier.padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(
+            imageVector = Icons.Default.ErrorOutline,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.error,
+            modifier = Modifier.size(56.dp),
+        )
+        Text(
+            text = "Search couldn’t refresh",
+            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Black),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 16.dp),
+        )
+        Text(
+            text = "PhotoBook did not replace this query with stale results. Try again after local indexing settles.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 8.dp),
+        )
     }
 }
 
