@@ -11,7 +11,7 @@ import kotlin.math.ceil
  */
 object ThumbnailDecodePolicy {
     private val bucketsPx = intArrayOf(128, 192, 256, 384, 512)
-    private const val OVERSCAN = 1.10
+    private const val OVERSCAN = 1.05
 
     data class Budget(
         val requestSizePx: Int,
