@@ -279,3 +279,8 @@ S02 runtime evidence is linked in `VALIDATION.md`. The failed broad/performance 
 | `.github/workflows/autopilot-targeted-verify.yml` | Existing correctness/privacy suite preserved and extended to execute the focused S05 navigation regression; no existing gate removed or weakened. |
 
 Runtime evidence and artifact identities are recorded in `VALIDATION.md`. Physical/OEM evidence remains unavailable and is not inferred from hosted emulation.
+
+
+## S08 targeted review closure
+
+Reviewed production/direct-call/test scope: `ui/model/AlbumCatalog.kt`, `ui/viewmodel/MainViewModel.kt`, `ui/screen/MainScreen.kt`, `MainActivity.kt`, `ui/model/AlbumCatalogTest.kt`, and `verification/MainNavigationInstrumentedTest.kt`. S08 changes are bounded to local personalization and retain existing offline/privacy/media-safety behavior.
