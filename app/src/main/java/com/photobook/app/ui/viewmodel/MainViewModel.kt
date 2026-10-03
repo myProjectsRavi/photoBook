@@ -49,6 +49,7 @@ import com.photobook.app.search.isUtilityPhoto
 import com.photobook.app.search.utilityKind
 import com.photobook.app.ui.model.AlbumCatalogBuilder
 import com.photobook.app.ui.model.AlbumDescriptor
+import com.photobook.app.ui.model.AlbumPersonalizationPolicy
 import com.photobook.app.ui.model.AlbumScope
 import com.photobook.app.ui.model.HomeFeedMode
 import com.photobook.app.ui.model.TimelineMark
@@ -112,6 +113,8 @@ class MainViewModel @Inject constructor(
         val searchReady: Boolean = false,
         val query: String = "",
         val albumCatalog: List<AlbumDescriptor> = emptyList(),
+        val pinnedAlbumKeys: List<String> = emptyList(),
+        val memoriesHidden: Boolean = false,
         val activeAlbum: AlbumDescriptor? = null,
         val photoCount: Int = 0,
         val resultCount: Int = 0,
@@ -232,9 +235,19 @@ class MainViewModel @Inject constructor(
             buildTimelineMarks(filteredIds, records)
         }
 
+        val sanitizedPinnedKeys = AlbumPersonalizationPolicy.sanitizePinnedKeys(
+            uiState.value.pinnedAlbumKeys,
+            albumCatalog,
+        )
+        if (sanitizedPinnedKeys != uiState.value.pinnedAlbumKeys) {
+            sharedPreferences.edit()
+                .putString(PINNED_ALBUM_KEYS_KEY, sanitizedPinnedKeys.joinToString(PINNED_ALBUM_SEPARATOR))
+                .apply()
+        }
         uiState.update { state ->
             state.copy(
                 albumCatalog = albumCatalog,
+                pinnedAlbumKeys = sanitizedPinnedKeys,
                 activeAlbum = state.activeAlbum?.let { active ->
                     albumCatalog.firstOrNull { descriptor -> descriptor.key == active.key }
                 },
@@ -339,8 +352,17 @@ class MainViewModel @Inject constructor(
     )
 
     init {
+        val persistedPins = sharedPreferences
+            .getString(PINNED_ALBUM_KEYS_KEY, "")
+            .orEmpty()
+            .split(PINNED_ALBUM_SEPARATOR)
+            .filter(String::isNotBlank)
         uiState.update {
-            it.copy(reelsEnabled = sharedPreferences.getBoolean(REELS_ENABLED_KEY, false))
+            it.copy(
+                reelsEnabled = sharedPreferences.getBoolean(REELS_ENABLED_KEY, false),
+                pinnedAlbumKeys = persistedPins,
+                memoriesHidden = sharedPreferences.getBoolean(MEMORIES_HIDDEN_KEY, false),
+            )
         }
         observeSuggestions()
     }
@@ -508,6 +530,27 @@ class MainViewModel @Inject constructor(
                 viewerUsesVisibleWindow = false,
             )
         }
+    }
+
+
+    fun onToggleAlbumPinned(descriptor: AlbumDescriptor) {
+        val state = uiState.value
+        val requested = if (descriptor.key in state.pinnedAlbumKeys) {
+            state.pinnedAlbumKeys.filterNot { it == descriptor.key }
+        } else {
+            state.pinnedAlbumKeys + descriptor.key
+        }
+        val sanitized = AlbumPersonalizationPolicy.sanitizePinnedKeys(requested, state.albumCatalog)
+        sharedPreferences.edit()
+            .putString(PINNED_ALBUM_KEYS_KEY, sanitized.joinToString(PINNED_ALBUM_SEPARATOR))
+            .apply()
+        uiState.update { it.copy(pinnedAlbumKeys = sanitized) }
+    }
+
+    fun onToggleMemoriesHidden() {
+        val hidden = !uiState.value.memoriesHidden
+        sharedPreferences.edit().putBoolean(MEMORIES_HIDDEN_KEY, hidden).apply()
+        uiState.update { it.copy(memoriesHidden = hidden) }
     }
 
     fun onSourceSelected(source: PhotoSource) {
@@ -1961,6 +2004,9 @@ class MainViewModel @Inject constructor(
         private const val RECORDS_UPDATE_DEBOUNCE_MS = 250L
         private const val MAX_DECLUTTER_CANDIDATES = 300
         private const val REELS_ENABLED_KEY = "reels_enabled_v1"
+        private const val PINNED_ALBUM_KEYS_KEY = "pinned_album_keys_v1"
+        private const val MEMORIES_HIDDEN_KEY = "memories_hidden_v1"
+        private const val PINNED_ALBUM_SEPARATOR = "\u001F"
         private val SEARCH_RUNTIME_STRATEGY = SearchRuntimeStrategy.V2
     }
 }
