@@ -100,6 +100,51 @@ class AlbumCatalogTest {
         assertThat(PhotoSource.fromToken("source:unknown-app")).isNull()
     }
 
+
+    @Test
+    fun personalization_sanitizesPinsAndPartitionsWithoutDuplicates() {
+        val catalog = (1..8).map { index ->
+            AlbumDescriptor(
+                key = "album:$index",
+                label = "Album $index",
+                count = index,
+                kind = AlbumKind.SmartQuery,
+                scope = AlbumScope.SmartQuery("query-$index"),
+            )
+        }
+
+        val requested = listOf(
+            "missing",
+            "album:3",
+            "album:3",
+            "album:1",
+            "album:8",
+            "album:2",
+            "album:7",
+            "album:6",
+            "album:5",
+        )
+
+        val sanitized = AlbumPersonalizationPolicy.sanitizePinnedKeys(requested, catalog)
+        val (pinned, unpinned) = AlbumPersonalizationPolicy.partition(catalog, requested)
+
+        assertThat(sanitized).containsExactly(
+            "album:3",
+            "album:1",
+            "album:8",
+            "album:2",
+            "album:7",
+            "album:6",
+        ).inOrder()
+        assertThat(sanitized).hasSize(AlbumPersonalizationPolicy.MAX_PINNED_ALBUMS)
+        assertThat(pinned.map { it.key }).containsExactlyElementsIn(sanitized).inOrder()
+        assertThat(unpinned.map { it.key }).containsExactly("album:4", "album:5").inOrder()
+        assertThat((pinned + unpinned).map { it.key }).containsExactlyElementsIn(
+            catalog.map { it.key },
+        )
+        assertThat(pinned.map { it.key }.toSet().intersect(unpinned.map { it.key }.toSet())).isEmpty()
+    }
+
     private fun photo(
         id: Long,
         path: String,
