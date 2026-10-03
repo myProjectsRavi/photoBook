@@ -284,3 +284,8 @@ Runtime evidence and artifact identities are recorded in `VALIDATION.md`. Physic
 ## S08 targeted review closure
 
 Reviewed production/direct-call/test scope: `ui/model/AlbumCatalog.kt`, `ui/viewmodel/MainViewModel.kt`, `ui/screen/MainScreen.kt`, `MainActivity.kt`, `ui/model/AlbumCatalogTest.kt`, and `verification/MainNavigationInstrumentedTest.kt`. S08 changes are bounded to local personalization and retain existing offline/privacy/media-safety behavior.
+
+
+## S09 targeted review closure
+
+Reviewed changed production/direct-call/test scope: `util/ThumbnailDecodePolicy.kt`, `util/PerformanceProfiler.kt`, `ui/component/PhotoThumbnail.kt`, `ui/component/PhotoGrid.kt`, `di/AppModule.kt`, `PhotoBookApplication.kt`, `ThumbnailDecodePolicyTest.kt`, and `PerformanceProfilerTest.kt`. Existing Coil cache policies and low-memory trimming were preserved; no full-resolution gallery decode path was introduced.
