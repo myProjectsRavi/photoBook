@@ -156,3 +156,15 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - Unit evidence covers request dimensions, estimated ARGB byte budgets, invalid inputs, and the existing lite/standard image-cache caps. Existing Coil memory/disk caching, hardware bitmaps, and application low-memory cache trimming remain in place.
 - The first S09 test expectation exposed a real bucket mismatch and failed Android Verification; the policy/test was corrected based on the actual geometry rather than waiving the failure.
 - Hosted emulator evidence is correctness/privacy evidence, not native-ARM decode timing certification. No physical/OEM/camera/battery/thermal evidence is claimed.
+
+
+## S10 Grid continuity — ACCEPTED
+
+- Tested source: `296aa0370bce2c08b3fd8464ec422d67c9c99559`.
+- Android Verification run `37139032192`: SUCCESS. Artifact `11279743597`, digest `sha256:55483966db272391f71601ff4720a27e029e072cf00ce0650d5be71f06fe5e4a`.
+- Offline API-35 targeted run `37139032249`: SUCCESS. Artifact `11279462227`, digest `sha256:6c8eecad10e82e32af8a92098c2363054ff6dc8dbc8ff3e38a6cfe0e300d8e21`.
+- The Photos shell now owns one saveable `LazyGridState`, so transient loading/empty-result branches and viewer overlays do not recreate the grid anchor. Stable photo IDs remain the loaded-item keys; Paging remains bounded by the existing 60-page size / 20 prefetch / 300 max loaded-item policy.
+- Fast scrub uses deterministic target mapping, cancels a superseded scroll before launching the latest target, and cancels an in-flight scrub when the result item count changes. Gesture cancellation also cancels the pending scroll.
+- Unit evidence covers deterministic edge/midpoint mapping, out-of-range clamping and fail-closed empty/invalid tracks.
+- The first exact-source validation correctly failed because two imports were missing after the refactor. Commit `296aa037...` fixed only those compile imports; the continuity behavior was unchanged and both authoritative gates then passed.
+- No unbounded retained-photo list, network behavior, privacy boundary, Vault behavior, destructive-action contract or original-media behavior was changed. No physical/OEM/camera/battery/thermal evidence is claimed.
