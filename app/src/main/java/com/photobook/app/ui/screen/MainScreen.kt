@@ -52,6 +52,7 @@ import com.photobook.app.ui.component.WelcomeState
 import com.photobook.app.search.SuggestionItem
 import com.photobook.app.ui.model.AlbumDescriptor
 import com.photobook.app.ui.model.AlbumKind
+import com.photobook.app.ui.model.AlbumPersonalizationPolicy
 import com.photobook.app.ui.model.AlbumScope
 import com.photobook.app.ui.model.TimelineMark
 import com.photobook.app.ui.theme.PhotoBookGalleryAccentAmber
@@ -107,6 +108,8 @@ fun MainScreen(
     archiveDueDeleteCount: Int,
     limitedPhotoAccess: Boolean,
     albumCatalog: List<AlbumDescriptor>,
+    pinnedAlbumKeys: List<String>,
+    memoriesHidden: Boolean,
     activeAlbumLabel: String?,
     onQueryChange: (String) -> Unit,
     onSearchSubmitted: () -> Unit,
@@ -129,6 +132,8 @@ fun MainScreen(
     onManagePhotoAccess: () -> Unit,
     onOpenArchives: () -> Unit,
     onAlbumSelected: (AlbumDescriptor) -> Unit,
+    onToggleAlbumPinned: (AlbumDescriptor) -> Unit,
+    onToggleMemoriesHidden: () -> Unit,
     onClearAlbumScope: () -> Unit,
     onOpenDuplicateFinder: () -> Unit,
     onRefreshDuplicates: () -> Unit,
@@ -288,6 +293,30 @@ fun MainScreen(
                     }
 
                     MainDestination.Albums -> {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column {
+                                Text(
+                                    text = "Memories",
+                                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Black),
+                                )
+                                Text(
+                                    text = if (memoriesHidden) "Hidden on this device" else "Shown on this device",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = !memoriesHidden,
+                                onCheckedChange = { onToggleMemoriesHidden() },
+                                enabled = !isSelectionMode,
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+
                         if (albumCatalog.isEmpty()) {
                             Text(
                                 text = "No albums in current access",
@@ -295,12 +324,17 @@ fun MainScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         } else {
+                            val (pinnedAlbums, unpinnedAlbums) = AlbumPersonalizationPolicy.partition(
+                                albumCatalog,
+                                pinnedAlbumKeys,
+                            )
                             val groups = listOf(
-                                "Favorites" to albumCatalog.filter { it.kind == AlbumKind.Favorite },
-                                "On this device" to albumCatalog.filter {
+                                "Pinned" to pinnedAlbums,
+                                "Favorites" to unpinnedAlbums.filter { it.kind == AlbumKind.Favorite },
+                                "On this device" to unpinnedAlbums.filter {
                                     it.kind == AlbumKind.Source || it.kind == AlbumKind.Folder
                                 },
-                                "Smart collections" to albumCatalog.filter {
+                                "Smart collections" to unpinnedAlbums.filter {
                                     it.kind == AlbumKind.SmartQuery
                                 },
                             )
@@ -321,9 +355,14 @@ fun MainScreen(
                                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                                     ) {
                                         group.forEach { album ->
+                                            val pinned = album.key in pinnedAlbumKeys
                                             AlbumDescriptorChip(
                                                 album = album,
                                                 enabled = searchReady && !isSelectionMode,
+                                                pinned = pinned,
+                                                pinEnabled = pinned ||
+                                                    pinnedAlbumKeys.size < AlbumPersonalizationPolicy.MAX_PINNED_ALBUMS,
+                                                onTogglePinned = { onToggleAlbumPinned(album) },
                                                 onClick = {
                                                     onAlbumSelected(album)
                                                     destination = MainDestination.Photos
@@ -376,8 +415,8 @@ fun MainScreen(
                 when {
                     !searchReady -> {
                         WelcomeState(
-                            memories = memoryStories,
-                            onThisDayStory = onThisDayStory,
+                            memories = if (memoriesHidden) emptyList() else memoryStories,
+                            onThisDayStory = if (memoriesHidden) null else onThisDayStory,
                             onOnThisDayClick = onOpenOnThisDayStory,
                             onMemoryClick = onMemoryStorySelected,
                             compact = searchReady,
@@ -394,8 +433,8 @@ fun MainScreen(
                     }
                     query.isBlank() && resultCount == 0 -> {
                         WelcomeState(
-                            memories = memoryStories,
-                            onThisDayStory = onThisDayStory,
+                            memories = if (memoriesHidden) emptyList() else memoryStories,
+                            onThisDayStory = if (memoriesHidden) null else onThisDayStory,
                             onOnThisDayClick = onOpenOnThisDayStory,
                             onMemoryClick = onMemoryStorySelected,
                             compact = true,
@@ -529,6 +568,9 @@ fun MainScreen(
 private fun AlbumDescriptorChip(
     album: AlbumDescriptor,
     enabled: Boolean,
+    pinned: Boolean,
+    pinEnabled: Boolean,
+    onTogglePinned: () -> Unit,
     onClick: () -> Unit,
 ) {
     val icon = when (val scope = album.scope) {
@@ -568,6 +610,17 @@ private fun AlbumDescriptorChip(
                 ),
                 maxLines = 1,
             )
+            IconButton(
+                onClick = onTogglePinned,
+                enabled = enabled && pinEnabled,
+                modifier = Modifier.size(48.dp),
+            ) {
+                Icon(
+                    imageVector = if (pinned) Icons.Default.Star else Icons.Default.StarBorder,
+                    contentDescription = if (pinned) "Unpin ${album.label}" else "Pin ${album.label}",
+                    tint = if (pinned) AccentAmber else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
