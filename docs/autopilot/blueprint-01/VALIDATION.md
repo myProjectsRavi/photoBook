@@ -188,3 +188,14 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - Full and generation-delta MediaStore scans are now cooperative-cancellation aware every 256 rows; index construction checks cancellation between bounded record-build batches.
 - Deterministic batching tests cover 10k/50k/100k libraries (40/196/391 checkpoints at 256 rows). Existing Room persistence remains bounded at 200-row batches and access-generation commit gates remain unchanged.
 - No claim is made that manifest-only scale tests equal physical-device scan timing. No physical/OEM/battery/thermal evidence is claimed.
+
+
+## S13 Resource scheduling — ACCEPTED
+
+- Tested source: `30e914e112d5c7c1ca77d4781b14d2b1c13647c9`.
+- Android Verification `37142161794`: SUCCESS, artifact `11280439276`, digest `sha256:155e96e143fad5411bc07982681ad5361edd577450716b2fb8bd81e8655e2ecf`.
+- Offline API-35 targeted `37142161840`: SUCCESS, artifact `11280364149`, digest `sha256:5065418f56877adcffaf45e55da0dae4b45440264cff6ececa7f1f958d13c802`.
+- PhotoIndex now exposes typed structural/intelligence/favorite revisions while retaining the full revision stream used by search correctness.
+- Memory curation invalidates only on structural/access-generation changes, avoiding intelligence-only re-curation.
+- Whole-library optional intelligence maintenance yields while the app process is foreground; focused-photo work retains its higher-priority path.
+- No search revision was suppressed and no privacy/offline/Vault/media-safety gate was weakened.
