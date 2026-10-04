@@ -29,29 +29,43 @@ import java.util.Locale
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 class PdfExportService @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
+    private val publicationJournal by lazy {
+        context.getSharedPreferences(PDF_PUBLICATION_JOURNAL, Context.MODE_PRIVATE)
+    }
 
-    suspend fun exportPhotos(photos: List<PhotoRecord>): PdfExportResult {
+    suspend fun exportPhotos(
+        photos: List<PhotoRecord>,
+        onProgress: (PdfExportProgress) -> Unit = {},
+    ): PdfExportResult {
         return exportPhotos(
             photos = photos,
             destination = PdfExportDestination.Downloads,
+            onProgress = onProgress,
         )
     }
 
-    suspend fun exportPhotosForSharing(photos: List<PhotoRecord>): PdfExportResult {
+    suspend fun exportPhotosForSharing(
+        photos: List<PhotoRecord>,
+        onProgress: (PdfExportProgress) -> Unit = {},
+    ): PdfExportResult {
         return exportPhotos(
             photos = photos,
             destination = PdfExportDestination.ShareCache,
+            onProgress = onProgress,
         )
     }
 
     private suspend fun exportPhotos(
         photos: List<PhotoRecord>,
         destination: PdfExportDestination,
+        onProgress: (PdfExportProgress) -> Unit,
     ): PdfExportResult {
         if (photos.isEmpty()) return PdfExportResult.Error()
 
@@ -66,27 +80,58 @@ class PdfExportService @Inject constructor(
         }
 
         return withContext(Dispatchers.IO) {
+            if (
+                destination == PdfExportDestination.Downloads &&
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                !reconcilePendingDownload()
+            ) {
+                return@withContext PdfExportResult.Error(
+                    IllegalStateException("Unable to reconcile previous PDF publication"),
+                )
+            }
+
             val document = PdfDocument()
             var writtenPages = 0
             var skippedPages = 0
+            var processedItems = 0
             var output: PdfOutput? = null
 
             try {
-                photos.forEach { photo ->
+                onProgress(
+                    PdfExportProgress(
+                        totalItems = photos.size,
+                        processedItems = 0,
+                        writtenPages = 0,
+                        skippedItems = 0,
+                    ),
+                )
+                for (photo in photos) {
+                    currentCoroutineContext().ensureActive()
                     val bitmap = decodeSampledBitmap(
                         uri = Uri.parse(photo.uriString),
                         maxDimensionPx = constraints.maxImageDimensionPx,
-                    ) ?: run {
+                    )
+                    if (bitmap == null) {
                         skippedPages += 1
+                        processedItems += 1
                         LocalDiagnostics.record(
                             context = context,
                             area = "pdf-export",
                             message = "Skipped unreadable image while creating PDF: ${photo.uriString}",
                         )
-                        return@forEach
+                        onProgress(
+                            PdfExportProgress(
+                                totalItems = photos.size,
+                                processedItems = processedItems,
+                                writtenPages = writtenPages,
+                                skippedItems = skippedPages,
+                            ),
+                        )
+                        continue
                     }
 
                     try {
+                        currentCoroutineContext().ensureActive()
                         val pageSpec = PdfPageLayout.pageSpecFor(bitmap.width, bitmap.height)
                         val pageInfo = PdfDocument.PageInfo.Builder(
                             pageSpec.width,
@@ -100,17 +145,29 @@ class PdfExportService @Inject constructor(
                     } finally {
                         bitmap.recycleSafely()
                     }
+                    processedItems += 1
+                    currentCoroutineContext().ensureActive()
+                    onProgress(
+                        PdfExportProgress(
+                            totalItems = photos.size,
+                            processedItems = processedItems,
+                            writtenPages = writtenPages,
+                            skippedItems = skippedPages,
+                        ),
+                    )
                 }
 
                 if (writtenPages == 0) {
                     return@withContext PdfExportResult.Error()
                 }
 
+                currentCoroutineContext().ensureActive()
                 val fileName = buildFileName(photos.singleOrNull()?.fileName)
                 output = when (destination) {
                     PdfExportDestination.Downloads -> writeDocumentToDownloads(document, fileName)
                     PdfExportDestination.ShareCache -> writeDocumentToShareCache(document, fileName)
                 }
+                currentCoroutineContext().ensureActive()
 
                 if (skippedPages > 0) {
                     PdfExportResult.PartialSuccess(
@@ -127,6 +184,7 @@ class PdfExportService @Inject constructor(
                     )
                 }
             } catch (t: Throwable) {
+                output?.let(::deleteOutput)
                 if (t is CancellationException) throw t
                 LocalDiagnostics.record(
                     context = context,
@@ -134,7 +192,6 @@ class PdfExportService @Inject constructor(
                     message = "PDF export failed",
                     throwable = t,
                 )
-                output?.delete()
                 PdfExportResult.Error(t)
             } finally {
                 document.close()
@@ -297,94 +354,184 @@ class PdfExportService @Inject constructor(
         }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
     }
 
-    private fun writeDocumentToDownloads(document: PdfDocument, fileName: String): PdfOutput {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            var outputUri: Uri? = null
-            try {
-                val values = ContentValues().apply {
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                    put(MediaStore.MediaColumns.MIME_TYPE, MIME_TYPE)
-                    put(
-                        MediaStore.MediaColumns.RELATIVE_PATH,
-                        Environment.DIRECTORY_DOWNLOADS + "/PhotoBook",
-                    )
-                    put(MediaStore.MediaColumns.IS_PENDING, 1)
-                }
-                outputUri = context.contentResolver.insert(
-                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                    values,
-                ) ?: error("Unable to create PDF output")
-
-                context.contentResolver.openOutputStream(outputUri)?.use { stream ->
-                    document.writeTo(stream)
-                } ?: error("Unable to open PDF output")
-
-                context.contentResolver.update(
-                    outputUri,
-                    ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) },
-                    null,
-                    null,
-                )
-
-                return PdfOutput(uri = outputUri)
-            } catch (t: Throwable) {
-                outputUri?.let { uri ->
-                    runCatching { context.contentResolver.delete(uri, null, null) }
-                }
-                LocalDiagnostics.record(
-                    context = context,
-                    area = "pdf-export",
-                    message = "MediaStore Downloads PDF write failed; falling back to app documents",
-                    throwable = t,
-                )
-                return writeDocumentToAppDocuments(document, fileName)
-            }
+    private suspend fun writeDocumentToDownloads(
+        document: PdfDocument,
+        fileName: String,
+    ): PdfOutput {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return writeDocumentToAppDocuments(document, fileName)
         }
 
-        return writeDocumentToAppDocuments(document, fileName)
+        var outputUri: Uri? = null
+        try {
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                put(MediaStore.MediaColumns.MIME_TYPE, MIME_TYPE)
+                put(
+                    MediaStore.MediaColumns.RELATIVE_PATH,
+                    Environment.DIRECTORY_DOWNLOADS + "/PhotoBook",
+                )
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+            outputUri = context.contentResolver.insert(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                values,
+            ) ?: error("Unable to create PDF output")
+
+            if (!recordPendingDownload(outputUri)) {
+                runCatching { context.contentResolver.delete(outputUri, null, null) }
+                error("Unable to journal pending PDF output")
+            }
+
+            currentCoroutineContext().ensureActive()
+            context.contentResolver.openOutputStream(outputUri)?.use { stream ->
+                document.writeTo(stream)
+            } ?: error("Unable to open PDF output")
+            currentCoroutineContext().ensureActive()
+
+            check(verifyPdf(outputUri)) { "Written PDF output could not be verified" }
+            val updated = context.contentResolver.update(
+                outputUri,
+                ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) },
+                null,
+                null,
+            )
+            check(updated > 0) { "Unable to publish PDF output" }
+            clearPendingDownload()
+            return PdfOutput(uri = outputUri)
+        } catch (t: Throwable) {
+            outputUri?.let { uri ->
+                runCatching { context.contentResolver.delete(uri, null, null) }
+            }
+            clearPendingDownload()
+            if (t is CancellationException) throw t
+            throw t
+        }
     }
 
-    private fun writeDocumentToAppDocuments(document: PdfDocument, fileName: String): PdfOutput {
+    private suspend fun writeDocumentToAppDocuments(
+        document: PdfDocument,
+        fileName: String,
+    ): PdfOutput {
         val outputDir = File(
             context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: context.cacheDir,
             "PhotoBook",
-        ).apply { mkdirs() }
+        ).apply { check(exists() || mkdirs()) { "Unable to create PDF documents directory" } }
+        return writeDocumentAtomically(document, outputDir, fileName)
+    }
+
+    private suspend fun writeDocumentToShareCache(
+        document: PdfDocument,
+        fileName: String,
+    ): PdfOutput {
+        val outputDir = File(context.cacheDir, PdfShareCachePolicy.DIRECTORY_NAME).apply {
+            check(exists() || mkdirs()) { "Unable to create PDF share directory" }
+        }
+        cleanupStaleShareCache(outputDir)
+        return writeDocumentAtomically(document, outputDir, fileName)
+    }
+
+    private suspend fun writeDocumentAtomically(
+        document: PdfDocument,
+        outputDir: File,
+        fileName: String,
+    ): PdfOutput {
         val outputFile = File(outputDir, fileName)
-        return try {
-            FileOutputStream(outputFile).use { stream ->
+        val partialFile = File(outputDir, "$fileName.partial")
+        runCatching { partialFile.delete() }
+        try {
+            currentCoroutineContext().ensureActive()
+            FileOutputStream(partialFile, false).use { stream ->
                 document.writeTo(stream)
             }
+            currentCoroutineContext().ensureActive()
+            check(verifyPdf(partialFile)) { "Temporary PDF output could not be verified" }
+            if (outputFile.exists()) {
+                check(outputFile.delete()) { "Unable to replace existing PDF output" }
+            }
+            check(partialFile.renameTo(outputFile)) { "Unable to publish PDF output atomically" }
+            check(verifyPdf(outputFile)) { "Published PDF output could not be verified" }
             val uri = FileProvider.getUriForFile(
                 context,
                 "${context.packageName}.fileprovider",
                 outputFile,
             )
-            PdfOutput(uri = uri, file = outputFile)
+            return PdfOutput(uri = uri, file = outputFile)
         } catch (t: Throwable) {
+            runCatching { partialFile.delete() }
             runCatching { outputFile.delete() }
+            if (t is CancellationException) throw t
             throw t
         }
     }
 
-    private fun writeDocumentToShareCache(document: PdfDocument, fileName: String): PdfOutput {
-        val outputDir = File(context.cacheDir, PdfShareCachePolicy.DIRECTORY_NAME).apply {
-            mkdirs()
-        }
-        cleanupStaleShareCache(outputDir)
-        val outputFile = File(outputDir, fileName)
-        return try {
-            FileOutputStream(outputFile).use { stream ->
-                document.writeTo(stream)
+    private fun verifyPdf(uri: Uri): Boolean {
+        return runCatching {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                val header = ByteArray(PDF_HEADER.size)
+                val read = input.read(header)
+                read == PDF_HEADER.size && header.contentEquals(PDF_HEADER)
+            } ?: false
+        }.getOrDefault(false)
+    }
+
+    private fun verifyPdf(file: File): Boolean {
+        if (!file.isFile || file.length() <= PDF_HEADER.size) return false
+        return runCatching {
+            file.inputStream().use { input ->
+                val header = ByteArray(PDF_HEADER.size)
+                val read = input.read(header)
+                read == PDF_HEADER.size && header.contentEquals(PDF_HEADER)
             }
-            val uri = FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                outputFile,
-            )
-            PdfOutput(uri = uri, file = outputFile)
-        } catch (t: Throwable) {
-            runCatching { outputFile.delete() }
-            throw t
+        }.getOrDefault(false)
+    }
+
+    private fun recordPendingDownload(uri: Uri): Boolean {
+        return publicationJournal.edit()
+            .putString(KEY_PENDING_PDF_URI, uri.toString())
+            .commit()
+    }
+
+    private fun clearPendingDownload(): Boolean {
+        return publicationJournal.edit()
+            .remove(KEY_PENDING_PDF_URI)
+            .commit()
+    }
+
+    private fun reconcilePendingDownload(): Boolean {
+        val raw = publicationJournal.getString(KEY_PENDING_PDF_URI, null) ?: return true
+        val uri = runCatching { Uri.parse(raw) }.getOrNull() ?: return clearPendingDownload()
+        val pending = queryPendingState(uri)
+        return when (pending) {
+            null -> false
+            PENDING_ROW_MISSING, 0 -> clearPendingDownload()
+            1 -> {
+                val deleted = runCatching { context.contentResolver.delete(uri, null, null) }
+                    .getOrDefault(0) > 0
+                deleted && clearPendingDownload()
+            }
+            else -> false
+        }
+    }
+
+    private fun queryPendingState(uri: Uri): Int? {
+        return runCatching {
+            context.contentResolver.query(
+                uri,
+                arrayOf(MediaStore.MediaColumns.IS_PENDING),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                if (!cursor.moveToFirst()) PENDING_ROW_MISSING else cursor.getInt(0)
+            } ?: PENDING_ROW_MISSING
+        }.getOrNull()
+    }
+
+    private fun deleteOutput(output: PdfOutput) {
+        output.file?.let { file -> runCatching { file.delete() } }
+        if (output.file == null && output.uri.scheme == "content") {
+            runCatching { context.contentResolver.delete(output.uri, null, null) }
         }
     }
 
@@ -409,13 +556,7 @@ class PdfExportService @Inject constructor(
     private data class PdfOutput(
         val uri: Uri,
         val file: File? = null,
-    ) {
-        fun delete() {
-            file?.let { outputFile ->
-                runCatching { outputFile.delete() }
-            }
-        }
-    }
+    )
 
     private enum class PdfExportDestination {
         Downloads,
@@ -424,5 +565,9 @@ class PdfExportService @Inject constructor(
 
     companion object {
         private const val MIME_TYPE = "application/pdf"
+        private val PDF_HEADER = "%PDF-".encodeToByteArray()
+        private const val PDF_PUBLICATION_JOURNAL = "pdf_publication_journal_v1"
+        private const val KEY_PENDING_PDF_URI = "pending_pdf_uri"
+        private const val PENDING_ROW_MISSING = -1
     }
 }
