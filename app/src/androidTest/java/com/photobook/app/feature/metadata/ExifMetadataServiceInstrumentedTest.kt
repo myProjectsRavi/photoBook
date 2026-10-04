@@ -1,5 +1,6 @@
 package com.photobook.app.feature.metadata
 
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
@@ -125,6 +126,41 @@ class ExifMetadataServiceInstrumentedTest {
         val item = (result as SafeShareResult.Success).items.single()
         assertSensitiveMetadataRemoved(item.uri)
         assertEquals("image/jpeg", item.mimeType)
+    }
+
+    @Test
+    fun safeShare_rejectsOversizedBatchBeforeCreatingOutputs() = runBlocking {
+        val source = createSensitiveJpeg()
+        val safeShareDir = File(context.cacheDir, "safe_share")
+        safeShareDir.deleteRecursively()
+        val service = ExifMetadataService(context)
+        val photos = List(SafeSharePolicy.MAX_ITEMS + 1) { index ->
+            photoFor(source, id = index.toLong() + 1L)
+        }
+
+        val result = service.createSafeShareCopies(photos)
+
+        assertTrue(result is SafeShareResult.Error)
+        assertTrue(safeShareDir.listFiles().orEmpty().none { it.isFile })
+    }
+
+    @Test
+    fun safeShareIntent_grantsReadOnlyAccessToPreparedUris() = runBlocking {
+        val source = createSensitiveJpeg()
+        val service = ExifMetadataService(context)
+        val result = service.createSafeShareCopies(
+            photos = listOf(photoFor(source)),
+            options = SafeShareOptions(stripMetadata = true, blurFaces = false),
+        )
+        assertTrue(result is SafeShareResult.Success)
+        val items = (result as SafeShareResult.Success).items
+
+        val intent = checkNotNull(SafeShareIntentFactory.build(context, items))
+
+        assertEquals(Intent.ACTION_SEND, intent.action)
+        assertTrue(intent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+        assertEquals(0, intent.flags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        assertEquals(items.single().uri, intent.clipData?.getItemAt(0)?.uri)
     }
 
     @Test
