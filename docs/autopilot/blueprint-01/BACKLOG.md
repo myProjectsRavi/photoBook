@@ -22,8 +22,8 @@ Execution rule: select the first incomplete story whose dependencies pass. Do no
 | S14 | E05 Search and intelligence | Search correctness | S13 | ACCEPTED | Preserve complete search semantics with truth-table oracle, deterministic ordering and parity/cancellation tests. |
 | S15 | E05 Search and intelligence | Search feedback | S14 | ACCEPTED | Explicit readiness/failure states; no stale-query results; truthful partial/limited/failed UX. |
 | S16 | E05 Search and intelligence | In-photo search | S15 | ACCEPTED | Preserve one OCR layout/session, geometry/insets/reveal behavior; reject stale lifecycle results. |
-| S17 | E05 Search and intelligence | Offline maintenance | S16 | IN_PROGRESS | Resumable TaggingWorker and local Index status; bounded retries; first-use offline packaged inference. |
-| S18 | E06 Viewer and exports | Editing | S03,S07 | NOT_STARTED | Shared EditTransform; preview/export pixel/geometry parity across crop/rotation/tone/orientation. |
+| S17 | E05 Search and intelligence | Offline maintenance | S16 | ACCEPTED | Resumable TaggingWorker and local Index status; bounded retries; first-use offline packaged inference. |
+| S18 | E06 Viewer and exports | Editing | S03,S07 | IN_PROGRESS | Shared EditTransform; preview/export pixel/geometry parity across crop/rotation/tone/orientation. |
 | S19 | E06 Viewer and exports | Safe sharing | S18 | NOT_STARTED | Fail-closed privacy preparation, bounded/cancellable sharing, read-only scoped URI grants, no original fallback. |
 | S20 | E06 Viewer and exports | PDF export | S19 | NOT_STARTED | Recoverable PDF publication, progress/cancel, checked destination, truthful partial results. |
 | S21 | E07 Privacy and cleanup | Vault privacy | S02 | NOT_STARTED | Central Vault session lifecycle cleanup; no stale decrypted previews/search state after lock/background/failure. |
