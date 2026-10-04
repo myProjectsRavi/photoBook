@@ -209,3 +209,13 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - Added a hard-coded truth-table oracle covering temporal, source, favorites, location, OCR, semantic tag, compound, recent and oldest semantics with exact eligibility/order assertions against both legacy and v2.
 - Existing scale parity covers 10k/50k/100k deterministic corpora; existing cancellation tests prove bounded cooperative abort; stale generation and missing-candidate paths fail closed rather than publish partial results.
 - Production search semantics were not narrowed or optimized through an unproven candidate subset.
+
+
+## S16 In-photo search — ACCEPTED
+
+- Tested source: `4b98efdc89a6fafe1a7d011de116af8ad0e3eff3`.
+- Android Verification `37166303720` attempt 2: SUCCESS. Artifact `11290940803`, digest `sha256:55772f9c318a53378c04ba40533cf7e8e8907518f71d45baced691c9d5aaa640`.
+- Offline API-35 targeted verification `37166303796`: SUCCESS. Artifact `11289513787`, digest `sha256:98ba92c45d37ca9a0f6d19c4065eaec8de5790ec95e1f57bdf0d8f3e9525bf4e`.
+- Lifecycle regression coverage proves an in-flight layout cannot publish after explicit close or disposal.
+- Existing one-layout-per-session query reuse, stale source/request/query fencing, geometry/insets/reveal behavior and authenticated Vault input boundary were preserved.
+- No physical/OEM/camera/battery/thermal evidence is claimed.
