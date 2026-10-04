@@ -237,3 +237,11 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - Offline API-35 targeted verification `37177565860`: SUCCESS, artifact `11293968337`, digest `sha256:b2156c2c3191e0a03a6fb389992151af5c20c7f4b353e8083a46ade5a22568c6`.
 - Shared EditTransform normalizes rotation/crop and tone/filter state. The viewer preview is rendered through the same bounded bitmap transform path as export, preserving EXIF normalization and custom-crop position.
 - The earlier S18 test failure was a test-oracle mismatch with the existing 0.45 preview aspect lower bound; the expectation was corrected without changing product behavior.
+
+
+## S19 Safe sharing — ACCEPTED
+
+- Exact source: `868902d596b5e3904642ec22e88503331cfb2f4c`.
+- Android Verification `37177989158`: SUCCESS, artifact `11294056125`, digest `sha256:3877b02fcc012947eaad7a52cca70819c629d39a965f42547762dc03ed76034d`.
+- Offline API-35 targeted verification `37177989167`: SUCCESS, artifact `11294101251`, digest `sha256:753ad7d53cb96079315401f62d9192480c8762f879118e0804d3a5bc2e89b77b`.
+- Oversized batches fail before output creation; cancellation propagates and deletes partial safe-share files; a later asset failure deletes earlier prepared outputs. Read-only ClipData grants are centralized and instrumented with an explicit no-write-grant assertion.
