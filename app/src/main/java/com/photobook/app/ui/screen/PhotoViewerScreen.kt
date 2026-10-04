@@ -1572,12 +1572,8 @@ private fun QuickEditorBottomSheet(
     onOpenSavedCopy: (String) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val cropAspect = state.customCrop?.aspectRatioFor(photo.aspectRatio)
-        ?: if (state.cropPreset == CropPreset.Original) {
-            photo.aspectRatio.coerceIn(0.45f, 2.2f)
-        } else {
-            state.cropPreset.ratio
-        }
+    val editTransform = remember(state) { EditTransform.from(state) }
+    val cropAspect = editTransform.previewAspectRatio(photo.aspectRatio)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1624,7 +1620,7 @@ private fun QuickEditorBottomSheet(
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer {
-                            rotationZ = (state.rotationQuarterTurns % 4) * 90f
+                            rotationZ = editTransform.quarterTurns * 90f
                         }
                         .padding(10.dp),
                 )
