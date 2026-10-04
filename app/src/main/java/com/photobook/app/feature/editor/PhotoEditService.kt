@@ -44,7 +44,7 @@ class PhotoEditService @Inject constructor(
                 if (rotated !== source) source?.recycleSafely()
 
                 coroutineContext.ensureActive()
-                cropped = applyCrop(rotated!!, state)
+                cropped = applyCrop(rotated!!, transform)
                 if (cropped !== rotated) rotated?.recycleSafely()
 
                 coroutineContext.ensureActive()
@@ -154,12 +154,12 @@ class PhotoEditService @Inject constructor(
         )
     }
 
-    private fun applyCrop(source: Bitmap, state: PhotoEditState): Bitmap {
-        state.customCrop?.normalized()?.takeIf { it.isUsable() }?.let { region ->
+    private fun applyCrop(source: Bitmap, transform: EditTransform): Bitmap {
+        transform.cropRegion?.let { region ->
             return applyCustomCrop(source, region)
         }
 
-        return applyPresetCrop(source, state.cropPreset)
+        return applyPresetCrop(source, transform.cropPreset)
     }
 
     private fun applyPresetCrop(source: Bitmap, preset: CropPreset): Bitmap {
