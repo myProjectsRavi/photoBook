@@ -262,6 +262,16 @@ class TaggingWorker @AssistedInject constructor(
     }
 
     private fun resultForRemainingWork(hasRemainingWork: Boolean): Result {
+        return resultForRemainingWork(
+            hasRemainingWork = hasRemainingWork,
+            runAttemptCount = runAttemptCount,
+        )
+    }
+
+    internal fun resultForRemainingWork(
+        hasRemainingWork: Boolean,
+        runAttemptCount: Int,
+    ): Result {
         if (!hasRemainingWork) return Result.success()
         return if (runAttemptCount < MAX_RETRY_ATTEMPTS) {
             Result.retry()
