@@ -27,9 +27,6 @@ class PhotoEditService @Inject constructor(
 ) {
     suspend fun renderEditedCopy(photo: PhotoRecord, state: PhotoEditState): PhotoEditResult {
         return withContext(Dispatchers.Default) {
-            var source: Bitmap? = null
-            var rotated: Bitmap? = null
-            var cropped: Bitmap? = null
             var filtered: Bitmap? = null
             var tempFile: File? = null
             var finalFile: File? = null
@@ -37,19 +34,11 @@ class PhotoEditService @Inject constructor(
 
             try {
                 coroutineContext.ensureActive()
-                source = decodeSampledBitmap(photo.uriString) ?: return@withContext PhotoEditResult.Error
-
-                val transform = EditTransform.from(state)
-                rotated = applyRotation(source!!, transform.quarterTurns)
-                if (rotated !== source) source?.recycleSafely()
-
-                coroutineContext.ensureActive()
-                cropped = applyCrop(rotated!!, transform)
-                if (cropped !== rotated) rotated?.recycleSafely()
-
-                coroutineContext.ensureActive()
-                filtered = applyToneAndFilter(cropped!!, state)
-                if (filtered !== cropped) cropped?.recycleSafely()
+                filtered = renderTransformedBitmap(
+                    uriString = photo.uriString,
+                    state = state,
+                    maxDimension = MAX_DIMENSION,
+                ) ?: return@withContext PhotoEditResult.Error
 
                 coroutineContext.ensureActive()
                 val outputDir = File(context.cacheDir, "safe_share").apply {
@@ -103,14 +92,64 @@ class PhotoEditService @Inject constructor(
                     runCatching { finalFile?.delete() }
                 }
                 filtered?.recycleSafely()
-                if (filtered !== cropped) cropped?.recycleSafely()
-                if (cropped !== rotated) rotated?.recycleSafely()
-                if (rotated !== source) source?.recycleSafely()
             }
         }
     }
 
-    private fun decodeSampledBitmap(uriString: String): Bitmap? {
+    /**
+     * Returns an app-owned, bounded bitmap rendered by the exact same transform pipeline as export.
+     * The caller owns the returned bitmap and must recycle it when the preview is replaced/disposed.
+     */
+    suspend fun renderPreviewBitmap(
+        photo: PhotoRecord,
+        state: PhotoEditState,
+        maxDimension: Int = PREVIEW_MAX_DIMENSION,
+    ): Bitmap? = withContext(Dispatchers.Default) {
+        coroutineContext.ensureActive()
+        renderTransformedBitmap(
+            uriString = photo.uriString,
+            state = state,
+            maxDimension = maxDimension.coerceIn(1, PREVIEW_MAX_DIMENSION),
+        )
+    }
+
+    private suspend fun renderTransformedBitmap(
+        uriString: String,
+        state: PhotoEditState,
+        maxDimension: Int,
+    ): Bitmap? {
+        var source: Bitmap? = null
+        var rotated: Bitmap? = null
+        var cropped: Bitmap? = null
+        var filtered: Bitmap? = null
+        var result: Bitmap? = null
+        try {
+            coroutineContext.ensureActive()
+            source = decodeSampledBitmap(uriString, maxDimension) ?: return null
+            val transform = EditTransform.from(state)
+
+            rotated = applyRotation(source, transform.quarterTurns)
+            coroutineContext.ensureActive()
+            cropped = applyCrop(rotated, transform)
+            coroutineContext.ensureActive()
+            filtered = applyToneAndFilter(cropped, state)
+            coroutineContext.ensureActive()
+
+            result = filtered
+            return result
+        } catch (error: CancellationException) {
+            throw error
+        } finally {
+            if (filtered !== result) filtered?.recycleSafely()
+            if (cropped !== filtered && cropped !== result) cropped?.recycleSafely()
+            if (rotated !== cropped && rotated !== filtered && rotated !== result) rotated?.recycleSafely()
+            if (source !== rotated && source !== cropped && source !== filtered && source !== result) {
+                source?.recycleSafely()
+            }
+        }
+    }
+
+    private fun decodeSampledBitmap(uriString: String, maxDimension: Int): Bitmap? {
         val uri = Uri.parse(uriString)
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         context.contentResolver.openInputStream(uri)?.use { stream ->
@@ -119,7 +158,7 @@ class PhotoEditService @Inject constructor(
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
 
         var sample = 1
-        while (bounds.outWidth / sample > MAX_DIMENSION || bounds.outHeight / sample > MAX_DIMENSION) {
+        while (bounds.outWidth / sample > maxDimension || bounds.outHeight / sample > maxDimension) {
             sample *= 2
         }
         val options = BitmapFactory.Options().apply {
@@ -279,6 +318,7 @@ class PhotoEditService @Inject constructor(
 
     companion object {
         private const val MAX_DIMENSION = 2400
+        private const val PREVIEW_MAX_DIMENSION = 900
         private const val JPEG_QUALITY = 93
         const val EXPOSURE_MIN = -1f
         const val EXPOSURE_MAX = 1f
