@@ -299,3 +299,8 @@ Reviewed changed production/direct-call/test scope: `ui/component/PhotoGrid.kt`,
 ## S11 targeted review closure
 
 Reviewed changed production/direct-call/test scope: `ui/viewmodel/StartupReadinessPolicy.kt`, `ui/viewmodel/MainViewModel.kt`, `MainActivity.kt`, and `StartupReadinessPolicyTest.kt`. Access-generation checks and limited-access filtering remain before any persisted-row publication; enrichment scheduling stays asynchronous and separate from browse readiness.
+
+
+## S16 targeted review closure
+
+Reviewed changed/direct-call/test scope: `feature/phototextsearch/PhotoTextSearchController.kt`, `PhotoTextMatcher.kt`, `PhotoTextCoordinateMapper.kt`, `ui/screen/PhotoViewerScreen.kt`, `PhotoReelsScreen.kt`, `VaultBottomSheet.kt`, and `PhotoTextSearchControllerTest.kt`. The S16 production behavior already had request/session/query stale-result fencing and one-layout reuse; focused tests added lifecycle-close/dispose proof without broadening Vault plaintext lifetime or changing geometry/insets/reveal semantics.
