@@ -552,3 +552,10 @@ S17 Offline maintenance is active. Inspect TaggingWorker, local intelligence rea
 ### Exact next action
 
 Inspect runs 37174290322 and 37174290335 for exact source 427f575f28d2a99b87608c776b64143d0104f73a. Diagnose and fix any real failure. Only after both required gates pass, close S17 review/evidence and advance to S18.
+
+
+## S17 checkpoint — fresh exact-head verification trigger
+
+- GitHub refused a retry of cancelled Android Verification run `37174290322` with HTTP 403 "This workflow run cannot be retried".
+- The targeted API-35 run `37174290335` remains a valid SUCCESS for production source `427f575f28d2a99b87608c776b64143d0104f73a`, artifact `11292293982`, digest `sha256:56ae40f04ce1ca3d39ba36d3bf2e36bc66ce8cca3bd63214c00967e00d461108`.
+- This checkpoint is documentation-only and intentionally triggers fresh branch workflows on an unchanged S17 production tree. No product/test gate is weakened.
