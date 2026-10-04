@@ -18,6 +18,7 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -33,14 +34,14 @@ class PhotoEditService @Inject constructor(
             var committed = false
 
             try {
-                coroutineContext.ensureActive()
+                currentCoroutineContext().ensureActive()
                 filtered = renderTransformedBitmap(
                     uriString = photo.uriString,
                     state = state,
                     maxDimension = MAX_DIMENSION,
                 ) ?: return@withContext PhotoEditResult.Error
 
-                coroutineContext.ensureActive()
+                currentCoroutineContext().ensureActive()
                 val outputDir = File(context.cacheDir, "safe_share").apply {
                     check(exists() || mkdirs()) { "Unable to create editor output directory" }
                 }
@@ -70,7 +71,7 @@ class PhotoEditService @Inject constructor(
                     check(tempFile!!.renameTo(finalFile!!)) { "Unable to publish edited JPEG" }
                 }
 
-                coroutineContext.ensureActive()
+                currentCoroutineContext().ensureActive()
                 val uri = FileProvider.getUriForFile(
                     context,
                     "${context.packageName}.fileprovider",
@@ -105,7 +106,7 @@ class PhotoEditService @Inject constructor(
         state: PhotoEditState,
         maxDimension: Int = PREVIEW_MAX_DIMENSION,
     ): Bitmap? = withContext(Dispatchers.Default) {
-        coroutineContext.ensureActive()
+        currentCoroutineContext().ensureActive()
         renderTransformedBitmap(
             uriString = photo.uriString,
             state = state,
@@ -124,16 +125,16 @@ class PhotoEditService @Inject constructor(
         var filtered: Bitmap? = null
         var result: Bitmap? = null
         try {
-            coroutineContext.ensureActive()
+            currentCoroutineContext().ensureActive()
             source = decodeSampledBitmap(uriString, maxDimension) ?: return null
             val transform = EditTransform.from(state)
 
             rotated = applyRotation(source, transform.quarterTurns)
-            coroutineContext.ensureActive()
+            currentCoroutineContext().ensureActive()
             cropped = applyCrop(rotated, transform)
-            coroutineContext.ensureActive()
+            currentCoroutineContext().ensureActive()
             filtered = applyToneAndFilter(cropped, state)
-            coroutineContext.ensureActive()
+            currentCoroutineContext().ensureActive()
 
             result = filtered
             return result
