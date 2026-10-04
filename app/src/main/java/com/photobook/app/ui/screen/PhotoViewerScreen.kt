@@ -4,6 +4,7 @@ package com.photobook.app.ui.screen
 
 import android.content.ClipData
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
@@ -13,6 +14,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
@@ -88,8 +90,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
@@ -1056,6 +1057,7 @@ fun PhotoViewerScreen(
         if (showEditorSheet && activePhoto != null) {
             QuickEditorBottomSheet(
                 photo = activePhoto,
+                photoEditService = photoEditService,
                 state = editorState,
                 isApplying = isApplyingEditorAction,
                 saveState = editorSaveState,
@@ -1559,6 +1561,7 @@ private fun CopyTextBottomSheet(
 @Composable
 private fun QuickEditorBottomSheet(
     photo: PhotoRecord,
+    photoEditService: PhotoEditService,
     state: PhotoEditState,
     isApplying: Boolean,
     saveState: EditorSaveUiState,
@@ -1573,7 +1576,28 @@ private fun QuickEditorBottomSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val editTransform = remember(state) { EditTransform.from(state) }
-    val cropAspect = editTransform.previewAspectRatio(photo.aspectRatio)
+    var previewBitmap by remember(photo.id) { mutableStateOf<Bitmap?>(null) }
+    var isPreviewRendering by remember(photo.id) { mutableStateOf(true) }
+
+    LaunchedEffect(photo.id, photo.uriString, state) {
+        previewBitmap = null
+        isPreviewRendering = true
+        val rendered = photoEditService.renderPreviewBitmap(photo, state)
+        previewBitmap = rendered
+        isPreviewRendering = false
+    }
+    DisposableEffect(previewBitmap) {
+        val ownedBitmap = previewBitmap
+        onDispose {
+            if (ownedBitmap != null && !ownedBitmap.isRecycled) {
+                ownedBitmap.recycle()
+            }
+        }
+    }
+
+    val cropAspect = previewBitmap?.let { bitmap ->
+        bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1).toFloat()
+    } ?: editTransform.previewAspectRatio(photo.aspectRatio)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1603,27 +1627,22 @@ private fun QuickEditorBottomSheet(
                     .background(Color.Black, RoundedCornerShape(14.dp)),
                 contentAlignment = Alignment.Center,
             ) {
-                val previewColorFilter = remember(state.exposure, state.contrast, state.filter) {
-                    ColorFilter.colorMatrix(
-                        buildEditorPreviewMatrix(
-                            exposure = state.exposure,
-                            contrast = state.contrast,
-                            filter = state.filter,
-                        )
+                val rendered = previewBitmap
+                if (rendered != null && !rendered.isRecycled) {
+                    Image(
+                        bitmap = rendered.asImageBitmap(),
+                        contentDescription = photo.fileName,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(10.dp),
+                    )
+                } else if (isPreviewRendering) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(28.dp),
+                        strokeWidth = 2.dp,
                     )
                 }
-                AsyncImage(
-                    model = Uri.parse(photo.uriString),
-                    contentDescription = photo.fileName,
-                    contentScale = ContentScale.Crop,
-                    colorFilter = previewColorFilter,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer {
-                            rotationZ = editTransform.quarterTurns * 90f
-                        }
-                        .padding(10.dp),
-                )
             }
 
             Row(
@@ -2492,24 +2511,6 @@ private const val MIN_VIEWER_ZOOM = 1f
 private const val MAX_VIEWER_ZOOM = 8f
 private const val DOUBLE_TAP_VIEWER_ZOOM = 2.8f
 private const val VIEWER_ZOOM_EPSILON = 0.01f
-
-/**
- * Builds a Compose ColorMatrix mirroring [PhotoEditService]'s contrast → exposure → filter pipeline
- * so the live preview matches the rendered result.
- */
-private fun buildEditorPreviewMatrix(
-    exposure: Float,
-    contrast: Float,
-    filter: QuickFilter,
-): ColorMatrix {
-    return ColorMatrix(
-        EditTransform.toneMatrix(
-            exposure = exposure,
-            contrast = contrast,
-            filter = filter,
-        ),
-    )
-}
 
 private sealed interface EditorSaveUiState {
     data object Idle : EditorSaveUiState
