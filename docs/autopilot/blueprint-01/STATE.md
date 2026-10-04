@@ -4,11 +4,11 @@ cycle: blueprint-01
 authorized_branch: autopilot/epics-features-user-stories  
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
-current_epic: E04 Browsing performance  
-current_feature: Search feedback  
-current_story: S15 Search feedback  
+current_epic: E05 Search and intelligence  
+current_feature: In-photo search  
+current_story: S16 In-photo search  
 status: IN_PROGRESS  
-source_commit_tested: d15586ae3151412a4fd40724216e6a43519cea81 (S14 ACCEPTED)
+source_commit_tested: e6a6cfdf9cb6a0eb9ddf97a39cde48f3438a8d0c (S15 ACCEPTED)
 latest_checkpoint_commit: 4186434c680317000a7d6ee49ad9f89aed8d8bcf
 
 ## Source blueprint
@@ -492,3 +492,20 @@ S14 is ACCEPTED on exact tested source `d15586ae3151412a4fd40724216e6a43519cea81
 ## S15 start
 
 S15 Search feedback is active. Inspect readiness/result-query publication, stale-query suppression, empty/limited/failure UX and existing search UI tests before editing. Feedback must be truthful and must not render stale results as current.
+
+
+## S15 final acceptance
+
+- S15 is **ACCEPTED** on exact tested source `e6a6cfdf9cb6a0eb9ddf97a39cde48f3438a8d0c`.
+- Android Verification run `37143967321` and offline API-35 targeted verification run `37143967296` both succeeded; exact artifacts are recorded in VALIDATION/BACKLOG evidence.
+- Search feedback explicitly separates readiness, stale-query/searching, refresh failure, empty results and current results; stale query results are not presented as current.
+- Documentation-only checkpoint `169e2ff7637d11a86e81acc3e4ca74ab5842b1f1` also passed Android Verification `37145982096`.
+- Main was not modified. No physical/OEM/camera/battery/thermal evidence is claimed.
+
+## S16 start
+
+S16 In-photo search is active. Production/controller/direct-call/test inspection is complete for `PhotoTextSearchController`, `PhotoTextMatcher`, `PhotoTextCoordinateMapper`, `PhotoViewerScreen`, `PhotoReelsScreen`, `VaultBottomSheet` and existing controller/geometry tests. Existing code already preserves one OCR layout across query edits, fences stale photo/request/query revisions, maps OCR geometry through the fit viewport, and disposes controller state with viewer/reels/Vault lifecycles.
+
+### Exact next action
+
+Add focused regression evidence proving an in-flight OCR/layout result cannot publish after explicit close/dispose, then run exact-source Android Verification and targeted API-35 emulator evidence. Preserve geometry/insets/reveal behavior and do not broaden Vault plaintext lifetime. Keep S16 IN_PROGRESS until those gates pass.
