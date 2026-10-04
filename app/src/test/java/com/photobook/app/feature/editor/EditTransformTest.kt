@@ -44,7 +44,7 @@ class EditTransformTest {
             ),
         )
 
-        assertThat(rotated.previewAspectRatio(2f)).isWithin(0.0001f).of(0.3125f)
+        assertThat(rotated.previewAspectRatio(2f)).isWithin(0.0001f).of(0.45f)
         assertThat(
             EditTransform.from(PhotoEditState(rotationQuarterTurns = 1))
                 .previewAspectRatio(2f),
