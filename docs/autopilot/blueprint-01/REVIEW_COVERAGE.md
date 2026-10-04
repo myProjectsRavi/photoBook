@@ -304,3 +304,8 @@ Reviewed changed production/direct-call/test scope: `ui/viewmodel/StartupReadine
 ## S16 targeted review closure
 
 Reviewed changed/direct-call/test scope: `feature/phototextsearch/PhotoTextSearchController.kt`, `PhotoTextMatcher.kt`, `PhotoTextCoordinateMapper.kt`, `ui/screen/PhotoViewerScreen.kt`, `PhotoReelsScreen.kt`, `VaultBottomSheet.kt`, and `PhotoTextSearchControllerTest.kt`. The S16 production behavior already had request/session/query stale-result fencing and one-layout reuse; focused tests added lifecycle-close/dispose proof without broadening Vault plaintext lifetime or changing geometry/insets/reveal semantics.
+
+
+## S17 targeted review closure
+
+Reviewed production/direct-call/test scope: `ml/TaggingWorker.kt`, `TaggingRetryPolicy.kt`, `MLTagger.kt`, `OnDeviceIntelligence.kt`, `IntelligenceSchedulingPolicy.kt`, `data/index/IndexPersistence.kt`, `data/db/PhotoDao.kt`, `data/model/IntelligenceStatus.kt`, `ui/viewmodel/MainViewModel.kt`, `IntelligenceSchedulingPolicyTest.kt`, `OcrIndexReadinessTest.kt`, and `TaggingWorkerPolicyTest.kt`. The change centralizes the existing retry bound without widening network, access, foreground scheduling, or terminal-status behavior.
