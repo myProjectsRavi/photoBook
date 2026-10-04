@@ -135,6 +135,7 @@ import com.photobook.app.feature.duplicates.BurstBestShotPicker
 import com.photobook.app.feature.editor.CropPreset
 import com.photobook.app.feature.editor.NormalizedCropRegion
 import com.photobook.app.feature.editor.EditorOutputPublisher
+import com.photobook.app.feature.editor.EditTransform
 import com.photobook.app.feature.editor.EditorPublicationRequest
 import com.photobook.app.feature.editor.EditorPublicationResult
 import com.photobook.app.feature.editor.PhotoEditResult
@@ -2503,80 +2504,15 @@ private const val VIEWER_ZOOM_EPSILON = 0.01f
 private fun buildEditorPreviewMatrix(
     exposure: Float,
     contrast: Float,
-    filter: com.photobook.app.feature.editor.QuickFilter,
+    filter: QuickFilter,
 ): ColorMatrix {
-    val c = contrast.coerceIn(0.6f, 1.6f)
-    val translate = 128f * (1f - c)
-    val contrastValues = floatArrayOf(
-        c, 0f, 0f, 0f, translate,
-        0f, c, 0f, 0f, translate,
-        0f, 0f, c, 0f, translate,
-        0f, 0f, 0f, 1f, 0f,
+    return ColorMatrix(
+        EditTransform.toneMatrix(
+            exposure = exposure,
+            contrast = contrast,
+            filter = filter,
+        ),
     )
-
-    val offset = exposure.coerceIn(-1f, 1f) * 62f
-    val exposureValues = floatArrayOf(
-        1f, 0f, 0f, 0f, offset,
-        0f, 1f, 0f, 0f, offset,
-        0f, 0f, 1f, 0f, offset,
-        0f, 0f, 0f, 1f, 0f,
-    )
-
-    val filterValues = when (filter) {
-        com.photobook.app.feature.editor.QuickFilter.Original -> floatArrayOf(
-            1f, 0f, 0f, 0f, 0f,
-            0f, 1f, 0f, 0f, 0f,
-            0f, 0f, 1f, 0f, 0f,
-            0f, 0f, 0f, 1f, 0f,
-        )
-        com.photobook.app.feature.editor.QuickFilter.Mono -> floatArrayOf(
-            0.299f, 0.587f, 0.114f, 0f, 0f,
-            0.299f, 0.587f, 0.114f, 0f, 0f,
-            0.299f, 0.587f, 0.114f, 0f, 0f,
-            0f, 0f, 0f, 1f, 0f,
-        )
-        com.photobook.app.feature.editor.QuickFilter.Vivid -> floatArrayOf(
-            1.343f, -0.168f, -0.033f, 0f, 6f,
-            -0.078f, 1.434f, -0.114f, 0f, 6f,
-            -0.078f, -0.168f, 1.388f, 0f, 6f,
-            0f, 0f, 0f, 1f, 0f,
-        )
-        com.photobook.app.feature.editor.QuickFilter.Warm -> floatArrayOf(
-            1.08f, 0f, 0f, 0f, 8f,
-            0f, 1.0f, 0f, 0f, 2f,
-            0f, 0f, 0.92f, 0f, -6f,
-            0f, 0f, 0f, 1f, 0f,
-        )
-        com.photobook.app.feature.editor.QuickFilter.Cool -> floatArrayOf(
-            0.94f, 0f, 0f, 0f, -4f,
-            0f, 1.0f, 0f, 0f, 0f,
-            0f, 0f, 1.08f, 0f, 8f,
-            0f, 0f, 0f, 1f, 0f,
-        )
-    }
-
-    return ColorMatrix(multiplyColorMatrices(multiplyColorMatrices(contrastValues, exposureValues), filterValues))
-}
-
-/** Compose a × b for 4×5 ColorMatrix arrays (rows of mat-A applied after mat-B logically). */
-private fun multiplyColorMatrices(a: FloatArray, b: FloatArray): FloatArray {
-    val out = FloatArray(20)
-    for (row in 0..3) {
-        for (col in 0..3) {
-            var sum = 0f
-            for (k in 0..3) {
-                sum += a[row * 5 + k] * b[k * 5 + col]
-            }
-            out[row * 5 + col] = sum
-        }
-        // Translation column (index 4) combines the row of A applied to B's translation, plus A's own translation.
-        var translation = a[row * 5 + 4]
-        for (k in 0..3) {
-            translation += a[row * 5 + k] * b[k * 5 + 4]
-        }
-        out[row * 5 + 4] = translation
-    }
-    return out
 }
 
 private sealed interface EditorSaveUiState {
