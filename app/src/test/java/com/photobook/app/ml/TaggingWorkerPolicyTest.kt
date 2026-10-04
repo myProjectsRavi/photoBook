@@ -8,36 +8,20 @@ class TaggingWorkerPolicyTest {
 
     @Test
     fun incompleteWork_retriesOnlyWithinBoundedAttemptBudget() {
-        val worker = TaggingWorkerRetryPolicyHarness()
-        val first = worker.resultForRemainingWork(hasRemainingWork = true, runAttemptCount = 0)
-        val lastRetry = worker.resultForRemainingWork(hasRemainingWork = true, runAttemptCount = 2)
-        val exhausted = worker.resultForRemainingWork(hasRemainingWork = true, runAttemptCount = 3)
+        assertThat(TaggingRetryPolicy.result(true, 0))
+            .isInstanceOf(ListenableWorker.Result.Retry::class.java)
+        assertThat(TaggingRetryPolicy.result(true, 2))
+            .isInstanceOf(ListenableWorker.Result.Retry::class.java)
 
-        assertThat(first).isInstanceOf(ListenableWorker.Result.Retry::class.java)
-        assertThat(lastRetry).isInstanceOf(ListenableWorker.Result.Retry::class.java)
+        val exhausted = TaggingRetryPolicy.result(true, TaggingRetryPolicy.MAX_RETRY_ATTEMPTS)
         assertThat(exhausted).isInstanceOf(ListenableWorker.Result.Failure::class.java)
     }
 
     @Test
     fun noRemainingWork_succeedsRegardlessOfAttemptCount() {
-        val worker = TaggingWorkerRetryPolicyHarness()
-        assertThat(worker.resultForRemainingWork(false, 0))
+        assertThat(TaggingRetryPolicy.result(false, 0))
             .isInstanceOf(ListenableWorker.Result.Success::class.java)
-        assertThat(worker.resultForRemainingWork(false, 99))
+        assertThat(TaggingRetryPolicy.result(false, 99))
             .isInstanceOf(ListenableWorker.Result.Success::class.java)
-    }
-
-    private class TaggingWorkerRetryPolicyHarness {
-        fun resultForRemainingWork(
-            hasRemainingWork: Boolean,
-            runAttemptCount: Int,
-        ): ListenableWorker.Result {
-            if (!hasRemainingWork) return ListenableWorker.Result.success()
-            return if (runAttemptCount < 3) {
-                ListenableWorker.Result.retry()
-            } else {
-                ListenableWorker.Result.failure()
-            }
-        }
     }
 }
