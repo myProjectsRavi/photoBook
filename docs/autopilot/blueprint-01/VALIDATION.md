@@ -228,3 +228,12 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - Android Verification run `37174324230`: SUCCESS on immediate descendant `56ebd10fa9f73efc2f6d6271ef781c49e869aee2`, artifact `11293035617`, digest `sha256:8f36e0df011070fb38ea6a11e169192850a0417d3094048a4fdc20e7d60da79c`.
 - GitHub compare proves the sole intervening change is STATE.md, so both gates exercise the same production/test tree.
 - Retry exhaustion fails truthfully; completed work succeeds; processable work retries only within the existing bounded attempt budget.
+
+
+## S18 Editing — ACCEPTED
+
+- Exact source: `2a4e6c5e7bbc37ed9f6f938b3ca26cd8828e0973`.
+- Android Verification `37177565922`: SUCCESS, artifact `11293519337`, digest `sha256:e6301a5fbcc889b5a403ed146fdd4fcb8c9dcdf8a47f77e491e5240e35f51b45`.
+- Offline API-35 targeted verification `37177565860`: SUCCESS, artifact `11293968337`, digest `sha256:b2156c2c3191e0a03a6fb389992151af5c20c7f4b353e8083a46ade5a22568c6`.
+- Shared EditTransform normalizes rotation/crop and tone/filter state. The viewer preview is rendered through the same bounded bitmap transform path as export, preserving EXIF normalization and custom-crop position.
+- The earlier S18 test failure was a test-oracle mismatch with the existing 0.45 preview aspect lower bound; the expectation was corrected without changing product behavior.
