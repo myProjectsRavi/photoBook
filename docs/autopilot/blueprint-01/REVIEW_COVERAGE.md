@@ -309,3 +309,8 @@ Reviewed changed/direct-call/test scope: `feature/phototextsearch/PhotoTextSearc
 ## S17 targeted review closure
 
 Reviewed production/direct-call/test scope: `ml/TaggingWorker.kt`, `TaggingRetryPolicy.kt`, `MLTagger.kt`, `OnDeviceIntelligence.kt`, `IntelligenceSchedulingPolicy.kt`, `data/index/IndexPersistence.kt`, `data/db/PhotoDao.kt`, `data/model/IntelligenceStatus.kt`, `ui/viewmodel/MainViewModel.kt`, `IntelligenceSchedulingPolicyTest.kt`, `OcrIndexReadinessTest.kt`, and `TaggingWorkerPolicyTest.kt`. The change centralizes the existing retry bound without widening network, access, foreground scheduling, or terminal-status behavior.
+
+
+## S18 targeted review closure
+
+Reviewed changed/direct-call/test scope: `feature/editor/EditTransform.kt`, `PhotoEditService.kt`, `EditorOutputPublisher.kt`, `ui/screen/PhotoViewerScreen.kt`, `PhotoEditStateTest.kt`, and `EditTransformTest.kt`. Preview/export now consume one transform pipeline, including EXIF-normalized source pixels, rotation, custom/preset crop geometry and tone/filter matrices. Rendered previews are bounded and cancellation-safe; original media and S03 publication journaling are unchanged.
