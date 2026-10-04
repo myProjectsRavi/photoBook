@@ -509,3 +509,17 @@ S16 In-photo search is active. Production/controller/direct-call/test inspection
 ### Exact next action
 
 Add focused regression evidence proving an in-flight OCR/layout result cannot publish after explicit close/dispose, then run exact-source Android Verification and targeted API-35 emulator evidence. Preserve geometry/insets/reveal behavior and do not broaden Vault plaintext lifetime. Keep S16 IN_PROGRESS until those gates pass.
+
+
+## S16 checkpoint — lifecycle regression committed
+
+- Exact active source commit: `4b98efdc89a6fafe1a7d011de116af8ad0e3eff3`.
+- Added focused unit regressions proving explicit close and disposal reject an in-flight OCR/layout result and keep CLOSED state with no stale layout/matches.
+- Production code was not broadened; existing request/session/query revision fencing, one-layout reuse, geometry/insets/reveal behavior, Vault encrypted-input boundary and lifecycle disposal remain unchanged.
+- Android Verification run `37166303720` is currently IN_PROGRESS at the Phase-0 verification step.
+- Autopilot Targeted Emulator Verification run `37166303796` is currently IN_PROGRESS; host checks are green and target/instrumentation APK build is running.
+- No CI PASS is claimed yet. No physical/OEM/camera/battery/thermal evidence is claimed.
+
+### Exact next action
+
+Inspect runs 37166303720 and 37166303796. Diagnose/fix any real failure. Only if both exact-source gates pass, record artifacts/digests, review the S16 final diff, mark S16 ACCEPTED in BACKLOG/VALIDATION/REVIEW_COVERAGE/STATE, and then start S17. Do not skip to S17 while these S16 gates remain unresolved.
