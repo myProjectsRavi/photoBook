@@ -537,3 +537,18 @@ Inspect runs 37166303720 and 37166303796. Diagnose/fix any real failure. Only if
 ## S17 start
 
 S17 Offline maintenance is active. Inspect TaggingWorker, local intelligence readiness, durable status transitions, retry bounds, WorkManager scheduling/direct callers and tests before editing. Preserve first-use offline behavior, bounded work, foreground-yield policy, access safety and truthful failure states.
+
+
+## S17 checkpoint — bounded retry policy under exact-source verification
+
+- Active source commit: `427f575f28d2a99b87608c776b64143d0104f73a`.
+- Production `TaggingWorker` now delegates remaining-work retry decisions to a small shared `TaggingRetryPolicy` with the existing three-attempt bound preserved.
+- Focused unit coverage exercises the production retry policy: pending work retries before exhaustion; exhausted work fails truthfully; completed work succeeds regardless of attempt count.
+- Existing WorkManager constraints remain network-independent, library maintenance still yields to foreground browsing, focused-photo work remains prioritized, and durable intelligence states remain PENDING/MODEL_PREPARING/PROCESSED/FAILED_RETRYABLE/FAILED_PERMANENT.
+- Android Verification run `37174290322` is pending.
+- Autopilot Targeted Emulator Verification run `37174290335` is in progress.
+- No PASS is claimed yet. No physical/OEM/camera/battery/thermal evidence is claimed.
+
+### Exact next action
+
+Inspect runs 37174290322 and 37174290335 for exact source 427f575f28d2a99b87608c776b64143d0104f73a. Diagnose and fix any real failure. Only after both required gates pass, close S17 review/evidence and advance to S18.
