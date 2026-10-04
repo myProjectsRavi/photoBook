@@ -219,3 +219,12 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - Lifecycle regression coverage proves an in-flight layout cannot publish after explicit close or disposal.
 - Existing one-layout-per-session query reuse, stale source/request/query fencing, geometry/insets/reveal behavior and authenticated Vault input boundary were preserved.
 - No physical/OEM/camera/battery/thermal evidence is claimed.
+
+
+## S17 Offline maintenance — ACCEPTED
+
+- Production source: `427f575f28d2a99b87608c776b64143d0104f73a`.
+- Offline API-35 targeted run `37174290335`: SUCCESS, artifact `11292293982`, digest `sha256:56ae40f04ce1ca3d39ba36d3bf2e36bc66ce8cca3bd63214c00967e00d461108`.
+- Android Verification run `37174324230`: SUCCESS on immediate descendant `56ebd10fa9f73efc2f6d6271ef781c49e869aee2`, artifact `11293035617`, digest `sha256:8f36e0df011070fb38ea6a11e169192850a0417d3094048a4fdc20e7d60da79c`.
+- GitHub compare proves the sole intervening change is STATE.md, so both gates exercise the same production/test tree.
+- Retry exhaustion fails truthfully; completed work succeeds; processable work retries only within the existing bounded attempt budget.
