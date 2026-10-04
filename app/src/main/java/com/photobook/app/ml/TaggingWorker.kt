@@ -268,17 +268,13 @@ class TaggingWorker @AssistedInject constructor(
         )
     }
 
-    internal fun resultForRemainingWork(
+    private fun resultForRemainingWork(
         hasRemainingWork: Boolean,
         runAttemptCount: Int,
-    ): Result {
-        if (!hasRemainingWork) return Result.success()
-        return if (runAttemptCount < MAX_RETRY_ATTEMPTS) {
-            Result.retry()
-        } else {
-            Result.failure(workDataOf("reason" to "intelligence_work_incomplete"))
-        }
-    }
+    ): Result = TaggingRetryPolicy.result(
+        hasRemainingWork = hasRemainingWork,
+        runAttemptCount = runAttemptCount,
+    )
 
     private suspend fun flushPendingUpdates(
         pendingIndexUpdates: MutableList<PhotoIndex.PhotoIntelligenceUpdate>,
