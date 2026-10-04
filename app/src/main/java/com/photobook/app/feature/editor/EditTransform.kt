@@ -12,6 +12,21 @@ internal data class EditTransform(
     val cropPreset: CropPreset,
     val toneMatrix: FloatArray,
 ) {
+    fun previewAspectRatio(sourceAspectRatio: Float): Float {
+        val safeSource = sourceAspectRatio.coerceAtLeast(0.01f)
+        val rotatedAspect = if (quarterTurns % 2 == 0) safeSource else 1f / safeSource
+        cropRegion?.let { region ->
+            val width = (region.right - region.left).coerceAtLeast(0.0001f)
+            val height = (region.bottom - region.top).coerceAtLeast(0.0001f)
+            return (rotatedAspect * width / height).coerceIn(0.45f, 2.2f)
+        }
+        return if (cropPreset == CropPreset.Original) {
+            rotatedAspect.coerceIn(0.45f, 2.2f)
+        } else {
+            cropPreset.ratio.coerceIn(0.45f, 2.2f)
+        }
+    }
+
     companion object {
         fun from(state: PhotoEditState): EditTransform {
             return EditTransform(
