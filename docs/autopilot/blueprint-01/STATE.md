@@ -5,10 +5,10 @@ authorized_branch: autopilot/epics-features-user-stories
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
 current_epic: E06 Viewer and exports  
-current_feature: Editing  
-current_story: S18 Editing  
+current_feature: Safe sharing  
+current_story: S19 Safe sharing  
 status: IN_PROGRESS  
-source_commit_tested: 427f575f28d2a99b87608c776b64143d0104f73a (S17 ACCEPTED)
+source_commit_tested: 2a4e6c5e7bbc37ed9f6f938b3ca26cd8828e0973 (S18 ACCEPTED)
 latest_checkpoint_commit: 4186434c680317000a7d6ee49ad9f89aed8d8bcf
 
 ## Source blueprint
@@ -573,3 +573,17 @@ Inspect runs 37174290322 and 37174290335 for exact source 427f575f28d2a99b87608c
 ## S18 start
 
 S18 Editing is active. Inspect shared editor transform/state/service, preview path, export/render path, direct viewer caller and existing crop/rotation/tone/orientation tests before editing. Preserve original-media integrity and S03 publication safety.
+
+
+## S18 final acceptance
+
+- S18 is **ACCEPTED** on exact tested source `2a4e6c5e7bbc37ed9f6f938b3ca26cd8828e0973`.
+- Android Verification `37177565922`: SUCCESS. Artifact `11293519337`, digest `sha256:e6301a5fbcc889b5a403ed146fdd4fcb8c9dcdf8a47f77e491e5240e35f51b45`.
+- Offline API-35 targeted verification `37177565860`: SUCCESS. Artifact `11293968337`, digest `sha256:b2156c2c3191e0a03a6fb389992151af5c20c7f4b353e8083a46ade5a22568c6`.
+- Preview and export now share one normalized EditTransform for rotation/crop/tone/filter, and preview pixels are produced by the same bounded in-memory render pipeline as export after EXIF normalization. This removes the prior centered-crop approximation for off-center custom crops.
+- Final compare from S18 start `80441d50...` is limited to EditTransform.kt, PhotoEditService.kt, PhotoViewerScreen.kt and EditTransformTest.kt.
+- Original media is never modified; S03 journaled safe publication remains unchanged. No physical/OEM/camera/battery/thermal evidence is claimed.
+
+## S19 start
+
+S19 Safe sharing is active. Inspect privacy-copy preparation, all share entry points, URI grant flags/ClipData, batch bounds/cancellation and existing tests. A failed privacy transformation must fail closed and must never fall back to sharing the original.
