@@ -147,6 +147,7 @@ import com.photobook.app.feature.metadata.ExifDetails
 import com.photobook.app.feature.metadata.ExifDetailsResult
 import com.photobook.app.feature.metadata.ExifMetadataService
 import com.photobook.app.feature.metadata.MetadataCleanResult
+import com.photobook.app.feature.metadata.SafeShareIntentFactory
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -494,13 +495,8 @@ fun PhotoViewerScreen(
         coroutineScope.launch {
             when (val result = exifMetadataService.createSafeShareCopies(listOf(active))) {
                 is com.photobook.app.feature.metadata.SafeShareResult.Success -> {
-                    val item = result.items.firstOrNull() ?: return@launch
-                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                        type = item.mimeType.ifBlank { "image/*" }
-                        putExtra(Intent.EXTRA_STREAM, item.uri)
-                        clipData = ClipData.newUri(context.contentResolver, item.label, item.uri)
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
+                    val shareIntent = SafeShareIntentFactory.build(context, result.items)
+                        ?: return@launch
                     runCatching {
                         context.startActivity(
                             Intent.createChooser(shareIntent, context.getString(R.string.viewer_share)),
