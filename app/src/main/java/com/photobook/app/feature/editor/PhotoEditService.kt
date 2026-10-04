@@ -39,7 +39,8 @@ class PhotoEditService @Inject constructor(
                 coroutineContext.ensureActive()
                 source = decodeSampledBitmap(photo.uriString) ?: return@withContext PhotoEditResult.Error
 
-                rotated = applyRotation(source!!, state.rotationQuarterTurns)
+                val transform = EditTransform.from(state)
+                rotated = applyRotation(source!!, transform.quarterTurns)
                 if (rotated !== source) source?.recycleSafely()
 
                 coroutineContext.ensureActive()
@@ -246,10 +247,11 @@ class PhotoEditService @Inject constructor(
 
     private fun applyToneAndFilter(source: Bitmap, state: PhotoEditState): Bitmap {
         if (state.isIdentity()) return source
-        val matrix = ColorMatrix()
-        matrix.postConcat(contrastMatrix(state.contrast))
-        matrix.postConcat(exposureMatrix(state.exposure))
-        matrix.postConcat(filterMatrix(state.filter))
+        val matrix = ColorMatrix(EditTransform.toneMatrix(
+            exposure = state.exposure,
+            contrast = state.contrast,
+            filter = state.filter,
+        ))
 
         val output = Bitmap.createBitmap(
             source.width.coerceAtLeast(1),
@@ -267,69 +269,6 @@ class PhotoEditService @Inject constructor(
             paint,
         )
         return output
-    }
-
-    private fun contrastMatrix(contrast: Float): ColorMatrix {
-        val c = contrast.coerceIn(CONTRAST_MIN, CONTRAST_MAX)
-        val translate = 128f * (1f - c)
-        return ColorMatrix(
-            floatArrayOf(
-                c, 0f, 0f, 0f, translate,
-                0f, c, 0f, 0f, translate,
-                0f, 0f, c, 0f, translate,
-                0f, 0f, 0f, 1f, 0f,
-            ),
-        )
-    }
-
-    private fun exposureMatrix(exposure: Float): ColorMatrix {
-        val offset = exposure.coerceIn(EXPOSURE_MIN, EXPOSURE_MAX) * 62f
-        return ColorMatrix(
-            floatArrayOf(
-                1f, 0f, 0f, 0f, offset,
-                0f, 1f, 0f, 0f, offset,
-                0f, 0f, 1f, 0f, offset,
-                0f, 0f, 0f, 1f, 0f,
-            ),
-        )
-    }
-
-    private fun filterMatrix(filter: QuickFilter): ColorMatrix {
-        return when (filter) {
-            QuickFilter.Original -> ColorMatrix()
-            QuickFilter.Mono -> ColorMatrix().apply { setSaturation(0f) }
-            QuickFilter.Vivid -> ColorMatrix().apply {
-                setSaturation(1.28f)
-                postConcat(
-                    ColorMatrix(
-                        floatArrayOf(
-                            1.05f, 0f, 0f, 0f, 6f,
-                            0f, 1.05f, 0f, 0f, 6f,
-                            0f, 0f, 1.05f, 0f, 6f,
-                            0f, 0f, 0f, 1f, 0f,
-                        ),
-                    ),
-                )
-            }
-
-            QuickFilter.Warm -> ColorMatrix(
-                floatArrayOf(
-                    1.08f, 0f, 0f, 0f, 8f,
-                    0f, 1.0f, 0f, 0f, 2f,
-                    0f, 0f, 0.92f, 0f, -6f,
-                    0f, 0f, 0f, 1f, 0f,
-                ),
-            )
-
-            QuickFilter.Cool -> ColorMatrix(
-                floatArrayOf(
-                    0.94f, 0f, 0f, 0f, -4f,
-                    0f, 1.0f, 0f, 0f, 0f,
-                    0f, 0f, 1.08f, 0f, 8f,
-                    0f, 0f, 0f, 1f, 0f,
-                ),
-            )
-        }
     }
 
     private fun Bitmap.recycleSafely() {
