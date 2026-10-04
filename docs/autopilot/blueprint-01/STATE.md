@@ -5,10 +5,10 @@ authorized_branch: autopilot/epics-features-user-stories
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
 current_epic: E06 Viewer and exports  
-current_feature: Safe sharing  
-current_story: S19 Safe sharing  
+current_feature: PDF export  
+current_story: S20 PDF export  
 status: IN_PROGRESS  
-source_commit_tested: 2a4e6c5e7bbc37ed9f6f938b3ca26cd8828e0973 (S18 ACCEPTED)
+source_commit_tested: 868902d596b5e3904642ec22e88503331cfb2f4c (S19 ACCEPTED)
 latest_checkpoint_commit: 4186434c680317000a7d6ee49ad9f89aed8d8bcf
 
 ## Source blueprint
@@ -587,3 +587,17 @@ S18 Editing is active. Inspect shared editor transform/state/service, preview pa
 ## S19 start
 
 S19 Safe sharing is active. Inspect privacy-copy preparation, all share entry points, URI grant flags/ClipData, batch bounds/cancellation and existing tests. A failed privacy transformation must fail closed and must never fall back to sharing the original.
+
+
+## S19 final acceptance
+
+- S19 is **ACCEPTED** on exact tested source `868902d596b5e3904642ec22e88503331cfb2f4c`.
+- Android Verification `37177989158`: SUCCESS. Artifact `11294056125`, digest `sha256:3877b02fcc012947eaad7a52cca70819c629d39a965f42547762dc03ed76034d`.
+- Offline API-35 targeted verification `37177989167`: SUCCESS. Artifact `11294101251`, digest `sha256:753ad7d53cb96079315401f62d9192480c8762f879118e0804d3a5bc2e89b77b`.
+- Safe Share rejects batches over 50 before I/O, propagates cancellation with cleanup, cleans all earlier outputs on later failure, never falls back to originals, and centralizes ACTION_SEND/ACTION_SEND_MULTIPLE ClipData with read-only URI grants and no write grant.
+- Final S19 diff is limited to ExifMetadataService, SafeShareIntentFactory, MainActivity, viewer wiring, and focused instrumented tests.
+- No physical-device evidence is claimed. Main was not modified.
+
+## S20 start
+
+S20 PDF export is active. Inspect PdfExportService, output publication/recovery, progress and cancellation behavior, share/destination callers and current layout/constraint tests before editing. Preserve truthful partial results and never leave a broken pending/public output.
