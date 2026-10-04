@@ -5,10 +5,10 @@ authorized_branch: autopilot/epics-features-user-stories
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
 current_epic: E05 Search and intelligence  
-current_feature: In-photo search  
-current_story: S16 In-photo search  
+current_feature: Offline maintenance  
+current_story: S17 Offline maintenance  
 status: IN_PROGRESS  
-source_commit_tested: e6a6cfdf9cb6a0eb9ddf97a39cde48f3438a8d0c (S15 ACCEPTED)
+source_commit_tested: 4b98efdc89a6fafe1a7d011de116af8ad0e3eff3 (S16 ACCEPTED)
 latest_checkpoint_commit: 4186434c680317000a7d6ee49ad9f89aed8d8bcf
 
 ## Source blueprint
@@ -523,3 +523,17 @@ Add focused regression evidence proving an in-flight OCR/layout result cannot pu
 ### Exact next action
 
 Inspect runs 37166303720 and 37166303796. Diagnose/fix any real failure. Only if both exact-source gates pass, record artifacts/digests, review the S16 final diff, mark S16 ACCEPTED in BACKLOG/VALIDATION/REVIEW_COVERAGE/STATE, and then start S17. Do not skip to S17 while these S16 gates remain unresolved.
+
+
+## S16 final acceptance
+
+- S16 is **ACCEPTED** on exact tested source `4b98efdc89a6fafe1a7d011de116af8ad0e3eff3`.
+- Android Verification run `37166303720` attempt 2: SUCCESS. Artifact `11290940803`, digest `sha256:55772f9c318a53378c04ba40533cf7e8e8907518f71d45baced691c9d5aaa640`.
+- Offline API-35 targeted verification run `37166303796`: SUCCESS. Artifact `11289513787`, digest `sha256:98ba92c45d37ca9a0f6d19c4065eaec8de5790ec95e1f57bdf0d8f3e9525bf4e`.
+- Focused lifecycle regressions prove close/dispose reject in-flight OCR/layout publication; existing one-layout reuse, request/session/query fencing, geometry/insets/reveal behavior and Vault encrypted-input boundary remain unchanged.
+- The first Android Verification attempt was cancelled without a product assertion failure; attempt 2 passed the full Phase-0 gate. No physical/OEM/camera/battery/thermal evidence is claimed.
+- Main was not modified.
+
+## S17 start
+
+S17 Offline maintenance is active. Inspect TaggingWorker, local intelligence readiness, durable status transitions, retry bounds, WorkManager scheduling/direct callers and tests before editing. Preserve first-use offline behavior, bounded work, foreground-yield policy, access safety and truthful failure states.
