@@ -102,6 +102,47 @@ class PhotoTextSearchControllerTest {
     }
 
     @Test
+    fun closeRejectsInFlightLayoutResult() = runBlocking {
+        val deferred = CompletableDeferred<PhotoTextLayoutLoadResult>()
+        val source = object : PhotoTextLayoutSource {
+            override suspend fun load(source: PhotoTextSourceKey): PhotoTextLayoutLoadResult = deferred.await()
+        }
+        val controller = PhotoTextSearchController(source = source, scope = this)
+
+        controller.activate(1L, "content://photo/1")
+        controller.open()
+        delay(20)
+        controller.close()
+        deferred.complete(PhotoTextLayoutLoadResult.Success(layout("stale")))
+        delay(50)
+
+        assertThat(controller.state.value.phase).isEqualTo(PhotoTextSearchPhase.CLOSED)
+        assertThat(controller.state.value.layout).isNull()
+        assertThat(controller.state.value.matches).isEmpty()
+        controller.dispose()
+    }
+
+    @Test
+    fun disposeRejectsInFlightLayoutResult() = runBlocking {
+        val deferred = CompletableDeferred<PhotoTextLayoutLoadResult>()
+        val source = object : PhotoTextLayoutSource {
+            override suspend fun load(source: PhotoTextSourceKey): PhotoTextLayoutLoadResult = deferred.await()
+        }
+        val controller = PhotoTextSearchController(source = source, scope = this)
+
+        controller.activate(1L, "content://photo/1")
+        controller.open()
+        delay(20)
+        controller.dispose()
+        deferred.complete(PhotoTextLayoutLoadResult.Success(layout("stale")))
+        delay(50)
+
+        assertThat(controller.state.value.phase).isEqualTo(PhotoTextSearchPhase.CLOSED)
+        assertThat(controller.state.value.layout).isNull()
+        assertThat(controller.state.value.matches).isEmpty()
+    }
+
+    @Test
     fun queryOver128CharactersIsRejectedWithoutSilentTruncation() = runBlocking {
         val controller = PhotoTextSearchController(
             source = object : PhotoTextLayoutSource {
