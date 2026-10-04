@@ -40,6 +40,7 @@ import com.photobook.app.R
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.feature.metadata.ExifMetadataService
 import com.photobook.app.feature.metadata.SafeShareItem
+import com.photobook.app.feature.metadata.SafeShareIntentFactory
 import com.photobook.app.feature.metadata.SafeShareResult
 import com.photobook.app.feature.pdf.PdfExportResult
 import com.photobook.app.feature.pdf.PdfExportService
@@ -869,39 +870,13 @@ private fun vaultAuthenticators(): Int {
 }
 
 private fun sharePhotos(context: Context, photos: List<SafeShareItem>) {
-    if (photos.isEmpty()) return
-
-    val uris = photos.map { it.uri }
-    val mimeType = photos
-        .map { it.mimeType.ifBlank { "image/*" } }
-        .distinct()
-        .singleOrNull()
-        ?: "image/*"
-
-    val shareIntent = if (uris.size == 1) {
-        Intent(Intent.ACTION_SEND).apply {
-            type = mimeType
-            putExtra(Intent.EXTRA_STREAM, uris.first())
-        }
-    } else {
-        Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-            type = mimeType
-            putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
-        }
-    }
-
-    val clipData = ClipData.newUri(
-        context.contentResolver,
-        photos.first().label,
-        uris.first(),
+    val shareIntent = SafeShareIntentFactory.build(context, photos) ?: return
+    context.startActivity(
+        Intent.createChooser(
+            shareIntent,
+            context.getString(R.string.share_selected),
+        ),
     )
-    uris.drop(1).forEach { uri ->
-        clipData.addItem(ClipData.Item(uri))
-    }
-
-    shareIntent.clipData = clipData
-    shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.share_selected)))
 }
 
 private fun sharePdf(context: Context, uri: Uri, fileName: String) {
