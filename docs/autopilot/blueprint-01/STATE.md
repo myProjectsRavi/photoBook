@@ -4,11 +4,11 @@ cycle: blueprint-01
 authorized_branch: autopilot/epics-features-user-stories  
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
-current_epic: E05 Search and intelligence  
-current_feature: Offline maintenance  
-current_story: S17 Offline maintenance  
+current_epic: E06 Viewer and exports  
+current_feature: Editing  
+current_story: S18 Editing  
 status: IN_PROGRESS  
-source_commit_tested: 4b98efdc89a6fafe1a7d011de116af8ad0e3eff3 (S16 ACCEPTED)
+source_commit_tested: 427f575f28d2a99b87608c776b64143d0104f73a (S17 ACCEPTED)
 latest_checkpoint_commit: 4186434c680317000a7d6ee49ad9f89aed8d8bcf
 
 ## Source blueprint
@@ -559,3 +559,17 @@ Inspect runs 37174290322 and 37174290335 for exact source 427f575f28d2a99b87608c
 - GitHub refused a retry of cancelled Android Verification run `37174290322` with HTTP 403 "This workflow run cannot be retried".
 - The targeted API-35 run `37174290335` remains a valid SUCCESS for production source `427f575f28d2a99b87608c776b64143d0104f73a`, artifact `11292293982`, digest `sha256:56ae40f04ce1ca3d39ba36d3bf2e36bc66ce8cca3bd63214c00967e00d461108`.
 - This checkpoint is documentation-only and intentionally triggers fresh branch workflows on an unchanged S17 production tree. No product/test gate is weakened.
+
+
+## S17 final acceptance
+
+- S17 is **ACCEPTED** on production source `427f575f28d2a99b87608c776b64143d0104f73a`.
+- Offline API-35 targeted verification `37174290335`: SUCCESS. Artifact `11292293982`, digest `sha256:56ae40f04ce1ca3d39ba36d3bf2e36bc66ce8cca3bd63214c00967e00d461108`.
+- Android Verification `37174324230`: SUCCESS on immediate descendant `56ebd10fa9f73efc2f6d6271ef781c49e869aee2`, artifact `11293035617`, digest `sha256:8f36e0df011070fb38ea6a11e169192850a0417d3094048a4fdc20e7d60da79c`.
+- GitHub compare from `427f575...` to `56ebd10...` shows exactly one changed file, `docs/autopilot/blueprint-01/STATE.md`; therefore the production/test tree is identical across the two required gates.
+- Bounded retry policy remains three attempts, offline WorkManager constraints remain network-independent, background library work still yields to foreground browsing, and durable intelligence statuses remain truthful.
+- No physical/OEM/camera/battery/thermal evidence is claimed. Main was not modified.
+
+## S18 start
+
+S18 Editing is active. Inspect shared editor transform/state/service, preview path, export/render path, direct viewer caller and existing crop/rotation/tone/orientation tests before editing. Preserve original-media integrity and S03 publication safety.
