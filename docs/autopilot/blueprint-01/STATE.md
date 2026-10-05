@@ -633,3 +633,20 @@ Inspect runs `37295401714` and `37295401862`. If either fails, diagnose the actu
 ### Exact next action
 
 Retry only the normal GitHub contents-API update of `MainActivity.kt` so current Vault-load failures close the session centrally. Then add focused regression evidence for failure/background/dismiss lifecycle cleanup, inspect the final diff, and obtain exact-head Android Verification plus targeted API-35 evidence before accepting S21. Do not start S22 while S21 remains IN_PROGRESS.
+
+
+## S21 checkpoint — fail-closed Vault load committed
+
+- Active story: S21 Vault privacy. Status remains IN_PROGRESS pending exact-head CI and focused lifecycle evidence.
+- Production commit: `687528ed6cec36366d4c30fce707fe777dfc3842`.
+- Changed production file: `app/src/main/java/com/photobook/app/MainActivity.kt`.
+- `loadVisibleVaultItems` now catches load failures and, only when the same visible Vault generation is still current, invokes centralized `closeVault()` before propagating the error. This clears the in-memory Vault session, item list, preview generation/request state and schedules preview-cache deletion.
+- Existing explicit dismiss/background cleanup and preview-dialog search-controller disposal remain unchanged.
+- Android Verification run `37320140040`: IN_PROGRESS when recorded.
+- Targeted API-35 run `37320140170`: IN_PROGRESS when recorded; host verification passed and APK build was running.
+- No CI PASS is claimed yet for S21. No physical/OEM/camera/battery/thermal evidence is claimed.
+- `main` remains untouched.
+
+### Exact next action
+
+Inspect runs `37320140040` and `37320140170`. If either fails, diagnose and fix the real cause. If both pass, determine whether existing runtime coverage directly proves Vault failure/background/dismiss cleanup; if not, add the smallest focused instrumentation seam/test without weakening authentication or exposing plaintext. Update VALIDATION.md, REVIEW_COVERAGE.md, BACKLOG.md and STATE.md only after reproducible evidence passes. Do not start S22 before S21 is ACCEPTED.
