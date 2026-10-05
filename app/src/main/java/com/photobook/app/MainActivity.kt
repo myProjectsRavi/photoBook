@@ -249,14 +249,21 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         val previewGeneration = vaultService.beginPreviewLoad()
         vaultSession = session
         vaultPreviewGeneration = previewGeneration
-        val items = vaultService.listItems(
-            session = session,
-            includePreviews = false,
-        )
-        return when {
-            !showVault -> emptyList()
-            vaultService.isPreviewLoadCurrent(previewGeneration) -> items
-            else -> vaultItems
+        return try {
+            val items = vaultService.listItems(
+                session = session,
+                includePreviews = false,
+            )
+            when {
+                !showVault -> emptyList()
+                vaultService.isPreviewLoadCurrent(previewGeneration) -> items
+                else -> vaultItems
+            }
+        } catch (error: Throwable) {
+            if (showVault && vaultService.isPreviewLoadCurrent(previewGeneration)) {
+                closeVault()
+            }
+            throw error
         }
     }
 
