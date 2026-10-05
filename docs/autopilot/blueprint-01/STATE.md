@@ -601,3 +601,19 @@ S19 Safe sharing is active. Inspect privacy-copy preparation, all share entry po
 ## S20 start
 
 S20 PDF export is active. Inspect PdfExportService, output publication/recovery, progress and cancellation behavior, share/destination callers and current layout/constraint tests before editing. Preserve truthful partial results and never leave a broken pending/public output.
+
+## S20 checkpoint — targeted PDF runtime evidence enabled
+
+- Active story: S20 PDF export. Status remains IN_PROGRESS pending exact-head CI completion.
+- Exact branch/source HEAD after the workflow-only change: `bf13ba8840e081f224b731d013cf2db3b756b3f8`.
+- Changed file in this checkpoint: `.github/workflows/autopilot-targeted-verify.yml`.
+- The targeted API-35 suite now explicitly executes `com.photobook.app.feature.pdf.PdfExportServiceInstrumentedTest` in addition to the prior classes.
+- Android Verification run: https://github.com/myProjectsRavi/photoBook/actions/runs/37295401714 — IN_PROGRESS at checkpoint.
+- Targeted API-35 run: https://github.com/myProjectsRavi/photoBook/actions/runs/37295401862 — IN_PROGRESS at checkpoint. Host verification passed and APK/test-APK build was still running when recorded.
+- No CI PASS is claimed yet for `bf13ba8...`; S20 must not be ACCEPTED until both required exact-head workflows finish green and the targeted evidence confirms the PDF instrumentation completed.
+- `main` remains untouched. Branch was 213 commits ahead and 0 behind `main` before this checkpoint commit.
+- No physical/OEM/camera/battery/thermal evidence is claimed.
+
+### Exact next action
+
+Inspect runs `37295401714` and `37295401862`. If either fails, diagnose the actual failed step/log and fix the cause without weakening gates. If both pass, inspect targeted artifacts/logs to verify non-zero PDF instrumentation execution, update VALIDATION.md/REVIEW_COVERAGE.md/BACKLOG.md/STATE.md, mark S20 ACCEPTED, then start S21 only as the next story in fixed order.
