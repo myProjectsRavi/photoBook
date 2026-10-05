@@ -617,3 +617,19 @@ S20 PDF export is active. Inspect PdfExportService, output publication/recovery,
 ### Exact next action
 
 Inspect runs `37295401714` and `37295401862`. If either fails, diagnose the actual failed step/log and fix the cause without weakening gates. If both pass, inspect targeted artifacts/logs to verify non-zero PDF instrumentation execution, update VALIDATION.md/REVIEW_COVERAGE.md/BACKLOG.md/STATE.md, mark S20 ACCEPTED, then start S21 only as the next story in fixed order.
+
+
+## S21 checkpoint — Vault failure lifecycle review
+
+- S20 is ACCEPTED in BACKLOG. S21 Vault privacy is the first incomplete eligible story.
+- Exact branch HEAD inspected at start: `4fe9f771a6a98439c2107dab97bfcc703a82fa93`; branch was 216 commits ahead and 0 behind `main`. Main was not modified.
+- Re-read canonical STATE/BACKLOG/VALIDATION/DECISIONS/REVIEW_COVERAGE and repository guidance, then inspected `VaultService.kt`, `VaultBottomSheet.kt`, the direct `MainActivity.kt` lifecycle/session caller, authentication code and existing search disposal behavior.
+- Existing close/background paths invalidate the preview generation, clear visible Vault items/session/request state, asynchronously delete app-owned preview files, clear FLAG_SECURE on disposal, and dispose the in-preview text-search controller.
+- Found a narrow failure-path gap: `loadVisibleVaultItems` assigns the authenticated session and preview generation before `vaultService.listItems`; callers other than `refreshVault` can convert that failure to an empty list without invoking `closeVault`, leaving authenticated session state resident until a later close/background event.
+- Prepared the smallest coherent fix: fail closed inside `loadVisibleVaultItems` itself when the still-current load throws, calling the existing centralized `closeVault` cleanup before rethrowing. This preserves successful refresh behavior and does not broaden plaintext lifetime.
+- The normal authenticated GitHub contents-API update of `MainActivity.kt` was blocked by the connector safety layer before mutation. No production/test file changed and no lower-level Git-object/ref bypass was attempted.
+- No CI PASS is claimed for the uncommitted change. No physical/OEM/camera/battery/thermal evidence is claimed.
+
+### Exact next action
+
+Retry only the normal GitHub contents-API update of `MainActivity.kt` so current Vault-load failures close the session centrally. Then add focused regression evidence for failure/background/dismiss lifecycle cleanup, inspect the final diff, and obtain exact-head Android Verification plus targeted API-35 evidence before accepting S21. Do not start S22 while S21 remains IN_PROGRESS.
