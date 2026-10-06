@@ -704,3 +704,12 @@ Inspect runs `37453189446` and `37453189409`. Diagnose and fix any schema/compil
 ### Exact next action
 
 Inspect runs `37478944500` and `37478944391`. If both succeed and the targeted instrumentation output confirms the Vault journal class executed, record artifacts/digests, update BACKLOG/VALIDATION/REVIEW_COVERAGE/STATE, mark S22 ACCEPTED, then start S23 Trash management. If either fails, diagnose the failing step and keep S22 IN_PROGRESS.
+
+
+## S22 evidence result
+
+Exact tested source `6b57a818f82f8658592824fc74a06770c01be8d2` passed targeted offline API-35 run `37478944391`. The run completed 29/29 instrumentation tests, including both focused Vault journal tests, and produced artifact `11420836984` with digest `sha256:f1028218f1b38f1ec7e24a21a99ce350f21cb6af3bd63f37200e0cc1bc539d87`. Evidence manifest validation passed for the exact checkout.
+
+The same-source Android Verification run was superseded by the documentation checkpoint. Prior production/test source `2adf6f9b6ea16cec25108c3805001cca44ace4bb` had already passed Android Verification run `37473990966`; the later source only adds the focused Vault class to targeted workflow routing.
+
+S22 is ACCEPTED. Next eligible story is S23 Trash management. No physical-device evidence is claimed and main remains untouched.
