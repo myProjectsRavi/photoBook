@@ -4,12 +4,12 @@ cycle: blueprint-01
 authorized_branch: autopilot/epics-features-user-stories  
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
-current_epic: E06 Viewer and exports  
-current_feature: PDF export  
-current_story: S20 PDF export  
+current_epic: E07 Privacy and cleanup  
+current_feature: Vault operations  
+current_story: S22 Vault operations  
 status: IN_PROGRESS  
-source_commit_tested: 868902d596b5e3904642ec22e88503331cfb2f4c (S19 ACCEPTED)
-latest_checkpoint_commit: 4186434c680317000a7d6ee49ad9f89aed8d8bcf
+source_commit_tested: a889a03e6065b78355fcce273ca75771f21de4fc (S22 production checkpoint; CI not yet evidenced)
+latest_checkpoint_commit: a889a03e6065b78355fcce273ca75771f21de4fc
 
 ## Source blueprint
 
@@ -597,7 +597,6 @@ S19 Safe sharing is active. Inspect privacy-copy preparation, all share entry po
 - Safe Share rejects batches over 50 before I/O, propagates cancellation with cleanup, cleans all earlier outputs on later failure, never falls back to originals, and centralizes ACTION_SEND/ACTION_SEND_MULTIPLE ClipData with read-only URI grants and no write grant.
 - Final S19 diff is limited to ExifMetadataService, SafeShareIntentFactory, MainActivity, viewer wiring, and focused instrumented tests.
 - No physical-device evidence is claimed. Main was not modified.
-
 ## S20 start
 
 S20 PDF export is active. Inspect PdfExportService, output publication/recovery, progress and cancellation behavior, share/destination callers and current layout/constraint tests before editing. Preserve truthful partial results and never leave a broken pending/public output.
@@ -650,3 +649,18 @@ Retry only the normal GitHub contents-API update of `MainActivity.kt` so current
 ### Exact next action
 
 Inspect runs `37320140040` and `37320140170`. If either fails, diagnose and fix the real cause. If both pass, determine whether existing runtime coverage directly proves Vault failure/background/dismiss cleanup; if not, add the smallest focused instrumentation seam/test without weakening authentication or exposing plaintext. Update VALIDATION.md, REVIEW_COVERAGE.md, BACKLOG.md and STATE.md only after reproducible evidence passes. Do not start S22 before S21 is ACCEPTED.
+
+## S22 checkpoint — transaction and recovery boundary
+
+- Active story: S22 Vault operations. S21 is ACCEPTED in BACKLOG; S22 is the first incomplete eligible story.
+- Exact production checkpoint inspected: `a889a03e6065b78355fcce273ca75771f21de4fc`. Branch comparison is 222 commits ahead and 0 behind `main`; `main` was not modified.
+- Re-read canonical STATE/BACKLOG/VALIDATION/DECISIONS/REVIEW_COVERAGE, production `VaultService.kt`, direct `MainActivity.kt` callers, Room database/DAO/entity configuration and explicit migration chain.
+- Existing S22 work provides truthful per-photo `ADDED / ALREADY_PROTECTED / FAILED` outcomes, propagates coroutine cancellation with app-owned partial ciphertext cleanup, and makes Vault deletion fail closed by deleting ciphertext before metadata.
+- Remaining add crash boundary: encrypted ciphertext is atomically renamed before the Room Vault row is inserted. A process death in that interval can leave an untracked encrypted file whose random filename cannot safely reconstruct the missing metadata.
+- Remaining move-out crash boundary: export verifies a non-zero published destination with SHA-256 read-back, then `MainActivity` separately calls `deleteItem`. A process death between those calls is data-safe but leaves a duplicate and no durable reconciliation state.
+- Current Room database is version 12, explicit migrations 1→12 are registered, and no destructive fallback is configured. Durable recovery therefore requires an explicit schema migration rather than an ad-hoc reset.
+- No exact-head workflow PASS is claimed for `a889a03...`; no physical/OEM/camera/battery/thermal evidence is claimed.
+
+### Exact next action
+
+Implement the smallest Room-backed Vault operation journal with an explicit 12→13 migration. Journal add intent before ciphertext publication so interrupted app-owned add artifacts can be reconciled without inventing metadata. Journal verified move-out publication before Vault removal so a later authenticated operation can reconcile a crash only after re-validating the published destination. Add focused regression tests for per-item outcomes, cancellation, failed ciphertext deletion, interrupted add, and verified-export recovery. Then obtain exact-head Android Verification and offline API-35 evidence before accepting S22. Do not start S23 while S22 remains IN_PROGRESS.
