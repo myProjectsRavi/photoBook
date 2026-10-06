@@ -23,7 +23,7 @@ import java.io.File
  *
  * This fixture recreates only the SQLite shape proven by those v1 entity
  * definitions, seeds durable user data, then opens the file through the real
- * production provider so migrations 1 -> 12 and Room's v12 validation run.
+ * production provider so migrations 1 -> 13 and Room's v13 validation run.
  */
 @RunWith(AndroidJUnit4::class)
 class HistoricalRoomMigrationInstrumentedTest {
@@ -45,7 +45,7 @@ class HistoricalRoomMigrationInstrumentedTest {
     }
 
     @Test
-    fun provenanceBackedV1Database_migratesToV12_preservingDurablePhotoData() {
+    fun provenanceBackedV1Database_migratesToV13_preservingDurablePhotoData() {
         createHistoricalV1Fixture()
 
         val migrated = AppModule.providePhotoBookDatabase(context)
@@ -91,7 +91,7 @@ class HistoricalRoomMigrationInstrumentedTest {
 
         migrated.openHelper.readableDatabase.query("PRAGMA user_version").use { cursor ->
             assertTrue(cursor.moveToFirst())
-            assertEquals(12, cursor.getInt(0))
+            assertEquals(13, cursor.getInt(0))
         }
 
         migrated.openHelper.readableDatabase.query("PRAGMA integrity_check").use { cursor ->
