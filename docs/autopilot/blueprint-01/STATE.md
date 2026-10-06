@@ -689,3 +689,18 @@ Implement the smallest Room-backed Vault operation journal with an explicit 12�
 ### Exact next action
 
 Inspect runs `37453189446` and `37453189409`. Diagnose and fix any schema/compile/runtime failures. Add focused Vault instrumentation that exercises v12→v13 migration/journal recovery, per-item add outcomes/cancellation, failed ciphertext deletion, interrupted-add cleanup, and verified-move-out journal semantics, then include that class in the offline API-35 targeted suite. Only after exact-head Android Verification and targeted Vault runtime evidence pass should S22 be marked ACCEPTED and S23 begin.
+
+
+## S22 checkpoint — Vault test routed into offline API-35
+
+- Active story: S22 Vault operations. Status remains IN_PROGRESS pending exact-head completion.
+- Tested production/runtime source before routing change: `2adf6f9b6ea16cec25108c3805001cca44ace4bb`.
+- Android Verification run `37473990966`: SUCCESS; artifact `11417958836`, digest `sha256:e47be1623dcb5836fcfdd4185ff662c11bfabae61bea11e66a733ae9c25f60cb`.
+- Targeted API-35 run `37473991049`: SUCCESS; artifact `11417589858`, digest `sha256:3d191e7fdecf8b23138c760276ba6b5d6763daa56d65f126721426c527aa0e8b`. That run compiled the Vault journal instrumentation but did not yet include it in the explicit TARGET_CLASSES list.
+- Commit `6b57a818f82f8658592824fc74a06770c01be8d2` adds `VaultOperationJournalInstrumentedTest` to the targeted offline API-35 class list without weakening any existing test, privacy, size, offline, or packaging gate.
+- Fresh exact-head runs: Android Verification `37478944500`; targeted API-35 `37478944391`. Both were in progress at checkpoint time.
+- No physical/OEM/camera/battery/thermal evidence is claimed. `main` remains untouched.
+
+### Exact next action
+
+Inspect runs `37478944500` and `37478944391`. If both succeed and the targeted instrumentation output confirms the Vault journal class executed, record artifacts/digests, update BACKLOG/VALIDATION/REVIEW_COVERAGE/STATE, mark S22 ACCEPTED, then start S23 Trash management. If either fails, diagnose the failing step and keep S22 IN_PROGRESS.
