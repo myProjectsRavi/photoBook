@@ -15,6 +15,10 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.photobook.app.data.db.VaultDao
 import com.photobook.app.data.db.VaultEntity
+import com.photobook.app.data.db.VaultOperationDao
+import com.photobook.app.data.db.VaultOperationEntity
+import com.photobook.app.data.db.VaultOperationStates
+import com.photobook.app.data.db.VaultOperationTypes
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.util.BitmapOrientation
 import dagger.hilt.EntryPoint
@@ -93,6 +97,7 @@ sealed interface VaultExportResult {
 class VaultService @Inject constructor(
     @ApplicationContext private val context: Context,
     private val vaultDao: VaultDao,
+    private val vaultOperationDao: VaultOperationDao,
 ) {
     constructor(context: Context) : this(
         context,
@@ -100,6 +105,10 @@ class VaultService @Inject constructor(
             context.applicationContext,
             VaultServiceEntryPoint::class.java,
         ).vaultDao(),
+        EntryPointAccessors.fromApplication(
+            context.applicationContext,
+            VaultServiceEntryPoint::class.java,
+        ).vaultOperationDao(),
     )
 
     private val legacyMasterKey: MasterKey by lazy {
@@ -187,6 +196,7 @@ class VaultService @Inject constructor(
                 }
             }
             migrateLegacyItemsIfNeeded()
+            reconcileVaultOperations()
             migrateLegacyCiphertextIfNeeded(session)
             if (
                 expectedPreviewGeneration != null &&
@@ -235,6 +245,7 @@ class VaultService @Inject constructor(
             }
 
             migrateLegacyItemsIfNeeded()
+            reconcileVaultOperations()
             migrateLegacyCiphertextIfNeeded(session)
             val entity = vaultDao.getVaultItemById(itemId) ?: return@withContext null
             val uri = createPreviewUri(
@@ -261,6 +272,7 @@ class VaultService @Inject constructor(
         block: suspend (Bitmap) -> T,
     ): T? = withContext(Dispatchers.IO) {
         migrateLegacyItemsIfNeeded()
+        reconcileVaultOperations()
         migrateLegacyCiphertextIfNeeded(session)
         val entity = vaultDao.getVaultItemById(itemId) ?: return@withContext null
         val bitmap = decodeUprightVaultBitmap(
@@ -290,6 +302,7 @@ class VaultService @Inject constructor(
         }
         try {
             migrateLegacyItemsIfNeeded()
+            reconcileVaultOperations()
             migrateLegacyCiphertextIfNeeded(session)
             val photoIds = photos.map { photo -> photo.id }
             val existingByPhotoId = photoIds.chunked(DB_QUERY_BATCH_SIZE)
@@ -310,6 +323,7 @@ class VaultService @Inject constructor(
                     return@forEach
                 }
                 val itemId = UUID.randomUUID().toString()
+                val operationId = UUID.randomUUID().toString()
                 val encryptedName = buildV2EncryptedFileName(photo.fileName)
                 val targetFile = File(vaultDir, encryptedName)
                 val tempFile = File(vaultDir, authCrypto.temporaryV2FileName(itemId))
@@ -318,6 +332,22 @@ class VaultService @Inject constructor(
                     itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.FAILED)
                     return@forEach
                 }
+
+                val now = System.currentTimeMillis()
+                vaultOperationDao.upsert(
+                    VaultOperationEntity(
+                        id = operationId,
+                        type = VaultOperationTypes.ADD,
+                        state = VaultOperationStates.PREPARED,
+                        vaultItemId = itemId,
+                        sourcePhotoId = photo.id,
+                        encryptedFileName = encryptedName,
+                        outputUriString = null,
+                        expectedSha256Hex = null,
+                        createdAtMs = now,
+                        updatedAtMs = now,
+                    ),
+                )
 
                 val sourceInput = context.contentResolver.openInputStream(sourceUri)
                 if (sourceInput == null) {
@@ -335,13 +365,29 @@ class VaultService @Inject constructor(
                     }
                     currentCoroutineContext().ensureActive()
                     authCrypto.renameAtomically(tempFile, targetFile)
+                    vaultOperationDao.upsert(
+                        VaultOperationEntity(
+                            id = operationId,
+                            type = VaultOperationTypes.ADD,
+                            state = VaultOperationStates.CIPHERTEXT_COMMITTED,
+                            vaultItemId = itemId,
+                            sourcePhotoId = photo.id,
+                            encryptedFileName = encryptedName,
+                            outputUriString = null,
+                            expectedSha256Hex = null,
+                            createdAtMs = now,
+                            updatedAtMs = System.currentTimeMillis(),
+                        ),
+                    )
                 } catch (error: CancellationException) {
                     runCatching { tempFile.delete() }
                     runCatching { targetFile.delete() }
+                    runCatching { vaultOperationDao.deleteById(operationId) }
                     throw error
                 } catch (_: Throwable) {
                     runCatching { tempFile.delete() }
                     runCatching { targetFile.delete() }
+                    runCatching { vaultOperationDao.deleteById(operationId) }
                     itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.FAILED)
                     return@forEach
                 }
@@ -360,18 +406,22 @@ class VaultService @Inject constructor(
                     vaultDao.insertVaultItem(entity)
                 } catch (error: CancellationException) {
                     runCatching { targetFile.delete() }
+                    runCatching { vaultOperationDao.deleteById(operationId) }
                     throw error
                 } catch (_: Throwable) {
                     runCatching { targetFile.delete() }
+                    runCatching { vaultOperationDao.deleteById(operationId) }
                     itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.FAILED)
                     return@forEach
                 }
                 if (inserted == INSERT_CONFLICT) {
                     runCatching { targetFile.delete() }
                     existingByPhotoId += photo.id
+                    runCatching { vaultOperationDao.deleteById(operationId) }
                     itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.ALREADY_PROTECTED)
                 } else {
                     existingByPhotoId += photo.id
+                    vaultOperationDao.deleteById(operationId)
                     itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.ADDED)
                 }
             }
@@ -456,6 +506,23 @@ class VaultService @Inject constructor(
                     throw IOException("Vault export integrity verification failed")
                 }
 
+                val exportDigestHex = expectedDigest.joinToString("") { byte -> "%02x".format(byte) }
+                val operationId = UUID.randomUUID().toString()
+                val now = System.currentTimeMillis()
+                vaultOperationDao.upsert(
+                    VaultOperationEntity(
+                        id = operationId,
+                        type = VaultOperationTypes.MOVE_OUT,
+                        state = VaultOperationStates.EXPORT_VERIFIED,
+                        vaultItemId = item.id,
+                        sourcePhotoId = item.sourcePhotoId,
+                        encryptedFileName = item.encryptedFileName,
+                        outputUriString = outputUri.toString(),
+                        expectedSha256Hex = exportDigestHex,
+                        createdAtMs = now,
+                        updatedAtMs = now,
+                    ),
+                )
                 committed = true
                 VaultExportResult.Success(uri = outputUri, fileName = outputName)
             } finally {
@@ -491,6 +558,7 @@ class VaultService @Inject constructor(
                 return@withContext false
             }
             deletePreviewFile(item.id)
+            runCatching { vaultOperationDao.deleteByVaultItemId(item.id) }
             true
         } catch (error: CancellationException) {
             throw error
@@ -826,6 +894,36 @@ class VaultService @Inject constructor(
         }
     }
 
+    private suspend fun reconcileVaultOperations() {
+        vaultOperationDao.getAll().forEach { operation ->
+            when (operation.type) {
+                VaultOperationTypes.ADD -> {
+                    val itemId = operation.vaultItemId ?: return@forEach
+                    val fileName = operation.encryptedFileName ?: return@forEach
+                    val row = vaultDao.getVaultItemById(itemId)
+                    val file = File(vaultDir, fileName)
+                    when {
+                        row != null -> vaultOperationDao.deleteById(operation.id)
+                        operation.state == VaultOperationStates.PREPARED -> {
+                            runCatching { file.delete() }
+                            vaultOperationDao.deleteById(operation.id)
+                        }
+                        operation.state == VaultOperationStates.CIPHERTEXT_COMMITTED -> {
+                            if (file.exists()) runCatching { file.delete() }
+                            vaultOperationDao.deleteById(operation.id)
+                        }
+                    }
+                }
+                VaultOperationTypes.MOVE_OUT -> {
+                    val itemId = operation.vaultItemId ?: return@forEach
+                    if (vaultDao.getVaultItemById(itemId) == null) {
+                        vaultOperationDao.deleteById(operation.id)
+                    }
+                }
+            }
+        }
+    }
+
     private suspend fun migrateLegacyItemsIfNeeded() {
         val legacyItems = loadLegacyItems()
         if (legacyItems.isEmpty()) return
@@ -942,4 +1040,5 @@ private fun VaultItem.toVaultEntity(): VaultEntity {
 @InstallIn(SingletonComponent::class)
 internal interface VaultServiceEntryPoint {
     fun vaultDao(): VaultDao
+    fun vaultOperationDao(): VaultOperationDao
 }
