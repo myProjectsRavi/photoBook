@@ -471,18 +471,32 @@ class VaultService @Inject constructor(
     }
 
     suspend fun deleteItem(itemId: String): Boolean = withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             migrateLegacyItemsIfNeeded()
-            val item = vaultDao.getVaultItemById(itemId) ?: return@runCatching false
-            val deletedRows = vaultDao.deleteVaultItemById(itemId)
-            if (deletedRows <= 0) return@runCatching false
-            runCatching { File(vaultDir, item.encryptedFileName).delete() }
+            currentCoroutineContext().ensureActive()
+            val item = vaultDao.getVaultItemById(itemId) ?: return@withContext false
+            val encryptedFile = File(vaultDir, item.encryptedFileName)
+            if (encryptedFile.exists() && !encryptedFile.delete()) {
+                return@withContext false
+            }
             authCrypto.legacyTwinNameFor(item.encryptedFileName)?.let { legacyTwin ->
-                runCatching { File(vaultDir, legacyTwin).delete() }
+                val legacyFile = File(vaultDir, legacyTwin)
+                if (legacyFile.exists() && !legacyFile.delete()) {
+                    return@withContext false
+                }
+            }
+            currentCoroutineContext().ensureActive()
+            val deletedRows = vaultDao.deleteVaultItemById(itemId)
+            if (deletedRows <= 0) {
+                return@withContext false
             }
             deletePreviewFile(item.id)
             true
-        }.getOrDefault(false)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     suspend fun clearPreviewCache(expectedGeneration: Long): Boolean = withContext(Dispatchers.IO) {
