@@ -10,6 +10,7 @@ import com.photobook.app.data.db.ArchiveDao
 import com.photobook.app.data.db.PhotoBookDatabase
 import com.photobook.app.data.db.PhotoDao
 import com.photobook.app.data.db.VaultDao
+import com.photobook.app.data.db.VaultOperationDao
 import com.photobook.app.util.Constants
 import com.photobook.app.util.PerformanceProfiler
 import coil.ImageLoader
@@ -49,6 +50,7 @@ object AppModule {
                 MIGRATION_9_10,
                 MIGRATION_10_11,
                 MIGRATION_11_12,
+                MIGRATION_12_13,
             )
             .build()
     }
@@ -63,6 +65,12 @@ object AppModule {
     @Singleton
     fun provideVaultDao(database: PhotoBookDatabase): VaultDao {
         return database.vaultDao()
+    }
+
+    @Provides
+    @Singleton
+    fun provideVaultOperationDao(database: PhotoBookDatabase): VaultOperationDao {
+        return database.vaultOperationDao()
     }
 
     @Provides
@@ -293,6 +301,32 @@ object AppModule {
                     AND reasons = 'Food photo'
                 """.trimIndent(),
             )
+        }
+    }
+
+    private val MIGRATION_12_13 = object : Migration(12, 13) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS vault_operations (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    type TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    vaultItemId TEXT,
+                    sourcePhotoId INTEGER,
+                    encryptedFileName TEXT,
+                    outputUriString TEXT,
+                    expectedSha256Hex TEXT,
+                    createdAtMs INTEGER NOT NULL,
+                    updatedAtMs INTEGER NOT NULL
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_vault_operations_type ON vault_operations(type)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_vault_operations_state ON vault_operations(state)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_vault_operations_vaultItemId ON vault_operations(vaultItemId)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_vault_operations_sourcePhotoId ON vault_operations(sourcePhotoId)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_vault_operations_updatedAtMs ON vault_operations(updatedAtMs)")
         }
     }
 
