@@ -19,7 +19,7 @@ class RoomMigrationInfrastructureTest {
     )
 
     @Test
-    fun exportedSchema12_canCreateIntegrityCleanDatabase() {
+    fun exportedSchema13_canCreateIntegrityCleanDatabase() {
         val database = helper.createDatabase(TEST_DATABASE, CURRENT_VERSION)
         try {
             database.query("PRAGMA integrity_check").use { cursor ->
@@ -33,6 +33,6 @@ class RoomMigrationInfrastructureTest {
 
     companion object {
         private const val TEST_DATABASE = "photobook-migration-phase0"
-        private const val CURRENT_VERSION = 12
+        private const val CURRENT_VERSION = 13
     }
 }
