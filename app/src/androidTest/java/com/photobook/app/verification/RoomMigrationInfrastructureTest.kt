@@ -1,38 +1,42 @@
 package com.photobook.app.verification
 
-import androidx.room.testing.MigrationTestHelper
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
-import com.photobook.app.data.db.PhotoBookDatabase
+import com.photobook.app.di.AppModule
 import org.junit.Assert.assertEquals
-import org.junit.Rule
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class RoomMigrationInfrastructureTest {
 
-    @get:Rule
-    val helper = MigrationTestHelper(
-        InstrumentationRegistry.getInstrumentation(),
-        PhotoBookDatabase::class.java,
-    )
-
     @Test
-    fun exportedSchema13_canCreateIntegrityCleanDatabase() {
-        val database = helper.createDatabase(TEST_DATABASE, CURRENT_VERSION)
+    fun productionSchema13_canCreateIntegrityCleanDatabase() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.deleteDatabase(TEST_DATABASE)
+
+        val database = AppModule.providePhotoBookDatabase(context)
         try {
-            database.query("PRAGMA integrity_check").use { cursor ->
-                assertEquals(true, cursor.moveToFirst())
+            database.openHelper.writableDatabase
+
+            database.openHelper.readableDatabase.query("PRAGMA user_version").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(CURRENT_VERSION, cursor.getInt(0))
+            }
+            database.openHelper.readableDatabase.query("PRAGMA integrity_check").use { cursor ->
+                assertTrue(cursor.moveToFirst())
                 assertEquals("ok", cursor.getString(0))
             }
         } finally {
             database.close()
+            context.deleteDatabase(TEST_DATABASE)
         }
     }
 
     companion object {
-        private const val TEST_DATABASE = "photobook-migration-phase0"
+        private const val TEST_DATABASE = "photobook.db"
         private const val CURRENT_VERSION = 13
     }
 }
