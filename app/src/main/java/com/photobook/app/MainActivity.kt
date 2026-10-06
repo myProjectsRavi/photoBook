@@ -209,8 +209,13 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         coroutineScope.launch {
             isLoadingTrash = true
             val archiveManagedIds = viewModel.archiveManagedTrashPhotoIds()
-            trashedPhotos = trashService.listTrashed()
-                .filterNot { photo -> photo.id in archiveManagedIds }
+            val listed = trashService.listTrashed()
+            trashedPhotos = when (listed) {
+                is com.photobook.app.feature.trash.TrashListResult.Success ->
+                    listed.photos.filterNot { photo -> photo.id in archiveManagedIds }
+                com.photobook.app.feature.trash.TrashListResult.UnsupportedAndroid,
+                is com.photobook.app.feature.trash.TrashListResult.Error -> emptyList()
+            }
             isLoadingTrash = false
         }
     }
@@ -219,8 +224,13 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         coroutineScope.launch {
             isLoadingTrash = true
             val archiveManagedIds = viewModel.archiveManagedTrashPhotoIds()
-            trashedPhotos = trashService.listTrashed()
-                .filterNot { photo -> photo.id in archiveManagedIds }
+            val listed = trashService.listTrashed()
+            trashedPhotos = when (listed) {
+                is com.photobook.app.feature.trash.TrashListResult.Success ->
+                    listed.photos.filterNot { photo -> photo.id in archiveManagedIds }
+                com.photobook.app.feature.trash.TrashListResult.UnsupportedAndroid,
+                is com.photobook.app.feature.trash.TrashListResult.Error -> emptyList()
+            }
             isLoadingTrash = false
         }
     }
