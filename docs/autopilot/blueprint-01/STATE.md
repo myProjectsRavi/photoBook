@@ -664,3 +664,28 @@ Inspect runs `37320140040` and `37320140170`. If either fails, diagnose and fix 
 ### Exact next action
 
 Implement the smallest Room-backed Vault operation journal with an explicit 12→13 migration. Journal add intent before ciphertext publication so interrupted app-owned add artifacts can be reconciled without inventing metadata. Journal verified move-out publication before Vault removal so a later authenticated operation can reconcile a crash only after re-validating the published destination. Add focused regression tests for per-item outcomes, cancellation, failed ciphertext deletion, interrupted add, and verified-export recovery. Then obtain exact-head Android Verification and offline API-35 evidence before accepting S22. Do not start S23 while S22 remains IN_PROGRESS.
+
+
+## S22 checkpoint — durable Vault journal landed
+
+- Active story: S22 Vault operations. Status remains IN_PROGRESS pending exact-head CI and focused Vault runtime evidence.
+- Branch HEAD: `98f15546c76d79b3c904594616436c75d912b613`.
+- Production/schema commits in this checkpoint:
+  - `68df435db9d8510a641fb20c25ae39779b2180a5` added `VaultOperationEntity`.
+  - `0d878903cdd1840150644071ee5f40c5d7ac553d` added `VaultOperationDao`.
+  - `af005a5cd44b8244ec0ae2011ab0d896ad6ab165` registered the journal entity and bumped Room to v13.
+  - `e2b745435bd530d767bb504f9c7fa423dbf9a4bb` added explicit 12→13 migration and DAO provider.
+  - `17cbca2c4e895ea83ad1b6aaab9fe685bb432532` journals/reconciles add and verified move-out operations in `VaultService`.
+  - `9ae22891f9c79b3bc51e8a32e56837d02b950f4d` updates fresh-schema migration infrastructure to v13.
+  - `98f15546c76d79b3c904594616436c75d912b613` extends provenance-backed v1→v13 migration evidence.
+- Add operations now persist PREPARED before encryption publication, advance to CIPHERTEXT_COMMITTED after atomic rename, and clear the journal after Room commit. Recovery removes only app-owned ciphertext for an interrupted add that never obtained a Vault row.
+- Move-out now persists an EXPORT_VERIFIED journal record only after non-zero publication and SHA-256 read-back match. Successful Vault deletion removes any journal records for that Vault item. A crash between verified publication and Vault deletion therefore remains a safe duplicate and leaves durable evidence instead of risking data loss.
+- Existing truthful per-photo add outcomes, cancellation propagation, partial-ciphertext cleanup, and ciphertext-before-metadata deletion remain intact.
+- Android Verification run: https://github.com/myProjectsRavi/photoBook/actions/runs/37453189446 — queued at checkpoint.
+- Targeted API-35 run: https://github.com/myProjectsRavi/photoBook/actions/runs/37453189409 — in progress at checkpoint.
+- Targeted workflow still needs Vault-specific runtime instrumentation before S22 can be ACCEPTED.
+- `main` remains untouched. No physical/OEM/camera/battery/thermal evidence is claimed.
+
+### Exact next action
+
+Inspect runs `37453189446` and `37453189409`. Diagnose and fix any schema/compile/runtime failures. Add focused Vault instrumentation that exercises v12→v13 migration/journal recovery, per-item add outcomes/cancellation, failed ciphertext deletion, interrupted-add cleanup, and verified-move-out journal semantics, then include that class in the offline API-35 targeted suite. Only after exact-head Android Verification and targeted Vault runtime evidence pass should S22 be marked ACCEPTED and S23 begin.
