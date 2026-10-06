@@ -26,7 +26,7 @@ Execution rule: select the first incomplete story whose dependencies pass. Do no
 | S18 | E06 Viewer and exports | Editing | S03,S07 | ACCEPTED | Shared EditTransform; preview/export pixel/geometry parity across crop/rotation/tone/orientation. |
 | S19 | E06 Viewer and exports | Safe sharing | S18 | ACCEPTED | Fail-closed privacy preparation, bounded/cancellable sharing, read-only scoped URI grants, no original fallback. |
 | S20 | E06 Viewer and exports | PDF export | S19 | ACCEPTED | Recoverable PDF publication, progress/cancel, checked destination, truthful partial results. |
-| S21 | E07 Privacy and cleanup | Vault privacy | S02 | NOT_STARTED | Central Vault session lifecycle cleanup; no stale decrypted previews/search state after lock/background/failure. |
+| S21 | E07 Privacy and cleanup | Vault privacy | S02 | ACCEPTED | Central Vault session lifecycle cleanup; no stale decrypted previews/search state after lock/background/failure. |
 | S22 | E07 Privacy and cleanup | Vault operations | S21 | NOT_STARTED | Transaction-safe add/move-out with per-item results, integrity checks, durable recovery and no data loss. |
 | S23 | E07 Privacy and cleanup | Trash management | S22 | NOT_STARTED | Complete paged Trash, explicit unsupported/error states, truthful expiry and confirmation recovery. |
 | S24 | E07 Privacy and cleanup | Duplicate analysis | S13 | NOT_STARTED | Fix/prove near-duplicate candidate semantics; exact SHA verification; adversarial completeness tests. |
