@@ -49,13 +49,34 @@ data class VaultItem(
     val previewUri: Uri? = null,
 )
 
+enum class VaultSaveOutcome {
+    ADDED,
+    ALREADY_PROTECTED,
+    FAILED,
+}
+
+data class VaultSaveItemResult(
+    val photoId: Long,
+    val outcome: VaultSaveOutcome,
+)
+
 sealed interface VaultSaveResult {
     data class Success(
-        val addedCount: Int,
-        val skippedCount: Int,
-        val addedPhotoIds: Set<Long>,
-        val protectedPhotoIds: Set<Long>,
-    ) : VaultSaveResult
+        val itemResults: List<VaultSaveItemResult>,
+    ) : VaultSaveResult {
+        val addedPhotoIds: Set<Long>
+            get() = itemResults.filter { it.outcome == VaultSaveOutcome.ADDED }
+                .mapTo(linkedSetOf()) { it.photoId }
+        val protectedPhotoIds: Set<Long>
+            get() = itemResults.filter { it.outcome != VaultSaveOutcome.FAILED }
+                .mapTo(linkedSetOf()) { it.photoId }
+        val failedPhotoIds: Set<Long>
+            get() = itemResults.filter { it.outcome == VaultSaveOutcome.FAILED }
+                .mapTo(linkedSetOf()) { it.photoId }
+        val addedCount: Int get() = addedPhotoIds.size
+        val skippedCount: Int
+            get() = itemResults.count { it.outcome == VaultSaveOutcome.ALREADY_PROTECTED }
+    }
 
     data class Error(val throwable: Throwable? = null) : VaultSaveResult
 }
@@ -265,46 +286,45 @@ class VaultService @Inject constructor(
         session: VaultCryptoSession,
     ): VaultSaveResult = withContext(Dispatchers.IO) {
         if (photos.isEmpty()) {
-            return@withContext VaultSaveResult.Success(
-                addedCount = 0,
-                skippedCount = 0,
-                addedPhotoIds = emptySet(),
-                protectedPhotoIds = emptySet(),
-            )
+            return@withContext VaultSaveResult.Success(emptyList())
         }
-        runCatching {
+        try {
             migrateLegacyItemsIfNeeded()
             migrateLegacyCiphertextIfNeeded(session)
             val photoIds = photos.map { photo -> photo.id }
             val existingByPhotoId = photoIds.chunked(DB_QUERY_BATCH_SIZE)
                 .flatMap { batch -> vaultDao.getProtectedPhotoIds(batch) }
                 .toMutableSet()
+            val itemResults = ArrayList<VaultSaveItemResult>(photos.size)
 
-            var added = 0
-            var skipped = 0
-            val addedPhotoIds = linkedSetOf<Long>()
-            val protectedPhotoIds = linkedSetOf<Long>()
             photos.forEach { photo ->
+                currentCoroutineContext().ensureActive()
                 if (photo.id in existingByPhotoId) {
-                    skipped += 1
-                    protectedPhotoIds += photo.id
+                    itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.ALREADY_PROTECTED)
                     return@forEach
                 }
 
                 val sourceUri = runCatching { Uri.parse(photo.uriString) }.getOrNull()
-                    ?: return@forEach
+                if (sourceUri == null) {
+                    itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.FAILED)
+                    return@forEach
+                }
                 val itemId = UUID.randomUUID().toString()
                 val encryptedName = buildV2EncryptedFileName(photo.fileName)
                 val targetFile = File(vaultDir, encryptedName)
                 val tempFile = File(vaultDir, authCrypto.temporaryV2FileName(itemId))
                 prepareFreshTemp(tempFile)
                 if (targetFile.exists()) {
-                    throw IOException("Refusing to overwrite an existing Vault v2 file")
+                    itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.FAILED)
+                    return@forEach
                 }
 
                 val sourceInput = context.contentResolver.openInputStream(sourceUri)
-                    ?: return@forEach
-                val copied = runCatching {
+                if (sourceInput == null) {
+                    itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.FAILED)
+                    return@forEach
+                }
+                try {
                     sourceInput.use { input ->
                         authCrypto.encryptToFile(
                             session = session,
@@ -313,14 +333,18 @@ class VaultService @Inject constructor(
                             associatedData = authCrypto.associatedData(itemId),
                         )
                     }
+                    currentCoroutineContext().ensureActive()
                     authCrypto.renameAtomically(tempFile, targetFile)
-                    true
-                }.getOrElse {
+                } catch (error: CancellationException) {
                     runCatching { tempFile.delete() }
                     runCatching { targetFile.delete() }
-                    false
+                    throw error
+                } catch (_: Throwable) {
+                    runCatching { tempFile.delete() }
+                    runCatching { targetFile.delete() }
+                    itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.FAILED)
+                    return@forEach
                 }
-                if (!copied) return@forEach
 
                 val entity = VaultEntity(
                     id = itemId,
@@ -331,35 +355,31 @@ class VaultService @Inject constructor(
                     addedAtMs = System.currentTimeMillis(),
                 )
 
-                val inserted = runCatching { vaultDao.insertVaultItem(entity) }
-                    .getOrElse {
-                        runCatching { targetFile.delete() }
-                        throw it
-                    }
+                val inserted = try {
+                    currentCoroutineContext().ensureActive()
+                    vaultDao.insertVaultItem(entity)
+                } catch (error: CancellationException) {
+                    runCatching { targetFile.delete() }
+                    throw error
+                } catch (_: Throwable) {
+                    runCatching { targetFile.delete() }
+                    itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.FAILED)
+                    return@forEach
+                }
                 if (inserted == INSERT_CONFLICT) {
                     runCatching { targetFile.delete() }
                     existingByPhotoId += photo.id
-                    skipped += 1
-                    protectedPhotoIds += photo.id
+                    itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.ALREADY_PROTECTED)
                 } else {
                     existingByPhotoId += photo.id
-                    added += 1
-                    addedPhotoIds += photo.id
-                    protectedPhotoIds += photo.id
+                    itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.ADDED)
                 }
             }
 
-            if (photos.isNotEmpty() && protectedPhotoIds.isEmpty()) {
-                return@runCatching VaultSaveResult.Error()
-            }
-
-            VaultSaveResult.Success(
-                addedCount = added,
-                skippedCount = skipped,
-                addedPhotoIds = addedPhotoIds,
-                protectedPhotoIds = protectedPhotoIds,
-            )
-        }.getOrElse { error ->
+            VaultSaveResult.Success(itemResults)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
             VaultSaveResult.Error(error)
         }
     }
