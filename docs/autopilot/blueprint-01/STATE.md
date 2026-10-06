@@ -713,3 +713,17 @@ Exact tested source `6b57a818f82f8658592824fc74a06770c01be8d2` passed targeted o
 The same-source Android Verification run was superseded by the documentation checkpoint. Prior production/test source `2adf6f9b6ea16cec25108c3805001cca44ace4bb` had already passed Android Verification run `37473990966`; the later source only adds the focused Vault class to targeted workflow routing.
 
 S22 is ACCEPTED. Next eligible story is S23 Trash management. No physical-device evidence is claimed and main remains untouched.
+
+
+## S23 checkpoint — typed Trash listing and truthful retention copy
+
+- Epic: E07 Privacy and cleanup. Feature: Trash management. Story: S23. Status: IN_PROGRESS.
+- Production checkpoints: `3a2ac55faf39962b8c4f3b9829dcf1ff8ffbe1c9` hardened Trash listing to an uncapped typed result with nullable provider `DATE_EXPIRES`; `10f74f9d252b8e3662ecbb3c3d70354f42e5bc66` migrated both direct MainActivity refresh callers; `8d5f81b5faf41c3c45bab4142c251c829fd49347` removed the false fixed ~30-day UI claim.
+- Exact source `10f74f9d252b8e3662ecbb3c3d70354f42e5bc66` passed Android Verification run `37537156060` and offline API-35 targeted run `37537156062`; targeted artifact `11447060871`, digest `sha256:957fc98ead1f1314906d46e9660c7ef59fa7892e8ddb1a576572f9c52902b843`.
+- Exact-head runs for `8d5f81b5faf41c3c45bab4142c251c829fd49347`: Android Verification `37543337661` and targeted API-35 `37543337685`, both in progress at checkpoint time.
+- Remaining acceptance gap: surface UnsupportedAndroid and provider Error distinctly from a genuinely empty Trash, and display provider expiry per item when `expiresAtMillis` is available. A combined UI-state/expiry mutation was rejected by the connector safety layer before mutation; the narrower truthful-copy change succeeded.
+- System-managed restore/delete confirmation remains unchanged. No physical/OEM/camera/battery/thermal evidence is claimed. Main remains untouched.
+
+### Exact next action
+
+Inspect runs `37543337661` and `37543337685`. Then retry the smallest normal contents-API change that preserves typed Trash load state into `TrashScreen`, followed by per-item `expiresAtMillis` presentation and focused regression evidence. Keep S23 IN_PROGRESS until those acceptance gaps and exact-head CI are green; do not start S24.
