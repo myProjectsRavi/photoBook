@@ -70,7 +70,7 @@ fun TrashScreen(
                             style = MaterialTheme.typography.titleMedium,
                         )
                         Text(
-                            text = "Items here are removed automatically after ~30 days.",
+                            text = "Android manages removal timing for items in Recently Deleted.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -87,7 +87,7 @@ fun TrashScreen(
                     photos.isEmpty() -> {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text(
-                                text = "Trash is empty. Deleted photos will appear here for ~30 days before permanent removal.",
+                                text = "Trash is empty.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(32.dp),
