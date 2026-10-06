@@ -19,13 +19,19 @@ sealed interface TrashRequestResult {
     data class Error(val throwable: Throwable? = null) : TrashRequestResult
 }
 
+sealed interface TrashListResult {
+    data class Success(val photos: List<TrashedPhoto>) : TrashListResult
+    data object UnsupportedAndroid : TrashListResult
+    data class Error(val throwable: Throwable? = null) : TrashListResult
+}
+
 data class TrashedPhoto(
     val id: Long,
     val uri: Uri,
     val displayName: String,
     val mimeType: String,
     val sizeBytes: Long,
-    val dateTrashedMillis: Long,
+    val expiresAtMillis: Long?,
 )
 
 class TrashService @Inject constructor(
@@ -57,9 +63,11 @@ class TrashService @Inject constructor(
         }
     }
 
-    /** Lists media that is currently in the trash (Android 11+). Empty list on older OS. */
-    suspend fun listTrashed(limit: Int = 200): List<TrashedPhoto> = withContext(Dispatchers.IO) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return@withContext emptyList()
+    /** Lists all media currently in the trash (Android 11+), preserving provider failures. */
+    suspend fun listTrashed(): TrashListResult = withContext(Dispatchers.IO) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return@withContext TrashListResult.UnsupportedAndroid
+        }
 
         runCatching {
             val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
@@ -76,30 +84,32 @@ class TrashService @Inject constructor(
                     android.content.ContentResolver.QUERY_ARG_SQL_SORT_ORDER,
                     "${MediaStore.Images.Media.DATE_EXPIRES} DESC",
                 )
-                putInt(android.content.ContentResolver.QUERY_ARG_LIMIT, limit)
             }
 
             val results = mutableListOf<TrashedPhoto>()
-            context.contentResolver.query(collection, projection, queryArgs, null)?.use { cursor ->
-                val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-                val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-                val mimeCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.MIME_TYPE)
-                val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
-                val expiresCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_EXPIRES)
-                while (cursor.moveToNext()) {
-                    val id = cursor.getLong(idCol)
+            val cursor = context.contentResolver.query(collection, projection, queryArgs, null)
+                ?: error("MediaStore trash query returned no cursor")
+            cursor.use {
+                val idCol = it.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                val nameCol = it.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
+                val mimeCol = it.getColumnIndexOrThrow(MediaStore.Images.Media.MIME_TYPE)
+                val sizeCol = it.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
+                val expiresCol = it.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_EXPIRES)
+                while (it.moveToNext()) {
+                    val id = it.getLong(idCol)
+                    val expiresSeconds = if (it.isNull(expiresCol)) null else it.getLong(expiresCol)
                     results += TrashedPhoto(
                         id = id,
                         uri = ContentUris.withAppendedId(collection, id),
-                        displayName = cursor.getString(nameCol).orEmpty(),
-                        mimeType = cursor.getString(mimeCol).orEmpty().ifBlank { "image/*" },
-                        sizeBytes = cursor.getLong(sizeCol),
-                        dateTrashedMillis = cursor.getLong(expiresCol) * 1000L,
+                        displayName = it.getString(nameCol).orEmpty(),
+                        mimeType = it.getString(mimeCol).orEmpty().ifBlank { "image/*" },
+                        sizeBytes = it.getLong(sizeCol),
+                        expiresAtMillis = expiresSeconds?.takeIf { value -> value > 0L }?.times(1000L),
                     )
                 }
             }
-            results
-        }.getOrDefault(emptyList())
+            TrashListResult.Success(results)
+        }.getOrElse { TrashListResult.Error(it) }
     }
 
     /** Creates a system-managed PendingIntent to restore trashed items. */
