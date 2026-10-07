@@ -2,6 +2,7 @@
     <string name="app_name">PhotoBook</string>
     <string name="search_placeholder">Search... try &quot;today&quot; or &quot;selfie&quot;</string>
     <string name="allow_photo_access">Allow Photo Access</string>
+    <string name="retry">Retry</string>
     <string name="permission_message">Allow photo access so PhotoBook can show only your on-device results. Nothing is uploaded.</string>
     <string name="limited_access_title">Limited library mode</string>
     <string name="limited_access_subtitle">PhotoBook can search only the photos you selected.</string>
