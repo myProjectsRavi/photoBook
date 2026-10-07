@@ -53,7 +53,6 @@ class DuplicatePhotoFinder @Inject constructor(
                         .thenByDescending { it.photos.size }
                         .thenByDescending { it.totalBytes }
                 )
-                .take(MAX_GROUPS)
         }
     }
 
@@ -489,7 +488,6 @@ class DuplicatePhotoFinder @Inject constructor(
         private const val PARTIAL_HASH_LIMIT = 64 * 1024 // 64KB
         private const val DB_PREFILTER_MIN_RECORDS = 1_000
         private const val NEAR_DUPLICATE_DISTANCE = 8
-        private const val MAX_GROUPS = 30
         private const val BURST_MIN_COUNT = 3
         private const val BURST_WINDOW_MS = 2_500L
         private const val BURST_ASPECT_RATIO_DELTA = 0.16f
