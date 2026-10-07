@@ -245,3 +245,22 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - Android Verification `37177989158`: SUCCESS, artifact `11294056125`, digest `sha256:3877b02fcc012947eaad7a52cca70819c629d39a965f42547762dc03ed76034d`.
 - Offline API-35 targeted verification `37177989167`: SUCCESS, artifact `11294101251`, digest `sha256:753ad7d53cb96079315401f62d9192480c8762f879118e0804d3a5bc2e89b77b`.
 - Oversized batches fail before output creation; cancellation propagates and deletes partial safe-share files; a later asset failure deletes earlier prepared outputs. Read-only ClipData grants are centralized and instrumented with an explicit no-write-grant assertion.
+
+
+## S23 final paged acceptance evidence
+
+- Final tested source: `d3d9257e4b8caf5d24ca0164956b5e30c530ee01`.
+- S23 final production behavior now satisfies the full acceptance anchor, including **bounded paged Trash** rather than one unbounded provider materialization.
+- `TrashService.listTrashed(offset, pageSize)` uses MediaStore query limit/offset with a one-item lookahead, stable `DATE_EXPIRES DESC, _ID DESC` ordering, bounded page size, and an explicit next offset only when another item exists.
+- `MainActivity` maintains the next offset, appends additional pages without duplicate IDs, continues filtering archive-managed entries, and preserves already-loaded data if a later page query fails.
+- `TrashScreen` exposes an explicit Load more action and loading state. Unsupported Android, provider failure, genuinely empty Trash, and successful populated Trash remain distinct.
+- Provider `DATE_EXPIRES` is shown when present; no synthetic expiry is invented.
+- Restore and Delete Forever still use Android system-managed confirmation intents. The shared confirmation result path refreshes Trash afterward; no direct destructive bypass was introduced.
+- Focused host regressions cover READY/UNSUPPORTED/ERROR state mapping plus page-boundary lookahead semantics and exact offset advancement.
+- An intermediate paged source `715371371211f0899ad833ecb74bde3ad90566be` failed Android compilation because of an invalid explicit Compose `weight` import. The cause was diagnosed from CI and fixed without changing behavior in `d3d9257e...`.
+- Android Verification run `37584049388`: **SUCCESS** on exact source `d3d9257e...`. Artifact ID `11466207770`, digest `sha256:6d190cf0d84f327502522cda08ab6ad7fd439e3f423e130a4838bd2cddbff851`.
+- Offline API-35 targeted run `37584049334`: **SUCCESS** on exact source `d3d9257e...`. Network isolation passed; **29/29 instrumentation tests** passed; fail-closed evidence manifest was valid for the exact checkout. Artifact ID `11465687691`, digest `sha256:04b4037a363835042acb8d73328a40c375c688af042cb129f06a69140e7634d3`.
+- No physical/OEM/camera/battery/thermal evidence is claimed. Hosted API-35 evidence remains correctness/privacy evidence.
+- `main` remained untouched.
+
+**Decision: S23 ACCEPTED.**
