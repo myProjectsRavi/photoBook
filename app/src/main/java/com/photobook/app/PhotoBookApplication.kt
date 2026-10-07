@@ -7,6 +7,7 @@ import androidx.work.Configuration
 import coil.Coil
 import coil.ImageLoader
 import com.photobook.app.feature.editor.EditorOutputPublisher
+import com.photobook.app.feature.vault.VaultService
 import com.photobook.app.util.LocalDiagnostics
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
@@ -31,6 +32,23 @@ class PhotoBookApplication : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         Coil.setImageLoader(imageLoader)
+
+        // Vault previews are temporary plaintext. Remove leftovers from abrupt process
+        // termination before protected UI can be reopened.
+        applicationIoScope.launch {
+            try {
+                VaultService(this@PhotoBookApplication).clearStalePreviewCacheAtStartup()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                LocalDiagnostics.record(
+                    context = this@PhotoBookApplication,
+                    area = "vault-preview-cleanup",
+                    message = "Unable to clear stale Vault previews",
+                    throwable = error,
+                )
+            }
+        }
 
         // Recover only app-owned interrupted editor publications recorded in the
         // private operation journal. This runs off Main and never scans/deletes
@@ -72,6 +90,10 @@ class PhotoBookApplication : Application(), Configuration.Provider {
     @Suppress("DEPRECATION")
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
+        val vaultService = VaultService(this)
+        val vaultPreviewGeneration = vaultService.invalidatePreviewCache()
+        vaultService.schedulePreviewCacheCleanup(vaultPreviewGeneration)
+
         val cache = imageLoader.memoryCache ?: return
         when {
             level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL -> {
