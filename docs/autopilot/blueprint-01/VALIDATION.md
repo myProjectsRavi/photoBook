@@ -358,3 +358,19 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - `main` untouched; no physical-device evidence claimed.
 
 **Decision: S29 ACCEPTED.**
+
+
+## S30 final acceptance
+
+- Tested source: `41bf144e8f1b8a11082efc25aeffa9ad227867b3`.
+- Memory discovery is scoped to Albums only; Photos no longer duplicates On This Day/Collections discovery.
+- The persistent hide preference suppresses in-app memory discovery, closes active memory story state, clears pending external story launches, and clears widget story IDs.
+- Widget/deep-link IDs are parsed fail-closed as positive, unique, bounded IDs and must resolve exactly in order against the current access-scoped PhotoIndex before publication. Widget titles are trimmed/bounded.
+- Memory publication remains access-generation scoped. Revoked/reselected access clears stale memory/widget state before a new visible-set publication.
+- Story playback is user-paced: continuous Ken Burns motion and timed auto-advance/dismissal were removed; swipe/tap navigation remains and explicit 48dp Previous/Next controls were added alongside Search/Close.
+- First Android Verification attempt `37618078524` failed only because S30 unit-test code referenced unsupported Truth helpers and an obsolete duplicate-policy test. Those test-compilation defects were corrected without changing production behavior.
+- Offline API-35 run `37618837661`: **SUCCESS**, 31/31 instrumentation tests, offline network gate PASS, evidence manifest valid. Artifact `11481805121`, digest `sha256:6ea3a2ff24b6f25d5b0d77f4d41f29bdab54b82e8f1682548dccc154abf8c082`.
+- Android Verification `37618837677`: **SUCCESS**. Artifact `11481696565`, digest `sha256:d9b7531aae195cc66c54704dc0dfa45350819539a4f1b10bfbbd7914217a00af`.
+- `main` remained untouched. No physical/OEM/camera/battery/thermal evidence is claimed.
+
+**Decision: S30 ACCEPTED.**
