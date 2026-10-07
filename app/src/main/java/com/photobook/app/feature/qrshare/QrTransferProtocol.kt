@@ -40,6 +40,7 @@ object QrTransferProtocol {
     const val MAX_TOTAL_CHUNKS = 512
     const val MAX_CHUNK_PAYLOAD_LENGTH = 2_048
     const val MAX_TRANSFER_BYTES = 120_000
+    const val MAX_ENCODED_PAYLOAD_LENGTH = (MAX_TRANSFER_BYTES * 4 + 2) / 3
     private const val MAX_FRAME_LENGTH = 200_000
     private val SHA256_PATTERN = Regex("[0-9a-f]{64}")
     private val TRANSFER_ID_PATTERN = Regex("[A-Za-z0-9_-]{1,$MAX_TRANSFER_ID_LENGTH}")
@@ -114,7 +115,7 @@ object QrTransferProtocol {
         if (!isValidTransferId(transferId) || !isSafeFileName(fileName) ||
             mimeType !in ALLOWED_MIME_TYPES || !SHA256_PATTERN.matches(sha256) ||
             byteSize !in 1..MAX_TRANSFER_BYTES ||
-            payload.isBlank() || payload.length > MAX_TRANSFER_BYTES * 2
+            payload.isBlank() || payload.length > maxEncodedPayloadLength(byteSize)
         ) return null
 
         return QrTransferFrame.Single(
@@ -168,6 +169,11 @@ object QrTransferProtocol {
             chunkIndex = chunkIndex,
             chunkPayload = chunkPayload,
         )
+    }
+
+    fun maxEncodedPayloadLength(byteSize: Int): Int {
+        if (byteSize <= 0) return 0
+        return (byteSize * 4 + 2) / 3
     }
 
     private fun isValidTransferId(value: String): Boolean = TRANSFER_ID_PATTERN.matches(value)
