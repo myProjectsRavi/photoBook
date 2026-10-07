@@ -35,24 +35,57 @@ def validate(backlog_text: str, state_text: str) -> list[str]:
 
     if list(rows) != STORY_IDS:
         errors.append("backlog must contain exactly S01-S32 in fixed order")
+    branch_match = re.search(r"^authorized_branch:\s*(.+?)\s*$", state_text, re.MULTILINE)
+    branch = branch_match.group(1).strip() if branch_match else None
+    if branch != "autopilot/epics-features-user-stories":
+        errors.append(
+            "authorized_branch mismatch: expected "
+            "'autopilot/epics-features-user-stories', got "
+            f"{branch!r}"
+        )
+
+    remediation_match = re.search(r"^review_remediation:\s*(\S+)\s*$", state_text, re.MULTILINE)
+    remediation = remediation_match is not None and remediation_match.group(1).lower() == "true"
+    current_match = re.search(r"^current_story:\s*(S\d\d)\b.*$", state_text, re.MULTILINE)
+    current_story_id = current_match.group(1) if current_match else None
+    status_match = re.search(r"^status:\s*(\S+)\s*$", state_text, re.MULTILINE)
+    state_status = status_match.group(1) if status_match else None
+
+    if remediation:
+        incomplete = [story_id for story_id in STORY_IDS if rows.get(story_id) != "ACCEPTED"]
+        if not incomplete:
+            errors.append("review remediation mode requires at least one reopened story")
+        else:
+            expected_current = incomplete[0]
+            if current_story_id != expected_current:
+                errors.append(
+                    f"current_story mismatch in remediation: expected {expected_current!r}, "
+                    f"got {current_story_id!r}"
+                )
+            if rows.get(expected_current) not in {"IN_PROGRESS", "BLOCKED"}:
+                errors.append(f"{expected_current} must be IN_PROGRESS or BLOCKED in remediation")
+        invalid = {
+            story_id: status
+            for story_id, status in rows.items()
+            if status not in {"ACCEPTED", "IN_PROGRESS", "BLOCKED"}
+        }
+        if invalid:
+            errors.append(f"invalid remediation statuses: {invalid}")
+        if state_status not in {"IN_PROGRESS", "BLOCKED"}:
+            errors.append("STATE status must be IN_PROGRESS or BLOCKED during remediation")
+        return errors
+
     for story_id in STORY_IDS[:-1]:
         if rows.get(story_id) != "ACCEPTED":
             errors.append(f"{story_id} must be ACCEPTED before S32 final verification")
     if rows.get("S32") not in {"IN_PROGRESS", "ACCEPTED"}:
         errors.append("S32 must be IN_PROGRESS or ACCEPTED")
 
-    required_state = {
-        "authorized_branch": "autopilot/epics-features-user-stories",
-        "current_story": "S32 Final verification",
-    }
-    for key, expected in required_state.items():
-        match = re.search(rf"^{re.escape(key)}:\s*(.+?)\s*$", state_text, re.MULTILINE)
-        actual = match.group(1).strip() if match else None
-        if actual != expected:
-            errors.append(f"{key} mismatch: expected {expected!r}, got {actual!r}")
-
-    status_match = re.search(r"^status:\s*(\S+)\s*$", state_text, re.MULTILINE)
-    if not status_match or status_match.group(1) not in {"IN_PROGRESS", "ACCEPTED"}:
+    if current_story_id != "S32":
+        errors.append(
+            f"current_story mismatch: expected 'S32 Final verification', got {current_story_id!r}"
+        )
+    if state_status not in {"IN_PROGRESS", "ACCEPTED"}:
         errors.append("STATE status must be IN_PROGRESS or ACCEPTED during/following S32")
 
     return errors
@@ -72,7 +105,7 @@ def main() -> int:
         for error in errors:
             print(f"blueprint completion error: {error}")
         return 1
-    print("blueprint completion structure valid: S01-S31 accepted; S32 final verification active/accepted")
+    print("blueprint durable structure valid for final verification or explicit review remediation")
     return 0
 
 
