@@ -739,3 +739,21 @@ Inspect runs `37543337661` and `37543337685`. Then retry the smallest normal con
 - S23 remains IN_PROGRESS. S24 must not start.
 - Exact next action: preserve typed listing failure state through MainActivity into TrashScreen, render distinct unsupported/error/empty states, add focused regression evidence, then obtain fresh exact-head Android Verification and API-35 evidence.
 - No physical/OEM/camera/battery/thermal evidence is claimed. `main` remains untouched.
+
+
+## S23 final acceptance — truthful Recently Deleted state
+
+- Tested source commit: `eee37ddc1c809c8443fc410fb6b55d36f0aab056`.
+- Final S23 change set preserves three distinct listing outcomes end-to-end: successful listing (including genuinely empty), unsupported Android, and provider/query failure. `MainActivity` no longer collapses unsupported/error to an indistinguishable empty UI state.
+- `TrashScreen` renders explicit unsupported/error states and retains provider-derived `DATE_EXPIRES` presentation when available. No synthetic expiry is invented.
+- Focused regression: `TrashListUiStateTest` covers successful-empty → READY, UnsupportedAndroid → UNSUPPORTED, and provider failure → ERROR.
+- Final diff review from checkpoint `221c97abac19d774f53c106c6c59aa39dbb81d5d` to tested source changed only `MainActivity.kt`, `TrashService.kt`, `TrashScreen.kt`, and `TrashListUiStateTest.kt`; destructive action, original-media, Vault, offline, and access-safety semantics were not weakened.
+- Exact-source Android Verification run 37582653470: SUCCESS. Artifact ID `11466215115`, digest `sha256:40cf41656d79ba49ca37cccbc72303c51ed8f9ffd285c21a2d969b6496930255`.
+- Exact-source targeted API-35 offline emulator run 37582653448: SUCCESS. Host verification, APK build, permission inspection, Android 15 emulator provisioning, network isolation, targeted correctness instrumentation, fail-closed evidence manifest, diagnostics and evidence upload all passed. Artifact ID `11466115315`, digest `sha256:785423e8d2ddbb8dfeae9cff51faee3c0dbb6201a9ecfd8b7dfa19a3117dae7f`.
+- No physical/OEM/camera/battery/thermal evidence is claimed. Hosted API-35 evidence is correctness/privacy evidence, not native-ARM performance certification.
+- S23 is **ACCEPTED**. Next eligible story in fixed order is S24 (metadata).
+- `main` remains untouched.
+
+### Exact next action
+
+On the next run, select S24 as the first incomplete dependency-satisfied story. Inspect its production metadata code, direct callers and tests before editing, then implement only the smallest coherent S24 change and obtain the required exact-source evidence.
