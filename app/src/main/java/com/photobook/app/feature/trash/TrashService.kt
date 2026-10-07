@@ -1,6 +1,7 @@
 package com.photobook.app.feature.trash
 
 import android.content.ContentUris
+import android.content.ContentResolver
 import android.content.Context
 import android.content.IntentSender
 import android.net.Uri
@@ -20,7 +21,10 @@ sealed interface TrashRequestResult {
 }
 
 sealed interface TrashListResult {
-    data class Success(val photos: List<TrashedPhoto>) : TrashListResult
+    data class Success(
+        val photos: List<TrashedPhoto>,
+        val nextOffset: Int? = null,
+    ) : TrashListResult
     data object UnsupportedAndroid : TrashListResult
     data class Error(val throwable: Throwable? = null) : TrashListResult
 }
@@ -76,12 +80,17 @@ class TrashService @Inject constructor(
     }
 
     /** Lists all media currently in the trash (Android 11+), preserving provider failures. */
-    suspend fun listTrashed(): TrashListResult = withContext(Dispatchers.IO) {
+    suspend fun listTrashed(
+        offset: Int = 0,
+        pageSize: Int = DEFAULT_TRASH_PAGE_SIZE,
+    ): TrashListResult = withContext(Dispatchers.IO) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             return@withContext TrashListResult.UnsupportedAndroid
         }
 
         runCatching {
+            require(offset >= 0) { "Trash offset must be non-negative" }
+            val boundedPageSize = pageSize.coerceIn(1, MAX_TRASH_PAGE_SIZE)
             val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
             val projection = arrayOf(
                 MediaStore.Images.Media._ID,
@@ -92,9 +101,11 @@ class TrashService @Inject constructor(
             )
             val queryArgs = Bundle().apply {
                 putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_ONLY)
+                putInt(ContentResolver.QUERY_ARG_LIMIT, boundedPageSize + 1)
+                putInt(ContentResolver.QUERY_ARG_OFFSET, offset)
                 putString(
-                    android.content.ContentResolver.QUERY_ARG_SQL_SORT_ORDER,
-                    "${MediaStore.Images.Media.DATE_EXPIRES} DESC",
+                    ContentResolver.QUERY_ARG_SQL_SORT_ORDER,
+                    "${MediaStore.Images.Media.DATE_EXPIRES} DESC, ${MediaStore.Images.Media._ID} DESC",
                 )
             }
 
@@ -107,7 +118,7 @@ class TrashService @Inject constructor(
                 val mimeCol = it.getColumnIndexOrThrow(MediaStore.Images.Media.MIME_TYPE)
                 val sizeCol = it.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
                 val expiresCol = it.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_EXPIRES)
-                while (it.moveToNext()) {
+                while (it.moveToNext() && results.size <= boundedPageSize) {
                     val id = it.getLong(idCol)
                     val expiresSeconds = if (it.isNull(expiresCol)) null else it.getLong(expiresCol)
                     results += TrashedPhoto(
@@ -120,7 +131,11 @@ class TrashService @Inject constructor(
                     )
                 }
             }
-            TrashListResult.Success(results)
+            val hasMore = results.size > boundedPageSize
+            TrashListResult.Success(
+                photos = results.take(boundedPageSize),
+                nextOffset = if (hasMore) offset + boundedPageSize else null,
+            )
         }.getOrElse { TrashListResult.Error(it) }
     }
 
@@ -142,5 +157,10 @@ class TrashService @Inject constructor(
             val pi = MediaStore.createDeleteRequest(context.contentResolver, uris)
             TrashRequestResult.Ready(pi.intentSender)
         }.getOrElse { TrashRequestResult.Error(it) }
+    }
+
+    private companion object {
+        const val DEFAULT_TRASH_PAGE_SIZE = 120
+        const val MAX_TRASH_PAGE_SIZE = 200
     }
 }
