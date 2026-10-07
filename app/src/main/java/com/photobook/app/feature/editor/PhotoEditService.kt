@@ -365,6 +365,31 @@ data class NormalizedCropRegion(
         )
     }
 
+    fun rotatedClockwise(quarterTurns: Int): NormalizedCropRegion {
+        val region = normalized()
+        return when (((quarterTurns % 4) + 4) % 4) {
+            0 -> region
+            1 -> NormalizedCropRegion(
+                left = 1f - region.bottom,
+                top = region.left,
+                right = 1f - region.top,
+                bottom = region.right,
+            )
+            2 -> NormalizedCropRegion(
+                left = 1f - region.right,
+                top = 1f - region.bottom,
+                right = 1f - region.left,
+                bottom = 1f - region.top,
+            )
+            else -> NormalizedCropRegion(
+                left = region.top,
+                top = 1f - region.right,
+                right = region.bottom,
+                bottom = 1f - region.left,
+            )
+        }.normalized()
+    }
+
     fun isUsable(): Boolean {
         val region = normalized()
         return region.right - region.left >= MIN_SIZE &&
