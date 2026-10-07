@@ -32,12 +32,16 @@ import java.io.InputStream
 import java.security.DigestInputStream
 import java.security.MessageDigest
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.Cipher
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -134,10 +138,6 @@ class VaultService @Inject constructor(
     private val authCrypto: VaultAuthCrypto by lazy {
         VaultAuthCrypto(context)
     }
-
-    private val previewCacheGeneration = java.util.concurrent.atomic.AtomicLong(0L)
-    private val previewCacheNeedsCleanup = java.util.concurrent.atomic.AtomicBoolean(true)
-    private val previewCacheMutex = Mutex()
 
     internal fun beginPreviewLoad(): Long = previewCacheGeneration.incrementAndGet()
 
@@ -324,6 +324,8 @@ class VaultService @Inject constructor(
                 }
                 val itemId = UUID.randomUUID().toString()
                 val operationId = UUID.randomUUID().toString()
+                activeVaultOperationIds += operationId
+                try {
                 val encryptedName = buildV2EncryptedFileName(photo.fileName)
                 val targetFile = File(vaultDir, encryptedName)
                 val tempFile = File(vaultDir, authCrypto.temporaryV2FileName(itemId))
@@ -420,9 +422,22 @@ class VaultService @Inject constructor(
                     runCatching { vaultOperationDao.deleteById(operationId) }
                     itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.ALREADY_PROTECTED)
                 } else {
-                    existingByPhotoId += photo.id
-                    vaultOperationDao.deleteById(operationId)
-                    itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.ADDED)
+                    val ciphertextReadable = runCatching {
+                        verifyCommittedCiphertext(entity, session)
+                    }.getOrDefault(false)
+                    if (!ciphertextReadable || !targetFile.exists()) {
+                        runCatching { vaultDao.deleteVaultItemById(itemId) }
+                        runCatching { targetFile.delete() }
+                        runCatching { vaultOperationDao.deleteById(operationId) }
+                        itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.FAILED)
+                    } else {
+                        existingByPhotoId += photo.id
+                        vaultOperationDao.deleteById(operationId)
+                        itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.ADDED)
+                    }
+                }
+                } finally {
+                    activeVaultOperationIds.remove(operationId)
                 }
             }
 
@@ -581,6 +596,17 @@ class VaultService @Inject constructor(
         }
     }
 
+    fun schedulePreviewCacheCleanup(expectedGeneration: Long) {
+        previewCleanupScope.launch {
+            clearPreviewCache(expectedGeneration)
+        }
+    }
+
+    suspend fun clearStalePreviewCacheAtStartup(): Boolean {
+        val generation = invalidatePreviewCache()
+        return clearPreviewCache(generation)
+    }
+
     private fun deletePreviewCacheFiles(): Boolean {
         val previewRoot = File(context.cacheDir, VAULT_PREVIEW_DIR)
         return try {
@@ -667,6 +693,29 @@ class VaultService @Inject constructor(
                 runCatching { tempPreview.delete() }
             }
         }.getOrNull()
+    }
+
+    private suspend fun verifyCommittedCiphertext(
+        entity: VaultEntity,
+        session: VaultCryptoSession,
+    ): Boolean {
+        return try {
+            openVaultInput(entity, session).use { input ->
+                val buffer = ByteArray(STREAM_BUFFER_BYTES)
+                var total = 0L
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    total += read
+                }
+                total > 0L
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     private fun openVaultInput(
@@ -896,6 +945,9 @@ class VaultService @Inject constructor(
 
     private suspend fun reconcileVaultOperations() {
         vaultOperationDao.getAll().forEach { operation ->
+            // A journal can be visible while a live operation has committed ciphertext but has not
+            // inserted its row yet. Recovery must never interpret that in-flight state as abandoned.
+            if (activeVaultOperationIds.contains(operation.id)) return@forEach
             when (operation.type) {
                 VaultOperationTypes.ADD -> {
                     val itemId = operation.vaultItemId ?: return@forEach
@@ -995,6 +1047,12 @@ class VaultService @Inject constructor(
     }
 
     private companion object {
+        private val activeVaultOperationIds = ConcurrentHashMap.newKeySet<String>()
+        private val previewCacheGeneration = java.util.concurrent.atomic.AtomicLong(0L)
+        private val previewCacheNeedsCleanup = java.util.concurrent.atomic.AtomicBoolean(true)
+        private val previewCacheMutex = Mutex()
+        private val previewCleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
         private const val PREFS_NAME = "vault_secure_prefs"
         private const val KEY_ITEMS = "vault_items"
         private const val VAULT_DIR = "vault_store"
