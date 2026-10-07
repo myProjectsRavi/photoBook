@@ -331,3 +331,10 @@ Reviewed changed/direct-call/test scope: `feature/trash/TrashService.kt`, `MainA
 Reviewed changed/direct-call/test scope: `feature/duplicates/DuplicateHash.kt`, `DuplicateCandidatePolicy.kt`, `DuplicatePhotoFinder.kt`, `data/db/PhotoDao.kt`, `ui/viewmodel/MainViewModel.kt`, duplicate presentation in `MainScreen.kt`, `DuplicateHashTest.kt`, and `DuplicateCandidatePolicyTest.kt`.
 
 Final review confirms exact groups require full SHA-256 equality after size/partial-hash prefilters; near-duplicate candidate generation is complete for the configured Hamming threshold by disjoint-band construction; the final Hamming check remains authoritative; stale/equal-count-but-different-ID database snapshots fail open to full analysis; and valid result groups are not globally truncated. Duplicate UI remains review-only and does not preselect or delete media. Exact-source Android Verification and offline API-35 evidence are recorded in VALIDATION.md. No physical-device claim is made.
+
+
+## S25 targeted review closure
+
+Reviewed changed/direct-call/test scope: `feature/cleanup/CleanupSelectionPolicy.kt`, `feature/duplicates/CleanupGroupPolicy.kt`, `DuplicatePhotoFinder.kt`, duplicate cleanup presentation in `MainScreen.kt`, archive selection/reconciliation in `MainViewModel.kt`, `ArchivesScreen.kt`, `MainActivity.kt` confirmation callbacks, `CleanupSelectionPolicyTest.kt`, `CleanupGroupPolicyTest.kt`, and the unchanged large-font navigation instrumentation after its relaunch-harness correction.
+
+Final review confirms category reasons are visible, cleanup group members are not silently hidden behind fixed thumbnail/group caps, newly discovered destructive candidates are not preselected, explicit selections are revision-clamped, Android system confirmation remains mandatory, and successful confirmation reconciles cleanup state without stale hero references. Exact-source Android Verification and offline API-35 evidence are recorded in VALIDATION.md. No physical-device claim is made.
