@@ -348,3 +348,8 @@ Reviewed `ArchiveService`, `ArchiveClassifier`, Archive DAO/decision state, Arch
 ## S27 targeted review closure
 
 Reviewed `PhotoNoteStore`, viewer More/private-note sheet, MainViewModel note APIs, MainActivity wiring, search integration, encrypted storage behavior, and focused instrumentation. Final review confirms encrypted local-only storage, stable identity across URI/path changes, ID-reuse isolation, no plaintext fallback, and no note export/log surface.
+
+
+## S28 targeted review closure
+
+Reviewed Declutter models/state machine, bounded candidate construction, live Tools entry, overlay wiring, Apply-to-Trash callback, Android confirmation result handling, confirmed-success index/group/session reconciliation, and focused session tests. No destructive media mutation occurs before explicit Apply plus Android confirmation.
