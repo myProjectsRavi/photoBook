@@ -1,0 +1,184 @@
+name: Supported API Offline Matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact 40-character commit SHA to verify
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  supported-api-offline:
+    name: api-${{ matrix.api }}-offline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [26, 29, 30, 33, 34, 36]
+
+    steps:
+      - name: Validate requested source SHA
+        id: source
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "source_sha must be an exact lowercase SHA" >&2
+            exit 2
+          }
+          echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout exact source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          fetch-depth: 1
+
+      - name: Record exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ steps.source.outputs.sha }}"
+          mkdir -p build/reports/supported-api
+          {
+            echo "checkout_sha=$(git rev-parse HEAD)"
+            echo "api=${{ matrix.api }}"
+            echo "workflow_ref=$GITHUB_WORKFLOW_REF"
+          } > build/reports/supported-api/provenance.txt
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Build app and instrumentation
+        run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace
+
+      - name: Provision emulator
+        shell: bash
+        env:
+          API: ${{ matrix.api }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort | tail -n 1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager | sort | tail -n 1)"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          IMAGE="system-images;android-$API;google_apis;x86_64"
+          AVD="photobook-api-$API"
+
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user-$API"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd-$API"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --channel=0 "emulator" "$IMAGE"
+          echo "no" | "$AVDMANAGER" create avd --force --name "$AVD" --package "$IMAGE" --device "pixel_2" --path "$ANDROID_AVD_HOME/$AVD.avd"
+
+          [[ -e /dev/kvm ]] || { echo "/dev/kvm unavailable" >&2; exit 1; }
+          sudo chmod 666 /dev/kvm
+          nohup "$EMULATOR" -avd "$AVD" -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -gpu swiftshader_indirect -memory 2048 -cores 2 > "$RUNNER_TEMP/emulator-$API.log" 2>&1 &
+
+          for attempt in $(seq 1 150); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$' && [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
+              break
+            fi
+            sleep 2
+          done
+          [[ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" == "1" ]] || {
+            cat "$RUNNER_TEMP/emulator-$API.log" || true
+            exit 1
+          }
+
+          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          "$ADB" shell settings put global window_animation_scale 0
+          "$ADB" shell settings put global transition_animation_scale 0
+          "$ADB" shell settings put global animator_duration_scale 0
+          "$ADB" shell input keyevent 82 || true
+
+      - name: Enforce offline runtime
+        shell: bash
+        env:
+          API: ${{ matrix.api }}
+        run: |
+          set -euo pipefail
+          adb shell svc wifi disable || true
+          adb shell svc data disable || true
+          adb shell settings put global airplane_mode_on 1
+          adb shell am broadcast -a android.intent.action.AIRPLANE_MODE --ez state true >/dev/null 2>&1 || true
+          adb logcat -c
+
+          ACTUAL_API="$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
+          ABI="$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
+          RAM_KB="$(adb shell awk '/MemTotal/ {print $2; exit}' /proc/meminfo | tr -d '\r')"
+          [[ "$ACTUAL_API" == "$API" ]]
+          [[ "$(adb shell settings get global airplane_mode_on | tr -d '\r')" == "1" ]]
+          {
+            echo "api=$ACTUAL_API"
+            echo "abi=$ABI"
+            echo "ram_kb=$RAM_KB"
+            echo "airplane_mode_on=1"
+          } | tee build/reports/supported-api/environment.txt
+
+      - name: Install and run compatibility journeys
+        shell: bash
+        env:
+          API: ${{ matrix.api }}
+        run: |
+          set -euo pipefail
+          if (( API <= 29 )); then
+            APP_APK="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*armeabi-v7a*.apk' | head -n 1)"
+          else
+            APP_APK="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*arm64-v8a*.apk' | head -n 1)"
+          fi
+          TEST_APK="$(find app/build/outputs/apk/androidTest/debug -type f -name '*.apk' | head -n 1)"
+          test -f "$APP_APK"
+          test -f "$TEST_APK"
+          adb install -r "$APP_APK"
+          adb install -r "$TEST_APK"
+
+          INSTRUMENTATION="$(adb shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n 1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
+          test -n "$INSTRUMENTATION"
+          CLASSES="com.photobook.app.verification.HistoricalRoomMigrationInstrumentedTest,com.photobook.app.verification.RoomMigrationInfrastructureTest,com.photobook.app.verification.OfflineAndDatabaseInvariantTest,com.photobook.app.verification.MainNavigationInstrumentedTest,com.photobook.app.feature.notes.PhotoNoteStoreInstrumentedTest,com.photobook.app.feature.pdf.PdfExportServiceInstrumentedTest,com.photobook.app.feature.vault.VaultOperationJournalInstrumentedTest,com.photobook.app.util.BitmapOrientationInstrumentedTest"
+
+          set +e
+          adb shell am instrument -w -r -e class "$CLASSES" "$INSTRUMENTATION" | tee build/reports/supported-api/instrumentation.txt
+          status=${PIPESTATUS[0]}
+          set -e
+          [[ "$status" -eq 0 ]]
+          ! grep -Eq 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' build/reports/supported-api/instrumentation.txt
+          grep -Eq 'OK \([1-9][0-9]* tests?\)' build/reports/supported-api/instrumentation.txt
+
+      - name: Reject runtime crash markers
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          adb logcat -d > build/reports/supported-api/logcat.txt 2>/dev/null || true
+          if grep -E 'FATAL EXCEPTION|Fatal signal|ANR in |OutOfMemoryError' build/reports/supported-api/logcat.txt; then
+            echo "Runtime crash marker detected" >&2
+            exit 1
+          fi
+
+      - name: Upload compatibility evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: supported-api-${{ matrix.api }}-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: error
+          path: build/reports/supported-api/
