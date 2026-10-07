@@ -158,7 +158,9 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     var showTrashScreen by remember { mutableStateOf(false) }
     var trashedPhotos by remember { mutableStateOf<List<com.photobook.app.feature.trash.TrashedPhoto>>(emptyList()) }
     var trashListUiState by remember { mutableStateOf(TrashListUiState.READY) }
+    var trashNextOffset by remember { mutableStateOf<Int?>(null) }
     var isLoadingTrash by remember { mutableStateOf(false) }
+    var isLoadingMoreTrash by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -215,6 +217,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             val archiveManagedIds = viewModel.archiveManagedTrashPhotoIds()
             val listed = trashService.listTrashed()
             trashListUiState = listed.toTrashListUiState()
+            trashNextOffset = (listed as? TrashListResult.Success)?.nextOffset
             trashedPhotos = when (listed) {
                 is TrashListResult.Success ->
                     listed.photos.filterNot { photo -> photo.id in archiveManagedIds }
@@ -231,6 +234,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             val archiveManagedIds = viewModel.archiveManagedTrashPhotoIds()
             val listed = trashService.listTrashed()
             trashListUiState = listed.toTrashListUiState()
+            trashNextOffset = (listed as? TrashListResult.Success)?.nextOffset
             trashedPhotos = when (listed) {
                 is TrashListResult.Success ->
                     listed.photos.filterNot { photo -> photo.id in archiveManagedIds }
@@ -238,6 +242,48 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                 is TrashListResult.Error -> emptyList()
             }
             isLoadingTrash = false
+        }
+    }
+
+    fun loadMoreTrash() {
+        val offset = trashNextOffset ?: return
+        if (isLoadingTrash || isLoadingMoreTrash) return
+        coroutineScope.launch {
+            isLoadingMoreTrash = true
+            try {
+                val archiveManagedIds = viewModel.archiveManagedTrashPhotoIds()
+                when (val listed = trashService.listTrashed(offset = offset)) {
+                    is TrashListResult.Success -> {
+                        trashListUiState = TrashListUiState.READY
+                        val existingIds = trashedPhotos.asSequence().map { photo -> photo.id }.toHashSet()
+                        val newPhotos = listed.photos.filterNot { photo ->
+                            photo.id in archiveManagedIds || photo.id in existingIds
+                        }
+                        trashedPhotos = trashedPhotos + newPhotos
+                        trashNextOffset = listed.nextOffset
+                    }
+
+                    TrashListResult.UnsupportedAndroid -> {
+                        if (trashedPhotos.isEmpty()) {
+                            trashListUiState = TrashListUiState.UNSUPPORTED
+                        }
+                        trashNextOffset = null
+                    }
+
+                    is TrashListResult.Error -> {
+                        if (trashedPhotos.isEmpty()) {
+                            trashListUiState = TrashListUiState.ERROR
+                        }
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.trash_request_error),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            } finally {
+                isLoadingMoreTrash = false
+            }
         }
     }
 
@@ -768,6 +814,9 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             photos = trashedPhotos,
             isLoading = isLoadingTrash,
             listState = trashListUiState,
+            hasMore = trashNextOffset != null,
+            isLoadingMore = isLoadingMoreTrash,
+            onLoadMore = { loadMoreTrash() },
             onDismiss = { showTrashScreen = false },
             onRestore = { item ->
                 when (val req = trashService.createRestoreRequest(listOf(item.uri))) {
