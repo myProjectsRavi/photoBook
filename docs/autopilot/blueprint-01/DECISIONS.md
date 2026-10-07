@@ -66,3 +66,13 @@ For offline first-use verification, build/resolve host tooling before isolation,
 - Exact-duplicate performance filters are never identity proof. File size and partial MD5 may reduce work, but full SHA-256 equality is required before an Exact group is published.
 - Room-based exact-candidate pruning is permitted only when database photo IDs exactly match the in-memory analysis snapshot. Equal counts alone are insufficient. Any uncertainty or DAO failure fails open to analyzing all supplied records rather than risking a false negative.
 - Duplicate result presentation remains non-destructive. Cleanup/deletion selection policy belongs to S25 and later destructive confirmation boundaries.
+
+
+## S25 cleanup safety
+
+- Cleanup discovery is advisory. New candidates must never become destructive selections automatically.
+- Refreshes may retain only an explicit user selection that still exists in the current candidate revision.
+- Review surfaces must expose all valid group members through lazy/paged UI rather than fixed member/group caps that silently hide candidates.
+- Cleanup reasons must be visible before action so users can understand why an item or group was suggested.
+- Android system confirmation remains the destructive boundary. Local cleanup state is reconciled only after confirmed success; cancellation preserves the review state.
+- Confirmed cleanup reconciliation must remove stale references, including burst hero IDs that no longer exist after deletion.
