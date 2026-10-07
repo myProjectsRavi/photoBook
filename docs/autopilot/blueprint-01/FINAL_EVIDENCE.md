@@ -11,7 +11,7 @@ Status: S32 final verification in progress
 
 ## Whole-branch topology
 
-At S32 review start the Blueprint branch was 379 commits ahead and 0 behind `main`, with 102 changed files, 9,470 additions and 1,135 deletions. The compare included 52 changed production/resource files and 32 changed unit/instrumentation test files. `main` remained exactly at the baseline SHA above.
+At the final S32 accumulated-diff review checkpoint the Blueprint branch was 384 commits ahead and 0 behind `main`, with 105 changed files, 9,669 additions and 1,135 deletions. The compare included 53 changed production/resource/build files and 32 changed unit/instrumentation test files. `main` remained exactly at the baseline SHA above.
 
 ## Durable story ledger
 
