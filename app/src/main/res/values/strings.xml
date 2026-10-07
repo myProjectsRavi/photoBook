@@ -196,7 +196,7 @@
     <string name="viewer_note_save">Save note</string>
     <string name="viewer_note_clear">Clear note</string>
     <string name="viewer_note_saved">Note saved</string>
-    <string name="viewer_note_cleared">Note cleared</string>
+    <string name="viewer_note_cleared">Note cleared</string>\n    <string name="viewer_note_storage_error">Private note unavailable. Nothing was changed.</string>
     <string name="scan_qr_action">Scan QR transfer</string>
     <string name="scan_qr_title">Receive photo via QR</string>
     <string name="scan_qr_hint">Point your camera at the sender\'s QR.</string>
