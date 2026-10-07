@@ -2,6 +2,7 @@
 
 cycle: blueprint-01  
 authorized_branch: autopilot/epics-features-user-stories  
+review_remediation: true
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
 current_epic: E03 Gallery experience
