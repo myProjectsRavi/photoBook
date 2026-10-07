@@ -1,6 +1,5 @@
 package com.photobook.app.verification
 
-import android.content.Intent
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
@@ -25,12 +24,14 @@ class MainNavigationInstrumentedTest {
         device.executeShellCommand("pm grant ${targetContext.packageName} android.permission.ACCESS_MEDIA_LOCATION")
         val launchIntent = targetContext.packageManager
             .getLaunchIntentForPackage(targetContext.packageName)
-            ?.apply {
-                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
         assertNotNull(launchIntent)
-        targetContext.startActivity(launchIntent)
-        device.wait(Until.hasObject(By.text("Photos")), 10_000)
+        val component = launchIntent?.component
+        assertNotNull(component)
+        val launchOutput = device.executeShellCommand(
+            "am start -W -f 0x10008000 -n ${component!!.flattenToShortString()}",
+        )
+        assertFalse(launchOutput.contains("Error", ignoreCase = true))
+        assertTrue(device.wait(Until.hasObject(By.text("Photos")), 15_000))
     }
 
 
