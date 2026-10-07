@@ -12,6 +12,7 @@ import com.photobook.app.data.db.toPhotoRecord
 import com.photobook.app.data.model.IntelligenceStatus
 import com.photobook.app.data.model.MLTag
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.data.model.withRetainedStateFrom
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import javax.inject.Inject
@@ -231,7 +232,7 @@ class IndexPersistence @Inject constructor(
                     .associateBy { entity -> entity.id }
                 val entities = batch.map { record ->
                     val current = currentById[record.id]?.toPhotoRecord()
-                    record.preserveCommittedMutableFields(current).toPhotoEntity()
+                    record.withRetainedStateFrom(current).toPhotoEntity()
                 }
                 photoDao.upsertPhotos(entities)
                 photoDao.upsertFtsRows(entities.map { it.toFtsEntity() })
@@ -241,22 +242,6 @@ class IndexPersistence @Inject constructor(
 
             deleteByIdsInternal(staleIds.toList())
         }
-    }
-
-    private fun PhotoRecord.preserveCommittedMutableFields(current: PhotoRecord?): PhotoRecord {
-        if (current == null) return this
-        return copy(
-            isFavorite = current.isFavorite,
-            perceptualHash = current.perceptualHash,
-            blurScore = current.blurScore,
-            mlTags = current.mlTags,
-            isArchiveFoodCandidate = current.isArchiveFoodCandidate,
-            isMlProcessed = current.isMlProcessed,
-            mlStatus = current.mlStatus,
-            ocrText = current.ocrText,
-            isOcrProcessed = current.isOcrProcessed,
-            ocrStatus = current.ocrStatus,
-        )
     }
 
     private suspend fun deleteByIdsInternal(ids: List<Long>) {
