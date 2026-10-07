@@ -9,6 +9,8 @@ import com.photobook.app.data.model.PhotoRecord
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
@@ -117,17 +119,30 @@ class DuplicatePhotoFinder @Inject constructor(
         }.getOrNull()
     }
 
-    private fun findNearDuplicates(records: List<PhotoRecord>): List<DuplicatePhotoGroup> {
+    private suspend fun findNearDuplicates(records: List<PhotoRecord>): List<DuplicatePhotoGroup> {
         val byId = records.associateBy { it.id }
         val unionFind = UnionFind<Long>()
         val buckets = mutableMapOf<Long, MutableList<HashRecord>>()
+        // Store one bucket representative per exact perceptual hash. Photos with the same hash are
+        // unioned directly, eliminating the pathological N(N-1)/2 comparison storm while
+        // preserving connectivity to every other near-hash class.
+        val representativeByHash = mutableMapOf<Long, HashRecord>()
 
-        records.forEach { photo ->
+        records.forEachIndexed { photoIndex, photo ->
+            if (photoIndex % CANCELLATION_CHECK_INTERVAL == 0) {
+                currentCoroutineContext().ensureActive()
+            }
             val hash = photo.perceptualHash
                 ?: perceptualHashComputer.computeFromUri(photo.uriString)
-                ?: return@forEach
+                ?: return@forEachIndexed
             val current = HashRecord(photo.id, hash)
             unionFind.add(photo.id)
+
+            val exactRepresentative = representativeByHash[hash]
+            if (exactRepresentative != null) {
+                unionFind.union(photo.id, exactRepresentative.photoId)
+                return@forEachIndexed
+            }
 
             val candidateKeys = DuplicateHash.guaranteedCandidateBandKeys(
                 hash = hash,
@@ -138,12 +153,16 @@ class DuplicatePhotoFinder @Inject constructor(
                 buckets[key].orEmpty().forEach(candidates::add)
             }
 
-            candidates.forEach { candidate ->
+            candidates.forEachIndexed { candidateIndex, candidate ->
+                if (candidateIndex % CANDIDATE_CANCELLATION_CHECK_INTERVAL == 0) {
+                    currentCoroutineContext().ensureActive()
+                }
                 if (DuplicateHash.hammingDistance(hash, candidate.hash) <= NEAR_DUPLICATE_DISTANCE) {
                     unionFind.union(photo.id, candidate.photoId)
                 }
             }
 
+            representativeByHash[hash] = current
             candidateKeys.forEach { key ->
                 buckets.getOrPut(key) { mutableListOf() } += current
             }
@@ -488,6 +507,8 @@ class DuplicatePhotoFinder @Inject constructor(
     }
 
     companion object {
+        private const val CANCELLATION_CHECK_INTERVAL = 32
+        private const val CANDIDATE_CANCELLATION_CHECK_INTERVAL = 256
         private const val PARTIAL_HASH_LIMIT = 64 * 1024 // 64KB
         private const val DB_PREFILTER_MIN_RECORDS = 1_000
         private const val NEAR_DUPLICATE_DISTANCE = 8
