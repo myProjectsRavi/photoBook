@@ -727,3 +727,15 @@ S22 is ACCEPTED. Next eligible story is S23 Trash management. No physical-device
 ### Exact next action
 
 Inspect runs `37543337661` and `37543337685`. Then retry the smallest normal contents-API change that preserves typed Trash load state into `TrashScreen`, followed by per-item `expiresAtMillis` presentation and focused regression evidence. Keep S23 IN_PROGRESS until those acceptance gaps and exact-head CI are green; do not start S24.
+
+
+## S23 automation checkpoint 2026-10-07
+
+- Branch HEAD observed: `9b26fd9f7828912ba9edf22e397e5a048a843c40`; compare to `main`: ahead 241, behind 0.
+- Exact-head Autopilot Targeted Emulator Verification run 37559284463 completed successfully for `9b26fd9f7828912ba9edf22e397e5a048a843c40`.
+- Current S23 production state: Trash enumeration is uncapped, listing has typed Success/UnsupportedAndroid/Error outcomes, provider DATE_EXPIRES is modeled as nullable `expiresAtMillis`, and TrashScreen shows provider expiry when available.
+- Remaining acceptance gap: MainActivity currently converts UnsupportedAndroid/Error listing outcomes to an empty photo list, so TrashScreen cannot distinguish them from genuinely empty Trash.
+- Attempted smallest caller-state propagation update through the authenticated GitHub contents API; connector safety checks rejected the mutation before repository change. No bypass was used.
+- S23 remains IN_PROGRESS. S24 must not start.
+- Exact next action: preserve typed listing failure state through MainActivity into TrashScreen, render distinct unsupported/error/empty states, add focused regression evidence, then obtain fresh exact-head Android Verification and API-35 evidence.
+- No physical/OEM/camera/battery/thermal evidence is claimed. `main` remains untouched.
