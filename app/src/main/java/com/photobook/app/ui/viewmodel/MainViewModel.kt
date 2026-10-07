@@ -32,6 +32,7 @@ import com.photobook.app.feature.duplicates.DuplicatePhotoGroup
 import com.photobook.app.feature.duplicates.DuplicateMatchKind
 import com.photobook.app.feature.memories.MemoryCurator
 import com.photobook.app.feature.memories.MemoryStory
+import com.photobook.app.feature.memories.MemoryStoryLaunchPolicy
 import com.photobook.app.feature.notes.PhotoNoteStore
 import com.photobook.app.ml.TaggingWorker
 import com.photobook.app.search.FilterEngine
@@ -303,16 +304,21 @@ class MainViewModel @Inject constructor(
                 if (!accessGenerationGate.isCurrent(request.accessGeneration)) {
                     return@synchronized
                 }
+                var publishWidgetStory = false
                 uiState.update { state ->
+                    publishWidgetStory = !state.memoriesHidden
                     state.copy(
                         memoryStories = curated,
                         onThisDayStory = onThisDay,
                     )
                 }
                 // Keep the generation check and widget cache write in the same publication
-                // critical section as access invalidation. Otherwise an access change could
-                // clear the widget between the check and this write, allowing stale IDs back in.
-                OnThisDayWidgetProvider.cacheStory(context, onThisDay)
+                // critical section as access invalidation. A hidden Memories preference must also
+                // clear widget story IDs so the launcher cannot bypass the in-app privacy choice.
+                OnThisDayWidgetProvider.cacheStory(
+                    context,
+                    if (publishWidgetStory) onThisDay else null,
+                )
             }
         }
     }
@@ -470,9 +476,24 @@ class MainViewModel @Inject constructor(
     }
 
     fun openStoryFromPhotoIds(photoIds: List<Long>, title: String) {
-        if (!openStoryFromIdsInternal(photoIds, title)) {
-            pendingStoryLaunch = PendingStoryLaunch(photoIds = photoIds, title = title)
+        if (uiState.value.memoriesHidden) {
+            pendingStoryLaunch = null
+            return
         }
+        if (photoIds.isEmpty() ||
+            photoIds.size > MemoryStoryLaunchPolicy.MAX_WIDGET_STORY_IDS ||
+            photoIds.any { id -> id <= 0L } ||
+            photoIds.toSet().size != photoIds.size
+        ) {
+            pendingStoryLaunch = null
+            return
+        }
+        if (photoIndex.size() == 0) {
+            pendingStoryLaunch = PendingStoryLaunch(photoIds = photoIds, title = title)
+            return
+        }
+        pendingStoryLaunch = null
+        openExternalStoryFromIds(photoIds, title)
     }
 
     fun onQueryChanged(query: String) {
@@ -554,7 +575,22 @@ class MainViewModel @Inject constructor(
     fun onToggleMemoriesHidden() {
         val hidden = !uiState.value.memoriesHidden
         sharedPreferences.edit().putBoolean(MEMORIES_HIDDEN_KEY, hidden).apply()
-        uiState.update { it.copy(memoriesHidden = hidden) }
+        uiState.update { state ->
+            state.copy(
+                memoriesHidden = hidden,
+                storyViewerPhotos = if (hidden) emptyList() else state.storyViewerPhotos,
+                storyViewerTitle = if (hidden) "" else state.storyViewerTitle,
+            )
+        }
+        synchronized(memoryPublicationLock) {
+            OnThisDayWidgetProvider.cacheStory(
+                context,
+                if (hidden) null else uiState.value.onThisDayStory,
+            )
+        }
+        if (hidden) {
+            pendingStoryLaunch = null
+        }
     }
 
     fun onSourceSelected(source: PhotoSource) {
@@ -1919,10 +1955,33 @@ class MainViewModel @Inject constructor(
     }
 
     private fun openStoryFromIdsInternal(photoIds: List<Long>, title: String): Boolean {
-        if (photoIds.isEmpty() || photoIndex.size() == 0) return false
-        val photos = photoIndex.getByIdsOrdered(photoIds)
-        if (photos.isEmpty()) return false
+        if (uiState.value.memoriesHidden || photoIds.isEmpty() || photoIndex.size() == 0) return false
+        val requestedIds = photoIds.distinct()
+        if (requestedIds.size != photoIds.size) return false
+        val photos = photoIndex.getByIdsOrdered(requestedIds)
+        if (photos.map { photo -> photo.id } != requestedIds) return false
 
+        publishStory(title = title, photos = photos)
+        return true
+    }
+
+    private fun openExternalStoryFromIds(photoIds: List<Long>, title: String): Boolean {
+        val photos = photoIndex.getByIdsOrdered(photoIds)
+        val resolvedIds = photos.map { photo -> photo.id }
+        if (
+            MemoryStoryLaunchPolicy.validateExternal(
+                requestedIds = photoIds,
+                resolvedIds = resolvedIds,
+                memoriesHidden = uiState.value.memoriesHidden,
+            ) == null
+        ) {
+            return false
+        }
+        publishStory(title = title, photos = photos)
+        return true
+    }
+
+    private fun publishStory(title: String, photos: List<PhotoRecord>) {
         uiState.update { state ->
             state.copy(
                 storyViewerTitle = title.ifBlank { state.storyViewerTitle.ifBlank { "Memory" } },
@@ -1933,14 +1992,13 @@ class MainViewModel @Inject constructor(
                 selectedPhotoIds = emptySet(),
             )
         }
-        return true
     }
 
     private fun tryConsumePendingStoryLaunch() {
         val pending = pendingStoryLaunch ?: return
-        if (openStoryFromIdsInternal(pending.photoIds, pending.title)) {
-            pendingStoryLaunch = null
-        }
+        if (photoIndex.size() == 0) return
+        pendingStoryLaunch = null
+        openExternalStoryFromIds(pending.photoIds, pending.title)
     }
 
     private fun mutateDeclutterSession(markTrash: Boolean) {
