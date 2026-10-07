@@ -37,7 +37,7 @@ Execution rule: select the first incomplete story whose dependencies pass. Do no
 | S29 | E08 Useful local features | Offline QR transfer | S20 | ACCEPTED | Harden replay/conflict/byte/lifecycle behavior before exposing Receive/Send preview entry points. |
 | S30 | E08 Useful local features | Local memories | S06,S17 | ACCEPTED | Move discovery to Albums, respect access/hide preference, validate widget IDs and calm story controls. |
 | S31 | E09 Compatibility and completion | Compatibility | S01-S30 | ACCEPTED | Package/privacy/ABI/API matrix, 30,000,000-byte APK + 20 MiB AAB, no INTERNET, dependency/native provenance. |
-| S32 | E09 Compatibility and completion | Final verification | S31 | IN_PROGRESS | Freeze candidate, whole-branch evidence packet, accumulated diff review, reopen failures, independent-review handoff. |
+| S32 | E09 Compatibility and completion | Final verification | S31 | ACCEPTED | Freeze candidate, whole-branch evidence packet, accumulated diff review, reopen failures, independent-review handoff. |
 
 ## Fixed scheduling order
 
