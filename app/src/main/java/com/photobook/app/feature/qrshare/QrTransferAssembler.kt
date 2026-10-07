@@ -41,7 +41,14 @@ class QrTransferAssembler {
             is QrTransferFrame.Data -> frame.transferId
         }
 
+        if (completedTransfers.containsKey(transferId)) {
+            return QrAssemblyResult.Error(transferId, "Transfer session has already completed.")
+        }
+
         if (frame is QrTransferFrame.Single) {
+            if (sessions.remove(transferId) != null) {
+                return QrAssemblyResult.Error(transferId, "Transfer frame type changed.")
+            }
             val bytes = runCatching {
                 Base64.getUrlDecoder().decode(frame.payload)
             }.getOrElse {
@@ -72,10 +79,6 @@ class QrTransferAssembler {
             )
         }
 
-        if (completedTransfers.containsKey(transferId)) {
-            return QrAssemblyResult.Error(transferId, "Transfer session has already completed.")
-        }
-
         val session = sessions[transferId] ?: run {
             if (sessions.size >= MAX_SESSIONS) {
                 return QrAssemblyResult.Error(transferId, "Too many active transfer sessions.")
@@ -92,6 +95,10 @@ class QrTransferAssembler {
                     return QrAssemblyResult.Error(transferId, "Transfer metadata changed.")
                 }
                 session.metadata = frame
+                if (session.encodedPayloadLength > QrTransferProtocol.maxEncodedPayloadLength(frame.byteSize)) {
+                    sessions.remove(transferId)
+                    return QrAssemblyResult.Error(transferId, "Transfer payload exceeds declared size.")
+                }
             }
 
             is QrTransferFrame.Data -> {
@@ -100,10 +107,26 @@ class QrTransferAssembler {
                     sessions.remove(transferId)
                     return QrAssemblyResult.Error(transferId, "Transfer chunk index is invalid.")
                 }
-                session.chunks.putIfAbsent(frame.chunkIndex, frame.chunkPayload)
-                if (session.chunks.size > QrTransferProtocol.MAX_TOTAL_CHUNKS) {
+                val existingPayload = session.chunks[frame.chunkIndex]
+                if (existingPayload != null && existingPayload != frame.chunkPayload) {
                     sessions.remove(transferId)
-                    return QrAssemblyResult.Error(transferId, "Transfer contains too many chunks.")
+                    return QrAssemblyResult.Error(transferId, "Transfer chunk changed.")
+                }
+                if (existingPayload == null) {
+                    session.chunks[frame.chunkIndex] = frame.chunkPayload
+                    session.encodedPayloadLength += frame.chunkPayload.length
+                }
+                if (session.chunks.size > QrTransferProtocol.MAX_TOTAL_CHUNKS ||
+                    session.encodedPayloadLength > QrTransferProtocol.MAX_ENCODED_PAYLOAD_LENGTH
+                ) {
+                    sessions.remove(transferId)
+                    return QrAssemblyResult.Error(transferId, "Transfer payload is too large.")
+                }
+                if (metadata != null &&
+                    session.encodedPayloadLength > QrTransferProtocol.maxEncodedPayloadLength(metadata.byteSize)
+                ) {
+                    sessions.remove(transferId)
+                    return QrAssemblyResult.Error(transferId, "Transfer payload exceeds declared size.")
                 }
             }
         }
@@ -149,6 +172,13 @@ class QrTransferAssembler {
         }
 
         val payload = orderedChunks.joinToString(separator = "")
+        if (payload.length > QrTransferProtocol.maxEncodedPayloadLength(metadata.byteSize)) {
+            sessions.remove(transferId)
+            return QrAssemblyResult.Error(
+                transferId = transferId,
+                reason = "Transfer payload exceeds declared size.",
+            )
+        }
         val bytes = runCatching {
             Base64.getUrlDecoder().decode(payload)
         }.getOrElse {
@@ -190,6 +220,7 @@ class QrTransferAssembler {
         val now: Long
         var metadata: QrTransferFrame.Metadata? = null
         val chunks = linkedMapOf<Int, String>()
+        var encodedPayloadLength: Int = 0
 
         constructor(now: Long) {
             this.now = now
