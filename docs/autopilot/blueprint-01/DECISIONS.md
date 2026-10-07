@@ -101,3 +101,11 @@ For offline first-use verification, build/resolve host tooling before isolation,
 - Newly written notes use encrypted storage only. If encrypted preferences cannot be created or committed, note operations fail closed.
 - Legacy ID-only aliases may be read only as encrypted compatibility data and are retired when a concrete current media record is explicitly saved.
 - Private-note plaintext must never be exported, logged, or written to plaintext preferences.
+
+
+## S28 Declutter draft boundary
+
+- Keep/Trash/Undo are draft decisions only; they must not change MediaStore, Room, Vault, or Trash state.
+- The draft remains bounded to 300 candidates to protect low-end-device memory and interaction latency.
+- Only explicit Apply may request Android trash confirmation.
+- Cancellation preserves the draft unchanged. Confirmed success reconciles based on the number of removed candidates in the already-processed prefix so the current item is never skipped.
