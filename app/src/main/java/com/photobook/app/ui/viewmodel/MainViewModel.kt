@@ -21,6 +21,7 @@ import com.photobook.app.data.source.MediaStoreScanner
 import com.photobook.app.feature.archive.ArchiveCandidate
 import com.photobook.app.feature.archive.ArchiveDueDeleteItem
 import com.photobook.app.feature.archive.ArchiveService
+import com.photobook.app.feature.cleanup.CleanupSelectionPolicy
 import com.photobook.app.feature.declutter.DeclutterCandidate
 import com.photobook.app.feature.declutter.DeclutterReason
 import com.photobook.app.feature.declutter.DeclutterSession
@@ -847,7 +848,6 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             loadArchiveSummary(
                 refreshCandidates = true,
-                preselectCandidates = true,
             )
         }
     }
@@ -861,7 +861,6 @@ class MainViewModel @Inject constructor(
                 syncMediaStoreIncremental(forceFullSync = true)
                 loadArchiveSummary(
                     refreshCandidates = true,
-                    preselectCandidates = true,
                     fullLibraryScan = true,
                 )
             }.onFailure {
@@ -910,10 +909,7 @@ class MainViewModel @Inject constructor(
                 ArchiveScanWorker.cancel(context)
                 ArchiveRetentionWorker.cancel(context)
             }
-            applyArchiveSummary(
-                summary = summary,
-                preselectCandidates = enabled,
-            )
+            applyArchiveSummary(summary = summary)
         }
     }
 
@@ -930,10 +926,7 @@ class MainViewModel @Inject constructor(
                 enabled = enabled,
                 accessiblePhotoIds = currentArchiveAccessiblePhotoIds(),
             )
-            applyArchiveSummary(
-                summary = summary,
-                preselectCandidates = summary.enabled,
-            )
+            applyArchiveSummary(summary = summary)
         }
     }
 
@@ -950,10 +943,7 @@ class MainViewModel @Inject constructor(
                 enabled = enabled,
                 accessiblePhotoIds = currentArchiveAccessiblePhotoIds(),
             )
-            applyArchiveSummary(
-                summary = summary,
-                preselectCandidates = summary.enabled,
-            )
+            applyArchiveSummary(summary = summary)
         }
     }
 
@@ -1243,7 +1233,6 @@ class MainViewModel @Inject constructor(
 
     private suspend fun loadArchiveSummary(
         refreshCandidates: Boolean,
-        preselectCandidates: Boolean = false,
         fullLibraryScan: Boolean = false,
     ) {
         val accessiblePhotoIds = currentArchiveAccessiblePhotoIds()
@@ -1254,13 +1243,11 @@ class MainViewModel @Inject constructor(
                 ) { partialSummary ->
                     applyArchiveSummary(
                         summary = partialSummary,
-                        preselectCandidates = preselectCandidates,
                         isLoading = true,
                     )
                 }
                 applyArchiveSummary(
                     summary = finalSummary,
-                    preselectCandidates = preselectCandidates,
                     isLoading = false,
                 )
                 return
@@ -1272,7 +1259,6 @@ class MainViewModel @Inject constructor(
         }
         applyArchiveSummary(
             summary = summary,
-            preselectCandidates = preselectCandidates,
             isLoading = false,
         )
     }
@@ -1290,20 +1276,18 @@ class MainViewModel @Inject constructor(
 
     private fun applyArchiveSummary(
         summary: com.photobook.app.feature.archive.ArchiveSummary,
-        preselectCandidates: Boolean,
         isLoading: Boolean = false,
     ) {
         val candidateIds = summary.candidates.map { candidate -> candidate.photo.id }.toSet()
         uiState.update { state ->
-            val clampedSelection = state.archiveSelectedPhotoIds.intersect(candidateIds)
+            val explicitSelection = CleanupSelectionPolicy.retainExplicitSelection(
+                selectedPhotoIds = state.archiveSelectedPhotoIds,
+                candidatePhotoIds = candidateIds,
+            )
             state.copy(
                 isArchivesLoading = isLoading,
                 archiveCandidates = summary.candidates,
-                archiveSelectedPhotoIds = if (preselectCandidates && summary.enabled) {
-                    candidateIds
-                } else {
-                    clampedSelection
-                },
+                archiveSelectedPhotoIds = explicitSelection,
                 archiveRetentionDays = summary.retentionDays,
                 archiveDueDeleteCount = summary.dueDeleteCount,
                 archivesEnabled = summary.enabled,
