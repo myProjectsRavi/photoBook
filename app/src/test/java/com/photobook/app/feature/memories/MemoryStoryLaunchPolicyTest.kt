@@ -68,8 +68,8 @@ class MemoryStoryLaunchPolicyTest {
         val sanitized = MemoryStoryLaunchPolicy.sanitizeExternalTitle(value)
 
         assertThat(sanitized.length).isEqualTo(MemoryStoryLaunchPolicy.MAX_WIDGET_TITLE_LENGTH)
-        assertThat(sanitized).doesNotStartWith(" ")
-        assertThat(sanitized).doesNotEndWith(" ")
+        assertThat(sanitized.startsWith(" ")).isFalse()
+        assertThat(sanitized.endsWith(" ")).isFalse()
     }
 
     @Test
