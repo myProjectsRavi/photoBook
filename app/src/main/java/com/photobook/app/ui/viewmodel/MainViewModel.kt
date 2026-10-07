@@ -20,6 +20,7 @@ import com.photobook.app.data.model.RawPhotoData
 import com.photobook.app.data.source.MediaStoreScanner
 import com.photobook.app.feature.archive.ArchiveCandidate
 import com.photobook.app.feature.archive.ArchiveDueDeleteItem
+import com.photobook.app.feature.archive.ArchivePublicationGate
 import com.photobook.app.feature.archive.ArchiveService
 import com.photobook.app.feature.cleanup.CleanupSelectionPolicy
 import com.photobook.app.feature.declutter.DeclutterCandidate
@@ -291,6 +292,7 @@ class MainViewModel @Inject constructor(
     private var mediaRebuildJob: Job? = null
     private var permissionReconcileJob: Job? = null
     private val accessGenerationGate = AccessGenerationGate()
+    private val archivePublicationGate = ArchivePublicationGate()
     private val memoryPublicationLock = Any()
     private val memoryRefreshRequests = Channel<MemoryRefreshRequest>(capacity = Channel.CONFLATED)
     private val memoryRefreshJob: Job = viewModelScope.launch(Dispatchers.Default) {
@@ -871,6 +873,7 @@ class MainViewModel @Inject constructor(
     }
 
     fun dismissArchives() {
+        archivePublicationGate.invalidate()
         uiState.update {
             it.copy(
                 showArchives = false,
@@ -881,13 +884,17 @@ class MainViewModel @Inject constructor(
     }
 
     fun setArchiveRetentionDays(days: Int) {
+        val publicationRevision = archivePublicationGate.begin()
         viewModelScope.launch {
             val normalized = archiveService.setRetentionDays(days)
-            uiState.update { it.copy(archiveRetentionDays = normalized) }
+            if (archivePublicationGate.isCurrent(publicationRevision)) {
+                uiState.update { it.copy(archiveRetentionDays = normalized) }
+            }
         }
     }
 
     fun setArchivesEnabled(enabled: Boolean) {
+        val publicationRevision = archivePublicationGate.begin()
         viewModelScope.launch {
             uiState.update { state ->
                 state.copy(
@@ -909,11 +916,15 @@ class MainViewModel @Inject constructor(
                 ArchiveScanWorker.cancel(context)
                 ArchiveRetentionWorker.cancel(context)
             }
-            applyArchiveSummary(summary = summary)
+            applyArchiveSummary(
+                summary = summary,
+                publicationRevision = publicationRevision,
+            )
         }
     }
 
     fun setArchivePaymentsEnabled(enabled: Boolean) {
+        val publicationRevision = archivePublicationGate.begin()
         viewModelScope.launch {
             uiState.update { state ->
                 state.copy(
@@ -926,11 +937,15 @@ class MainViewModel @Inject constructor(
                 enabled = enabled,
                 accessiblePhotoIds = currentArchiveAccessiblePhotoIds(),
             )
-            applyArchiveSummary(summary = summary)
+            applyArchiveSummary(
+                summary = summary,
+                publicationRevision = publicationRevision,
+            )
         }
     }
 
     fun setArchiveFoodEnabled(enabled: Boolean) {
+        val publicationRevision = archivePublicationGate.begin()
         viewModelScope.launch {
             uiState.update { state ->
                 state.copy(
@@ -943,7 +958,10 @@ class MainViewModel @Inject constructor(
                 enabled = enabled,
                 accessiblePhotoIds = currentArchiveAccessiblePhotoIds(),
             )
-            applyArchiveSummary(summary = summary)
+            applyArchiveSummary(
+                summary = summary,
+                publicationRevision = publicationRevision,
+            )
         }
     }
 
@@ -1235,6 +1253,7 @@ class MainViewModel @Inject constructor(
         refreshCandidates: Boolean,
         fullLibraryScan: Boolean = false,
     ) {
+        val publicationRevision = archivePublicationGate.begin()
         val accessiblePhotoIds = currentArchiveAccessiblePhotoIds()
         val summary = if (refreshCandidates) {
             if (fullLibraryScan) {
@@ -1244,11 +1263,13 @@ class MainViewModel @Inject constructor(
                     applyArchiveSummary(
                         summary = partialSummary,
                         isLoading = true,
+                        publicationRevision = publicationRevision,
                     )
                 }
                 applyArchiveSummary(
                     summary = finalSummary,
                     isLoading = false,
+                    publicationRevision = publicationRevision,
                 )
                 return
             } else {
@@ -1260,6 +1281,7 @@ class MainViewModel @Inject constructor(
         applyArchiveSummary(
             summary = summary,
             isLoading = false,
+            publicationRevision = publicationRevision,
         )
     }
 
@@ -1277,7 +1299,9 @@ class MainViewModel @Inject constructor(
     private fun applyArchiveSummary(
         summary: com.photobook.app.feature.archive.ArchiveSummary,
         isLoading: Boolean = false,
+        publicationRevision: Long,
     ) {
+        if (!archivePublicationGate.isCurrent(publicationRevision)) return
         val candidateIds = summary.candidates.map { candidate -> candidate.photo.id }.toSet()
         uiState.update { state ->
             val explicitSelection = CleanupSelectionPolicy.retainExplicitSelection(
