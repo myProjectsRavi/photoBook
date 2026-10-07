@@ -374,3 +374,19 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - `main` remained untouched. No physical/OEM/camera/battery/thermal evidence is claimed.
 
 **Decision: S30 ACCEPTED.**
+
+
+## S31 final acceptance
+
+- Tested source: `583da1bac1525f7a2a898e7e58b6510778debf86`.
+- Android configuration: application ID `com.photobook.app`, minSdk 26, targetSdk 36, compileSdk 36.
+- Release ABI splits: exactly `arm64-v8a` and `armeabi-v7a`; compatibility report also inventories packaged native libraries by ABI and SHA-256.
+- Release APK hard ceiling is exact decimal 30,000,000 bytes. Exact-source sizes: arm64-v8a `22,497,245` bytes; armeabi-v7a `16,456,239` bytes.
+- Release AAB ceiling is 20 MiB. Exact-source AAB: `20,796,407` bytes (19.83 MiB), below 20,971,520 bytes.
+- Both release APKs were inspected with aapt and have no `android.permission.INTERNET`.
+- Release runtime dependency provenance was captured and hashed; compatibility tooling fails closed on missing permission/dependency/artifact evidence, unexpected native ABI, API mismatch, or size violation.
+- Android Verification run `37625928661`: **SUCCESS**, compatibility report VALID, artifact `11484733092`, digest `sha256:3e9034bb661358ad656fbc1b237ddc4ca9b6c01a5196a4dbdc79b7df4c462762`.
+- Offline API-35 run `37625928524`: **SUCCESS**, artifact `11484238271`, digest `sha256:6359b3cdb6451f5d0eef4d82ec04dca6f1b5d8bcec71b394a1847bbd30fc4279`.
+- Hosted emulator evidence is correctness/privacy evidence only, not native ARM performance or physical/OEM certification. `main` remained untouched.
+
+**Decision: S31 ACCEPTED.**

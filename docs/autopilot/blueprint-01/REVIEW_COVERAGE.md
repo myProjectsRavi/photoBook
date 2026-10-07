@@ -358,3 +358,8 @@ Reviewed Declutter models/state machine, bounded candidate construction, live To
 ## S30 targeted review closure
 
 Reviewed memory curation/publication, access-generation invalidation, hide preference, Albums placement, widget cache/deep-link validation, MainActivity launch handling, story viewer controls, and focused tests. Final review confirms memories are discoverable only in Albums, hidden memories cannot be opened from the widget, external IDs must exactly match current visible PhotoIndex IDs, and story playback no longer auto-advances or continuously animates.
+
+
+## S31 targeted review closure
+
+Reviewed Android/Gradle API and ABI configuration, release APK/AAB size gates, merged release permissions, dependency provenance capture, packaged native-library inventory, compatibility report fail-closed behavior, Phase-0 workflow integration, and targeted offline verification. Exact-source evidence confirms only the two intended release ABIs, no INTERNET permission, valid API ordering, and current size ceilings.

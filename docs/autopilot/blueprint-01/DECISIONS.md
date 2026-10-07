@@ -109,3 +109,11 @@ For offline first-use verification, build/resolve host tooling before isolation,
 - The draft remains bounded to 300 candidates to protect low-end-device memory and interaction latency.
 - Only explicit Apply may request Android trash confirmation.
 - Cancellation preserves the draft unchanged. Confirmed success reconciles based on the number of removed candidates in the already-processed prefix so the current item is never skipped.
+
+
+## S31 compatibility evidence policy
+
+- The release APK ceiling is 30,000,000 decimal bytes per ABI; the AAB ceiling is 20 MiB (20,971,520 bytes).
+- Compatibility evidence must parse ABI configuration specifically from the Android splits/ABI block, not arbitrary Gradle include calls.
+- Release dependency provenance, packaged native libraries/ABIs and no-INTERNET evidence are mandatory and fail closed when absent.
+- Hosted x86_64 API-35 emulator results are correctness/privacy evidence, not native ARM or physical-device performance certification.

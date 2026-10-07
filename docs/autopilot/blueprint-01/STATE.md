@@ -5,11 +5,11 @@ authorized_branch: autopilot/epics-features-user-stories
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
 current_epic: E09 Compatibility and completion  
-current_feature: Compatibility  
-current_story: S31 Compatibility  
+current_feature: Final verification  
+current_story: S32 Final verification  
 status: IN_PROGRESS  
 source_commit_tested: d3d9257e4b8caf5d24ca0164956b5e30c530ee01 (S23 ACCEPTED; exact-head Android and API-35 green)
-latest_checkpoint_commit: 41bf144e8f1b8a11082efc25aeffa9ad227867b3
+latest_checkpoint_commit: 583da1bac1525f7a2a898e7e58b6510778debf86
 
 ## Source blueprint
 
@@ -881,3 +881,11 @@ Inspect attempt 2 of targeted run `37589482404`. If the same large-font launch/r
 - Dependencies S01-S30 are ACCEPTED.
 - Acceptance anchor: package/privacy/ABI/API compatibility matrix; every generated APK <= 30,000,000 bytes; release AAB <= 20 MiB; no INTERNET permission; dependency/native provenance recorded and reviewed.
 - Exact next action: inspect Gradle Android/API/ABI configuration, manifest merge/no-INTERNET gates, release size gates, dependency lock/provenance inputs, native libraries/ABIs, and existing compatibility workflows. Add fail-closed compatibility evidence where the current gates do not already prove the acceptance matrix. Do not start S32 until S31 is accepted.
+
+
+## S32 start
+
+- S31 Compatibility is ACCEPTED.
+- Active story: S32 Final verification.
+- Candidate production source is frozen at `583da1bac1525f7a2a898e7e58b6510778debf86` unless accumulated-diff review reopens a concrete defect.
+- Required work: compare the entire Blueprint branch against baseline/main, verify S01-S31 durable statuses/evidence, review accumulated production/security/privacy/destructive-flow diffs, verify main remains untouched, create a whole-branch evidence packet, reopen any confirmed failure instead of papering it over, and run final exact-head Android/offline gates before independent-review handoff.
