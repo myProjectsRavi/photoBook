@@ -7,9 +7,9 @@ baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1
 current_epic: E09 Compatibility and completion  
 current_feature: Final verification  
 current_story: S32 Final verification  
-status: IN_PROGRESS  
-source_commit_tested: 583da1bac1525f7a2a898e7e58b6510778debf86 (S31 ACCEPTED; exact-head Android and API-35 green)
-latest_checkpoint_commit: b29c2a0048199d3b906de23f1220678c61739116
+status: ACCEPTED  
+source_commit_tested: 28e569aa12d6aa62fa6dbce671fa1ff8d708268c (S32 ACCEPTED; exact-head Android and API-35 green)
+latest_checkpoint_commit: 28e569aa12d6aa62fa6dbce671fa1ff8d708268c
 
 ## Source blueprint
 
@@ -898,3 +898,8 @@ Inspect attempt 2 of targeted run `37589482404`. If the same large-font launch/r
 - BACKLOG verified as exactly S01-S32, with S01-S31 ACCEPTED and only S32 active.
 - High-risk accumulated deletion/export/storage review found no confirmed arbitrary original-media deletion or network regression.
 - Final evidence packet and fail-closed completion-structure verifier are being committed. Exact next action: require both Android Verification and offline API-35 success on this S32 evidence commit, then mark S32 ACCEPTED and hand off for independent review.
+
+
+## S32 completed
+
+S32 is ACCEPTED. The frozen production source is `583da1bac1525f7a2a898e7e58b6510778debf86`. Pre-acceptance final verification head `28e569aa12d6aa62fa6dbce671fa1ff8d708268c` passed Android Verification `37632969166` and offline API-35 targeted verification `37632969193`. All S01-S32 stories are accepted. `main` remains untouched at `d693acd7c52f285b6ba475fdd3712a10e419d4e1`. Blueprint 01 is ready for independent branch review.
