@@ -82,6 +82,26 @@ class PhotoNoteStoreInstrumentedTest {
         }
     }
 
+    @Test
+    fun legacyIdOnlyNote_isQuarantinedFromReplacementMedia() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val store = PhotoNoteStore(context)
+        val replacement = photo(id = 91_007L, dateAdded = 1_786_200_000_000L)
+        val legacyMarker = "legacy-private-note-must-not-follow-reused-id"
+
+        store.deleteNote(replacement)
+        store.deleteNote(replacement.id)
+        try {
+            assertTrue(store.saveNote(replacement.id, legacyMarker))
+            assertEquals(legacyMarker, store.getNote(replacement.id))
+            assertEquals("", store.getNote(replacement))
+            assertFalse(store.noteContains(replacement, "reused-id"))
+        } finally {
+            store.deleteNote(replacement)
+            store.deleteNote(replacement.id)
+        }
+    }
+
     private fun photo(id: Long, dateAdded: Long) = PhotoRecord(
         id = id,
         uriString = "content://media/external/images/media/$id",
