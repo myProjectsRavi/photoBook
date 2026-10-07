@@ -28,6 +28,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,6 +46,7 @@ import com.photobook.app.util.PerformanceProfiler
 import com.photobook.app.util.ThumbnailDecodePolicy
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 @Composable
@@ -73,6 +75,39 @@ fun PhotoGrid(
     var activeTimelineLabel by remember { mutableStateOf<String?>(null) }
     var lastScrubTargetIndex by remember(photos.itemCount) { mutableIntStateOf(-1) }
     var scrubScrollJob by remember { mutableStateOf<Job?>(null) }
+    var continuityAnchorId by remember { mutableStateOf<Long?>(null) }
+    var continuityAnchorOffset by remember { mutableIntStateOf(0) }
+    var lastObservedItemCount by remember { mutableIntStateOf(photos.itemCount) }
+
+    LaunchedEffect(gridState, photos) {
+        snapshotFlow {
+            gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset
+        }.collectLatest { (index, offset) ->
+            photos.peek(index)?.id?.let { visibleId ->
+                continuityAnchorId = visibleId
+                continuityAnchorOffset = offset
+            }
+        }
+    }
+
+    LaunchedEffect(photos.itemCount) {
+        val previousCount = lastObservedItemCount
+        lastObservedItemCount = photos.itemCount
+        if (previousCount != photos.itemCount && !gridState.isScrollInProgress) {
+            val anchorId = continuityAnchorId
+            if (anchorId != null) {
+                val snapshot = photos.itemSnapshotList
+                val target = GridContinuityPolicy.loadedAnchorIndex(
+                    anchorId = anchorId,
+                    loadedIds = snapshot.items.map { it.id },
+                    placeholdersBefore = snapshot.placeholdersBefore,
+                )
+                if (target != null && target != gridState.firstVisibleItemIndex) {
+                    gridState.scrollToItem(target, continuityAnchorOffset)
+                }
+            }
+        }
+    }
 
     LaunchedEffect(photos.itemCount) {
         scrubScrollJob?.cancel()
