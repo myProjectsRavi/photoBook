@@ -26,11 +26,14 @@ import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 class PdfExportService @Inject constructor(
@@ -79,7 +82,8 @@ class PdfExportService @Inject constructor(
             )
         }
 
-        return withContext(Dispatchers.IO) {
+        return exportMutex.withLock {
+            withContext(Dispatchers.IO) {
             if (
                 destination == PdfExportDestination.Downloads &&
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
@@ -195,6 +199,7 @@ class PdfExportService @Inject constructor(
                 PdfExportResult.Error(t)
             } finally {
                 document.close()
+            }
             }
         }
     }
@@ -545,7 +550,8 @@ class PdfExportService @Inject constructor(
     }
 
     private fun buildFileName(sourceFileName: String?): String {
-        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date()) +
+            "_" + UUID.randomUUID().toString().take(8)
         return PdfFileNames.build(stamp = stamp, sourceFileName = sourceFileName)
     }
 
@@ -564,6 +570,8 @@ class PdfExportService @Inject constructor(
     }
 
     companion object {
+        private val exportMutex = Mutex()
+
         private const val MIME_TYPE = "application/pdf"
         private val PDF_HEADER = "%PDF-".encodeToByteArray()
         private const val PDF_PUBLICATION_JOURNAL = "pdf_publication_journal_v1"
