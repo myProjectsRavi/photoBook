@@ -32,8 +32,8 @@ Execution rule: select the first incomplete story whose dependencies pass. Do no
 | S24 | E07 Privacy and cleanup | Duplicate analysis | S13 | ACCEPTED | Fix/prove near-duplicate candidate semantics; exact SHA verification; adversarial completeness tests. |
 | S25 | E07 Privacy and cleanup | Cleanup experience | S24 | ACCEPTED | Reviewable cleanup categories/reasons, nothing destructively preselected, paged groups and confirmation reconciliation. |
 | S26 | E07 Privacy and cleanup | Archives | S25 | ACCEPTED | Conservative Archives, revision-scoped results, bounded scans, no surprise deletion or stale publication. |
-| S27 | E08 Useful local features | Private notes | S15,S21 | IN_PROGRESS | Restore viewer More note entry; encrypted local notes, stable identity, no plaintext fallback/log/export leakage. |
-| S28 | E08 Useful local features | Declutter review | S25 | NOT_STARTED | Restore bounded draft Keep/Trash/Undo review; no media changes until explicit Apply + Android confirmation. |
+| S27 | E08 Useful local features | Private notes | S15,S21 | ACCEPTED | Restore viewer More note entry; encrypted local notes, stable identity, no plaintext fallback/log/export leakage. |
+| S28 | E08 Useful local features | Declutter review | S25 | IN_PROGRESS | Restore bounded draft Keep/Trash/Undo review; no media changes until explicit Apply + Android confirmation. |
 | S29 | E08 Useful local features | Offline QR transfer | S20 | NOT_STARTED | Harden replay/conflict/byte/lifecycle behavior before exposing Receive/Send preview entry points. |
 | S30 | E08 Useful local features | Local memories | S06,S17 | NOT_STARTED | Move discovery to Albums, respect access/hide preference, validate widget IDs and calm story controls. |
 | S31 | E09 Compatibility and completion | Compatibility | S01-S30 | NOT_STARTED | Package/privacy/ABI/API matrix, 30,000,000-byte APK + 20 MiB AAB, no INTERNET, dependency/native provenance. |
