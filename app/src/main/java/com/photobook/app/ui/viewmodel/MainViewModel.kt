@@ -1362,20 +1362,7 @@ class MainViewModel @Inject constructor(
         latestVisibleResultIds = latestVisibleResultIds.filterNot { id -> id in photoIds }
 
         uiState.update { state ->
-            val nextDeclutterSession = state.declutterSession?.let { session ->
-                val filteredCandidates = session.candidates.filterNot { candidate -> candidate.photoId in photoIds }
-                if (filteredCandidates.isEmpty()) {
-                    null
-                } else {
-                    val clampedIndex = session.currentIndex.coerceAtMost(filteredCandidates.lastIndex.coerceAtLeast(0))
-                    session.copy(
-                        candidates = filteredCandidates,
-                        currentIndex = clampedIndex,
-                        markedTrashIds = session.markedTrashIds - photoIds,
-                        keptIds = session.keptIds - photoIds,
-                    )
-                }
-            }
+            val nextDeclutterSession = state.declutterSession?.afterConfirmedTrash(photoIds)
             state.copy(
                 selectedPhotoIds = state.selectedPhotoIds - photoIds,
                 archiveCandidates = state.archiveCandidates.filterNot { candidate -> candidate.photo.id in photoIds },
