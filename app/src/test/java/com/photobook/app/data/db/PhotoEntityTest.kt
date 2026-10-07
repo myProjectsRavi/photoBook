@@ -41,6 +41,29 @@ class PhotoEntityTest {
     }
 
     @Test
+    fun reusedMediaId_doesNotRetainFavoriteOrDerivedDataFromOldIdentity() {
+        val current = sampleRecord(sourceRevision = 41L).copy(
+            isFavorite = true,
+            perceptualHash = 123L,
+            ocrText = "old photo",
+            isOcrProcessed = true,
+            ocrStatus = IntelligenceStatus.PROCESSED,
+        )
+        val replacement = sampleRecord(sourceRevision = 41L).copy(
+            dateAdded = current.dateAdded + 86_400_000L,
+            fileName = "replacement.jpg",
+            filePath = "/storage/emulated/0/DCIM/Camera/replacement.jpg",
+        )
+
+        val reconciled = replacement.withRetainedStateFrom(current)
+
+        assertThat(reconciled.isFavorite).isFalse()
+        assertThat(reconciled.perceptualHash).isNull()
+        assertThat(reconciled.ocrText).isEmpty()
+        assertThat(reconciled.isOcrProcessed).isFalse()
+    }
+
+    @Test
     fun changedRevision_retainsFavoriteButDropsDerivedIntelligence() {
         val current = sampleRecord(
             isMlProcessed = true,
