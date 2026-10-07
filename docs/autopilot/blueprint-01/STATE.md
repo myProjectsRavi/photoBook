@@ -5,11 +5,11 @@ authorized_branch: autopilot/epics-features-user-stories
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
 current_epic: E07 Privacy and cleanup  
-current_feature: Cleanup experience  
-current_story: S25 Cleanup experience  
+current_feature: Archives  
+current_story: S26 Archives  
 status: IN_PROGRESS  
 source_commit_tested: d3d9257e4b8caf5d24ca0164956b5e30c530ee01 (S23 ACCEPTED; exact-head Android and API-35 green)
-latest_checkpoint_commit: baf9e1fb1f72fae8f2b4e3543c1470bbd2bbbaf4
+latest_checkpoint_commit: 3c21073283e39776751aa26f9d078d691c05910f
 
 ## Source blueprint
 
@@ -812,3 +812,24 @@ On the next run, select S24 as the first incomplete dependency-satisfied story. 
 ### Exact next action
 
 Inspect attempt 2 of targeted run `37589482404`. If the same large-font launch/readiness failure repeats, treat it as reproducible and fix the test/application launch synchronization without weakening the accessibility assertion. Obtain exact-source Android Verification and targeted API-35 green evidence before marking S25 ACCEPTED or starting S26.
+
+
+## S25 final acceptance
+
+- S25 Cleanup experience is ACCEPTED.
+- Tested source: `3c21073283e39776751aa26f9d078d691c05910f`.
+- Cleanup group review is complete/lazy rather than fixed to four visible members; category-specific reasons are presented before action.
+- Burst/blur cleanup caps that silently hid valid groups/members were removed.
+- Newly discovered archive cleanup candidates are never preselected for destructive action. Explicit user selection is retained only while IDs remain in the current candidate revision.
+- Confirmed-trash reconciliation removes confirmed media, drops non-comparison groups, and clears stale hero references. Cancellation leaves review state intact.
+- The first exact-source API-35 attempt exposed a pre-existing large-font activity-relaunch race. The harness was corrected without weakening any 200% font reachability assertion.
+- Android Verification `37590387987`: SUCCESS. Artifact `11469125995`, digest `sha256:da75c2fabf4f3e06d4fbc4b5dd314c08fa3866a282874a9e349ffe434f1c2e90`.
+- Offline API-35 targeted `37590387971`: SUCCESS; 29/29 instrumentation tests and valid fail-closed evidence manifest. Artifact `11468004866`, digest `sha256:5be9cb24b31c1a5ac919f50a4fc347c54a467dcab668ea6ff73dc61c4c2307b5`.
+- No physical/OEM/camera/battery/thermal evidence is claimed. `main` remains untouched.
+
+## S26 start
+
+- Active story: S26 Archives.
+- Dependency S25 is ACCEPTED.
+- Acceptance anchor: Archives must remain conservative, results must be revision-scoped, scans must be bounded/cancellable, stale publication must be rejected, and no media may be deleted or trashed by surprise.
+- Exact next action: inspect `ArchiveService`, archive decision persistence/DAO, scan revision/generation handling, bounded/full-library scan code, direct `MainViewModel` and `MainActivity` callers, due-delete flow, Archives UI, workers, and existing archive tests. Preserve explicit selection and Android confirmation. Do not start S27 while S26 is incomplete.
