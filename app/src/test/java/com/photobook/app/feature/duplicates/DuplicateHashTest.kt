@@ -19,21 +19,25 @@ class DuplicateHashTest {
     }
 
     @Test
-    fun guaranteedCandidateBands_coverAdversarialDistanceEightPair() {
+    fun guaranteedCandidateBands_coverAdversarialDistanceEightPairs() {
         val left = 0L
-        val right = listOf(0, 8, 16, 24, 32, 40, 48, 56)
-            .fold(0L) { value, bit -> value or (1L shl bit) }
-
-        assertThat(DuplicateHash.hammingDistance(left, right)).isEqualTo(8)
-
-        val oldFixedBandShared = (0 until 8).any { band ->
-            DuplicateHash.bandKey(left, band) == DuplicateHash.bandKey(right, band)
-        }
-        assertThat(oldFixedBandShared).isFalse()
-
         val leftKeys = DuplicateHash.guaranteedCandidateBandKeys(left, maxDistance = 8).toSet()
-        val rightKeys = DuplicateHash.guaranteedCandidateBandKeys(right, maxDistance = 8).toSet()
-        assertThat(leftKeys.intersect(rightKeys)).isNotEmpty()
+
+        for (bitWithinLegacyBand in 0 until 8) {
+            val right = (0 until 8)
+                .map { legacyBand -> (legacyBand * 8) + bitWithinLegacyBand }
+                .fold(0L) { value, bit -> value or (1L shl bit) }
+
+            assertThat(DuplicateHash.hammingDistance(left, right)).isEqualTo(8)
+
+            val oldFixedBandShared = (0 until 8).any { band ->
+                DuplicateHash.bandKey(left, band) == DuplicateHash.bandKey(right, band)
+            }
+            assertThat(oldFixedBandShared).isFalse()
+
+            val rightKeys = DuplicateHash.guaranteedCandidateBandKeys(right, maxDistance = 8).toSet()
+            assertThat(leftKeys.intersect(rightKeys)).isNotEmpty()
+        }
     }
 
     @Test
