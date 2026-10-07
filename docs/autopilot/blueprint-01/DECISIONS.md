@@ -117,3 +117,12 @@ For offline first-use verification, build/resolve host tooling before isolation,
 - Compatibility evidence must parse ABI configuration specifically from the Android splits/ABI block, not arbitrary Gradle include calls.
 - Release dependency provenance, packaged native libraries/ABIs and no-INTERNET evidence are mandatory and fail closed when absent.
 - Hosted x86_64 API-35 emulator results are correctness/privacy evidence, not native ARM or physical-device performance certification.
+
+
+## D-independent-review — Production review overrides blanket completion
+
+**Decision:** The 7 October 2026 independent review is a release-blocking input. Reopen every story implicated by R1–R12 instead of treating the completion verifier or prior green CI as an implementation acceptance oracle.
+
+**Evidence rule:** A repaired story needs production-path regression evidence at the exact tested source. Null/failed scans may never mean successful emptiness; Vault/PDF recovery must distinguish live ownership from abandoned work; temporary Vault plaintext must obey session/process cleanup; derived media intelligence and thumbnail caches must be revision-bound; destructive actions retain Android confirmation boundaries. Missing physical/OEM/camera/battery/thermal evidence is recorded as unavailable, never PASS.
+
+**Release rule:** Production AAB upload remains on hold until no P1 safety blocker is open and final-candidate mandatory gates are complete or explicitly scope-changed by Ravi. Main remains read-only.
