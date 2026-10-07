@@ -3,6 +3,22 @@ package com.photobook.app.feature.memories
 internal object MemoryStoryLaunchPolicy {
     const val MAX_WIDGET_STORY_IDS = 256
 
+    fun parseExternalIds(rawValue: String): List<Long>? {
+        if (rawValue.isBlank()) return null
+        val tokens = rawValue.split(',')
+        if (tokens.isEmpty() || tokens.size > MAX_WIDGET_STORY_IDS) return null
+        val ids = ArrayList<Long>(tokens.size)
+        tokens.forEach { token ->
+            val normalized = token.trim()
+            if (normalized.isEmpty()) return null
+            val id = normalized.toLongOrNull() ?: return null
+            if (id <= 0L) return null
+            ids += id
+        }
+        if (ids.toSet().size != ids.size) return null
+        return ids
+    }
+
     /**
      * Widget/deep-link stories are accepted only when the entire cached story still maps to the
      * current visible PhotoBook index. Partial matches could reveal stale access assumptions.
