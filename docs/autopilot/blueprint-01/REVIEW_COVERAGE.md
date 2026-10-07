@@ -363,3 +363,8 @@ Reviewed memory curation/publication, access-generation invalidation, hide prefe
 ## S31 targeted review closure
 
 Reviewed Android/Gradle API and ABI configuration, release APK/AAB size gates, merged release permissions, dependency provenance capture, packaged native-library inventory, compatibility report fail-closed behavior, Phase-0 workflow integration, and targeted offline verification. Exact-source evidence confirms only the two intended release ABIs, no INTERNET permission, valid API ordering, and current size ceilings.
+
+
+## Independent production review remediation coverage
+
+The independent review of `16c37216a8a14e079a4055df8c5fafcc7a8c3837` adds mandatory semantic/runtime coverage for the reopened stories. The final re-review must explicitly trace and test: MediaStore failed/incomplete scan epochs; ViewModel recovery/retry; Vault operation ownership and plaintext preview lifecycle; progressive first-page ingestion and bounded transient buffers; PDF concurrent publication ownership; dense duplicate cancellation/work bounds; legacy note identity; source revision invalidation; selection semantics; rotated custom-crop coordinates; historical populated Room migration; supported API compatibility; and final release/performance/package evidence. Historical green workflow status is not sufficient for any of these gaps.
