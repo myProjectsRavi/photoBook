@@ -76,3 +76,12 @@ For offline first-use verification, build/resolve host tooling before isolation,
 - Cleanup reasons must be visible before action so users can understand why an item or group was suggested.
 - Android system confirmation remains the destructive boundary. Local cleanup state is reconciled only after confirmed success; cancellation preserves the review state.
 - Confirmed cleanup reconciliation must remove stale references, including burst hero IDs that no longer exist after deletion.
+
+
+## S26 Archive publication revisions
+
+- Archive scan work may continue to safe local persistence, but visible Archive state is latest-request-wins.
+- Publication revisions are captured when the user action is requested, not when a coroutine eventually reaches publication.
+- Partial and final full-scan summaries must carry the same revision and are discarded after any newer refresh, category/configuration mutation, confirmed action, or sheet dismissal.
+- Full Archive scans use bounded keyset pages and honor coroutine cancellation between pages.
+- Retention workers may mark records due but must never delete media; destructive deletion remains a foreground Android confirmation.
