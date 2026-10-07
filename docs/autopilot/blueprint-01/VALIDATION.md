@@ -403,3 +403,12 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - Evidence boundaries remain explicit: hosted API-35 emulator evidence is not physical/OEM/camera/battery/thermal certification.
 
 **Decision: S32 ACCEPTED. Blueprint 01 is complete and ready for independent branch review.**
+
+
+## Independent production review — remediation cycle
+
+- Reviewed head `16c37216a8a14e079a4055df8c5fafcc7a8c3837` received NO LGTM with 6 P1 and 6 P2 findings.
+- Previous S01–S32 ACCEPTED status is superseded for the reopened stories until repaired behavior is reproduced on production paths.
+- Repair baseline remains `main` = `d693acd7c52f285b6ba475fdd3712a10e419d4e1`; no main mutation is authorized.
+- Repair implementation through `1b588f323c8ba6da1289b7da58a5daa691ebca4b` is UNVALIDATED as a final candidate. Passing historical runs do not certify these new changes.
+- Required before re-acceptance: focused fault/concurrency/lifecycle/revision/accessibility/crop regressions, populated Room migration, exact-head unit/lint/build/package gates, offline emulator evidence, supported API matrix, release-like performance/memory/frame evidence where hosted infrastructure can measure it, and explicit gaps for unavailable physical/OEM evidence.
