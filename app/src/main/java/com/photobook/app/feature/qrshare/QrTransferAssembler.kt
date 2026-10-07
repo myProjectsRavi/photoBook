@@ -1,7 +1,6 @@
 package com.photobook.app.feature.qrshare
 
 import java.util.Base64
-import java.util.LinkedHashMap
 
 sealed interface QrAssemblyResult {
     data class Progress(
@@ -23,13 +22,17 @@ sealed interface QrAssemblyResult {
     ) : QrAssemblyResult
 }
 
-class QrTransferAssembler {
+class QrTransferAssembler(
+    private val clock: () -> Long = System::currentTimeMillis,
+) {
     private val sessions = linkedMapOf<String, Session>()
-    private val completedTransfers = LinkedHashMap<String, Long>()
 
+    /**
+     * Reset only in-flight assembly. Completed/conflicted transfer IDs remain process-local
+     * replay-protected across "scan another" and receiver lifecycle recreation.
+     */
     fun reset() {
         sessions.clear()
-        completedTransfers.clear()
     }
 
     fun consume(rawValue: String): QrAssemblyResult? {
@@ -41,12 +44,14 @@ class QrTransferAssembler {
             is QrTransferFrame.Data -> frame.transferId
         }
 
-        if (completedTransfers.containsKey(transferId)) {
-            return QrAssemblyResult.Error(transferId, "Transfer session has already completed.")
+        val nowMs = clock()
+        if (QrReplayGuard.isBlocked(transferId, nowMs)) {
+            return QrAssemblyResult.Error(transferId, "Transfer session has already completed or conflicted.")
         }
 
         if (frame is QrTransferFrame.Single) {
             if (sessions.remove(transferId) != null) {
+                QrReplayGuard.block(transferId, nowMs)
                 return QrAssemblyResult.Error(transferId, "Transfer frame type changed.")
             }
             val bytes = runCatching {
@@ -70,7 +75,7 @@ class QrTransferAssembler {
                     reason = "Transfer integrity check failed.",
                 )
             }
-            rememberCompleted(frame.transferId)
+            QrReplayGuard.block(frame.transferId, nowMs)
             return QrAssemblyResult.Completed(
                 transferId = frame.transferId,
                 fileName = frame.fileName,
@@ -83,7 +88,7 @@ class QrTransferAssembler {
             if (sessions.size >= MAX_SESSIONS) {
                 return QrAssemblyResult.Error(transferId, "Too many active transfer sessions.")
             }
-            Session(now = System.currentTimeMillis()).also { sessions[transferId] = it }
+            Session(lastTouchedMs = nowMs).also { sessions[transferId] = it }
         }
 
         when (frame) {
@@ -92,11 +97,14 @@ class QrTransferAssembler {
                 val existing = session.metadata
                 if (existing != null && existing != frame) {
                     sessions.remove(transferId)
+                    QrReplayGuard.block(transferId, nowMs)
                     return QrAssemblyResult.Error(transferId, "Transfer metadata changed.")
                 }
                 session.metadata = frame
+                session.lastTouchedMs = nowMs
                 if (session.encodedPayloadLength > QrTransferProtocol.maxEncodedPayloadLength(frame.byteSize)) {
                     sessions.remove(transferId)
+                    QrReplayGuard.block(transferId, nowMs)
                     return QrAssemblyResult.Error(transferId, "Transfer payload exceeds declared size.")
                 }
             }
@@ -105,27 +113,32 @@ class QrTransferAssembler {
                 val metadata = session.metadata
                 if (metadata != null && frame.chunkIndex >= metadata.totalChunks) {
                     sessions.remove(transferId)
+                    QrReplayGuard.block(transferId, nowMs)
                     return QrAssemblyResult.Error(transferId, "Transfer chunk index is invalid.")
                 }
                 val existingPayload = session.chunks[frame.chunkIndex]
                 if (existingPayload != null && existingPayload != frame.chunkPayload) {
                     sessions.remove(transferId)
+                    QrReplayGuard.block(transferId, nowMs)
                     return QrAssemblyResult.Error(transferId, "Transfer chunk changed.")
                 }
                 if (existingPayload == null) {
                     session.chunks[frame.chunkIndex] = frame.chunkPayload
                     session.encodedPayloadLength += frame.chunkPayload.length
                 }
+                session.lastTouchedMs = nowMs
                 if (session.chunks.size > QrTransferProtocol.MAX_TOTAL_CHUNKS ||
                     session.encodedPayloadLength > QrTransferProtocol.MAX_ENCODED_PAYLOAD_LENGTH
                 ) {
                     sessions.remove(transferId)
+                    QrReplayGuard.block(transferId, nowMs)
                     return QrAssemblyResult.Error(transferId, "Transfer payload is too large.")
                 }
                 if (metadata != null &&
                     session.encodedPayloadLength > QrTransferProtocol.maxEncodedPayloadLength(metadata.byteSize)
                 ) {
                     sessions.remove(transferId)
+                    QrReplayGuard.block(transferId, nowMs)
                     return QrAssemblyResult.Error(transferId, "Transfer payload exceeds declared size.")
                 }
             }
@@ -207,7 +220,7 @@ class QrTransferAssembler {
         }
 
         sessions.remove(transferId)
-        rememberCompleted(transferId)
+        QrReplayGuard.block(transferId, nowMs)
         return QrAssemblyResult.Completed(
             transferId = transferId,
             fileName = metadata.fileName,
@@ -216,33 +229,21 @@ class QrTransferAssembler {
         )
     }
 
-    private class Session {
-        val now: Long
+    private class Session(
+        var lastTouchedMs: Long,
+    ) {
         var metadata: QrTransferFrame.Metadata? = null
         val chunks = linkedMapOf<Int, String>()
         var encodedPayloadLength: Int = 0
-
-        constructor(now: Long) {
-            this.now = now
-        }
     }
 
     private fun pruneExpired() {
-        val now = System.currentTimeMillis()
-        sessions.entries.removeIf { now - it.value.now > SESSION_TTL_MS }
-        completedTransfers.entries.removeIf { now - it.value > SESSION_TTL_MS }
-    }
-
-    private fun rememberCompleted(transferId: String) {
-        completedTransfers[transferId] = System.currentTimeMillis()
-        while (completedTransfers.size > MAX_COMPLETED_TRANSFERS) {
-            completedTransfers.remove(completedTransfers.entries.first().key)
-        }
+        val now = clock()
+        sessions.entries.removeIf { now - it.value.lastTouchedMs > SESSION_TTL_MS }
     }
 
     companion object {
         private const val MAX_SESSIONS = 4
-        private const val MAX_COMPLETED_TRANSFERS = 8
-        private const val SESSION_TTL_MS = 2 * 60 * 1000L
+        internal const val SESSION_TTL_MS = 2 * 60 * 1000L
     }
 }
