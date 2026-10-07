@@ -81,7 +81,7 @@ class IndexPersistence @Inject constructor(
                         .associateBy { entity -> entity.id }
                     val entities = batch.map { record ->
                         val current = currentById[record.id]?.toPhotoRecord()
-                        record.preserveCommittedMutableFields(current).toPhotoEntity()
+                        record.withRetainedStateFrom(current).toPhotoEntity()
                     }
                     photoDao.upsertPhotos(entities)
                     photoDao.upsertFtsRows(entities.map { it.toFtsEntity() })
