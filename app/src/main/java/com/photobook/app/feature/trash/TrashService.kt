@@ -41,6 +41,12 @@ fun TrashListResult.toTrashListUiState(): TrashListUiState = when (this) {
     is TrashListResult.Error -> TrashListUiState.ERROR
 }
 
+internal fun nextTrashOffset(
+    offset: Int,
+    pageSize: Int,
+    fetchedCount: Int,
+): Int? = if (fetchedCount > pageSize) offset + pageSize else null
+
 data class TrashedPhoto(
     val id: Long,
     val uri: Uri,
@@ -131,10 +137,13 @@ class TrashService @Inject constructor(
                     )
                 }
             }
-            val hasMore = results.size > boundedPageSize
             TrashListResult.Success(
                 photos = results.take(boundedPageSize),
-                nextOffset = if (hasMore) offset + boundedPageSize else null,
+                nextOffset = nextTrashOffset(
+                    offset = offset,
+                    pageSize = boundedPageSize,
+                    fetchedCount = results.size,
+                ),
             )
         }.getOrElse { TrashListResult.Error(it) }
     }
