@@ -8,6 +8,7 @@ from pathlib import Path
 from tools.benchmark.build_compatibility_report import (
     AAB_MAX_BYTES,
     APK_MAX_BYTES,
+    _declared_abis,
     collect,
 )
 
@@ -60,6 +61,23 @@ android {
         with zipfile.ZipFile(bundle_root / "app-release.aab", "w") as archive:
             archive.writestr("base/manifest/AndroidManifest.xml", b"demo")
         return tmp, gradle, deps, perms, apk_root, bundle_root
+
+
+    def test_nested_abi_block_parser(self):
+        text = """
+tasks.register("asset") {
+    include("assets/not-an-abi")
+}
+android {
+    splits {
+        abi {
+            isEnable = true
+            include("arm64-v8a", "armeabi-v7a")
+        }
+    }
+}
+"""
+        self.assertEqual({"arm64-v8a", "armeabi-v7a"}, _declared_abis(text))
 
     def test_valid_matrix_and_provenance_pass(self):
         tmp, gradle, deps, perms, apk_root, bundle_root = self.fixture()
