@@ -195,7 +195,7 @@ class DuplicatePhotoFinder @Inject constructor(
             groups += buildBurstGroup(current)
         }
 
-        return groups.take(MAX_BURST_GROUPS)
+        return groups
     }
 
     private fun buildBurstGroup(photos: List<PhotoRecord>): DuplicatePhotoGroup {
@@ -268,7 +268,6 @@ class DuplicatePhotoFinder @Inject constructor(
                 compareBy<Pair<PhotoRecord, Double>> { it.second }
                     .thenByDescending { it.first.fileSize }
             )
-            .take(MAX_BLUR_CANDIDATES)
             .map { it.first }
 
         if (rankedPhotos.size < MIN_BLUR_GROUP_SIZE) return null
@@ -496,11 +495,9 @@ class DuplicatePhotoFinder @Inject constructor(
         private const val BURST_WINDOW_MS = 2_500L
         private const val BURST_ASPECT_RATIO_DELTA = 0.16f
         private const val BURST_DIMENSION_DELTA = 0.16f
-        private const val MAX_BURST_GROUPS = 15
         private const val HERO_SAMPLE_MAX_DIMENSION = 320
         private const val BLUR_VARIANCE_THRESHOLD = 95.0
         private const val MIN_BLUR_GROUP_SIZE = 2
-        private const val MAX_BLUR_CANDIDATES = 36
         private const val TARGET_MEAN_LUMINANCE = 128.0
         private const val HERO_SHARPNESS_WEIGHT = 0.55
         private const val HERO_EXPOSURE_WEIGHT = 0.25
