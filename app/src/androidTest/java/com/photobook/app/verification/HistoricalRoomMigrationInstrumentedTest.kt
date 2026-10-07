@@ -23,7 +23,7 @@ import java.io.File
  *
  * This fixture recreates only the SQLite shape proven by those v1 entity
  * definitions, seeds durable user data, then opens the file through the real
- * production provider so migrations 1 -> 13 and Room's v13 validation run.
+ * production provider so migrations 1 -> 14 and Room's v14 validation run.
  */
 @RunWith(AndroidJUnit4::class)
 class HistoricalRoomMigrationInstrumentedTest {
@@ -45,7 +45,7 @@ class HistoricalRoomMigrationInstrumentedTest {
     }
 
     @Test
-    fun provenanceBackedV1Database_migratesToV13_preservingDurablePhotoData() {
+    fun provenanceBackedV1Database_migratesToV14_preservingDurablePhotoData() {
         createHistoricalV1Fixture()
 
         val migrated = AppModule.providePhotoBookDatabase(context)
@@ -57,7 +57,7 @@ class HistoricalRoomMigrationInstrumentedTest {
                 id, uriString, filePath, fileName, folderName, folderPath,
                 isFavorite, mlTagsPayload, isMlProcessed, mlStatus,
                 ocrText, isOcrProcessed, ocrStatus,
-                isArchiveScreenshotCandidate, isArchiveFoodCandidate
+                isArchiveScreenshotCandidate, isArchiveFoodCandidate, sourceRevision
             FROM photos
             WHERE id = ?
             """.trimIndent(),
@@ -79,6 +79,7 @@ class HistoricalRoomMigrationInstrumentedTest {
             assertEquals("PROCESSED", cursor.getString(12))
             assertEquals(0, cursor.getInt(13))
             assertEquals(0, cursor.getInt(14))
+            assertEquals(-1L, cursor.getLong(15))
         }
 
         migrated.openHelper.readableDatabase.query(
@@ -91,7 +92,7 @@ class HistoricalRoomMigrationInstrumentedTest {
 
         migrated.openHelper.readableDatabase.query("PRAGMA user_version").use { cursor ->
             assertTrue(cursor.moveToFirst())
-            assertEquals(13, cursor.getInt(0))
+            assertEquals(14, cursor.getInt(0))
         }
 
         migrated.openHelper.readableDatabase.query("PRAGMA integrity_check").use { cursor ->
