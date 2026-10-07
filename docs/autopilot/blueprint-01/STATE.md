@@ -8,8 +8,8 @@ current_epic: E09 Compatibility and completion
 current_feature: Final verification  
 current_story: S32 Final verification  
 status: IN_PROGRESS  
-source_commit_tested: d3d9257e4b8caf5d24ca0164956b5e30c530ee01 (S23 ACCEPTED; exact-head Android and API-35 green)
-latest_checkpoint_commit: 583da1bac1525f7a2a898e7e58b6510778debf86
+source_commit_tested: 583da1bac1525f7a2a898e7e58b6510778debf86 (S31 ACCEPTED; exact-head Android and API-35 green)
+latest_checkpoint_commit: b29c2a0048199d3b906de23f1220678c61739116
 
 ## Source blueprint
 
