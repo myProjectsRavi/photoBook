@@ -4,12 +4,12 @@ cycle: blueprint-01
 authorized_branch: autopilot/epics-features-user-stories  
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
-current_epic: E09 Compatibility and completion  
-current_feature: Final verification  
-current_story: S32 Final verification  
-status: ACCEPTED  
-source_commit_tested: 28e569aa12d6aa62fa6dbce671fa1ff8d708268c (S32 ACCEPTED; exact-head Android and API-35 green)
-latest_checkpoint_commit: 28e569aa12d6aa62fa6dbce671fa1ff8d708268c
+current_epic: E03 Gallery experience
+current_feature: Independent production review remediation
+current_story: S07 Design system
+status: IN_PROGRESS
+source_commit_tested: 16c37216a8a14e079a4055df8c5fafcc7a8c3837 (independent review baseline; NO LGTM)
+latest_checkpoint_commit: 1b588f323c8ba6da1289b7da58a5daa691ebca4b (repair source before durable reopen checkpoint)
 
 ## Source blueprint
 
@@ -903,3 +903,16 @@ Inspect attempt 2 of targeted run `37589482404`. If the same large-font launch/r
 ## S32 completed
 
 S32 is ACCEPTED. The frozen production source is `583da1bac1525f7a2a898e7e58b6510778debf86`. Pre-acceptance final verification head `28e569aa12d6aa62fa6dbce671fa1ff8d708268c` passed Android Verification `37632969166` and offline API-35 targeted verification `37632969193`. All S01-S32 stories are accepted. `main` remains untouched at `d693acd7c52f285b6ba475fdd3712a10e419d4e1`. Blueprint 01 is ready for independent branch review.
+
+
+## Independent production review remediation checkpoint
+
+- Review baseline: `16c37216a8a14e079a4055df8c5fafcc7a8c3837`.
+- Disposition: NO LGTM; production AAB remains on hold.
+- Reopened stories: S07, S09, S10, S11, S12, S13, S15, S17, S18, S20, S21, S22, S24, S25, S27, S31, S32.
+- Confirmed review blockers/gaps tracked: R1–R12, including six P1 and six P2 findings.
+- Repair source before this checkpoint: `1b588f323c8ba6da1289b7da58a5daa691ebca4b`.
+- Current implemented repair themes: fail-closed MediaStore scans and recoverable sync errors; process-owned Vault mutation/preview lifecycle; bounded browse-first ingestion; source-revision invalidation; selection semantics; serialized PDF publication; cancellable duplicate scans; legacy-note quarantine; rotation-aware custom crop.
+- CI for the repair head is not yet accepted as final evidence. Exact-candidate Android Verification, supported API matrix, populated migration coverage and release/performance evidence remain mandatory.
+- Main is unchanged and must remain unchanged.
+- Exact next action: fix compile/test fallout from the repair commits, add focused regression tests for every reproduced finding, expand final-candidate runtime/migration evidence, then re-review the final diff before any story is re-accepted.
