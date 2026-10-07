@@ -5,11 +5,11 @@ authorized_branch: autopilot/epics-features-user-stories
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
 current_epic: E07 Privacy and cleanup  
-current_feature: Duplicate analysis  
-current_story: S24 Duplicate analysis  
+current_feature: Cleanup experience  
+current_story: S25 Cleanup experience  
 status: IN_PROGRESS  
 source_commit_tested: d3d9257e4b8caf5d24ca0164956b5e30c530ee01 (S23 ACCEPTED; exact-head Android and API-35 green)
-latest_checkpoint_commit: d3d9257e4b8caf5d24ca0164956b5e30c530ee01
+latest_checkpoint_commit: baf9e1fb1f72fae8f2b4e3543c1470bbd2bbbaf4
 
 ## Source blueprint
 
@@ -775,3 +775,26 @@ On the next run, select S24 as the first incomplete dependency-satisfied story. 
 - Active story: S24 Duplicate analysis.
 - Dependencies are satisfied (S13 ACCEPTED; fixed scheduling predecessor S23 is now ACCEPTED).
 - Exact next action: inspect duplicate-analysis production code, direct callers and existing tests. Prove/fix near-duplicate candidate semantics, exact SHA verification and adversarial completeness before any acceptance decision. Do not start S25 while S24 is incomplete.
+
+
+## S24 final acceptance
+
+- S24 Duplicate analysis is ACCEPTED.
+- Tested source: `baf9e1fb1f72fae8f2b4e3543c1470bbd2bbbaf4`.
+- Production changes close the known completeness defects:
+  - Near-duplicate candidates use 9 disjoint bands for Hamming threshold 8, followed by the authoritative Hamming-distance check.
+  - Exact candidate grouping no longer assumes dimensions must match.
+  - Exact identity requires full SHA-256 equality; the 64 KiB MD5 remains only a prefilter.
+  - Database pruning is used only when Room IDs exactly equal the supplied in-memory snapshot IDs. Equal counts with different identities fail open to full analysis.
+  - The final global group cap was removed so valid groups are not silently omitted.
+- Focused tests cover adversarial threshold-8 patterns, every single-bit position, same-prefix/different-tail content, identical content, reordered snapshot IDs, equal-count identity replacement, missing/additional IDs, and duplicate-ID mismatch.
+- Android Verification `37587447134`: SUCCESS. Artifact `11466913277`, digest `sha256:a88373eb2d0f576afe5af7df5ad2a0cd0860bd8dddcab20b501bacdd9125cb62`.
+- Offline API-35 targeted `37587447136`: SUCCESS; 29/29 instrumentation tests, offline network gate PASS, exact-checkout evidence manifest valid. Artifact `11467322134`, digest `sha256:f0408f7f5e88fc1a5f698104d3b073815b20a4a3c5bc11d416aff797f58bdd57`.
+- No physical/OEM/camera/battery/thermal evidence is claimed. `main` remains untouched.
+
+## S25 start
+
+- Active story: S25 Cleanup experience.
+- Dependency S24 is ACCEPTED and the fixed sequence predecessor is complete.
+- Acceptance anchor: cleanup categories and reasons must be reviewable; destructive candidates must not be preselected; groups must remain complete/paged rather than silently truncated; and any destructive confirmation result must reconcile back into local UI/state.
+- Exact next action: inspect Cleanup/Declutter production code, duplicate/blur/archive category inputs, selection defaults, paging/group limits, destructive action callers, confirmation launchers/results, and existing tests before editing. Preserve Android system confirmation and original-media safety. Do not start S26 while S25 is incomplete.
