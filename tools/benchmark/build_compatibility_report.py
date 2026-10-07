@@ -37,6 +37,13 @@ def _string_value(text: str, name: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _declared_abis(text: str) -> set[str]:
+    match = re.search(r'\binclude\(([^)]*)\)', text)
+    if not match:
+        return set()
+    return set(re.findall(r'"([^"]+)"', match.group(1)))
+
+
 def collect(
     *,
     gradle_file: Path,
@@ -54,7 +61,7 @@ def collect(
     min_sdk = _int_value(gradle_text, "minSdk")
     target_sdk = _int_value(gradle_text, "targetSdk")
     application_id = _string_value(gradle_text, "applicationId")
-    declared_abis = set(re.findall(r'include\("([^"]+)"', gradle_text))
+    declared_abis = _declared_abis(gradle_text)
 
     if not application_id:
         errors.append("applicationId is missing")
