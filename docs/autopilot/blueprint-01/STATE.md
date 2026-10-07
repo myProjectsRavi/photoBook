@@ -5,11 +5,11 @@ authorized_branch: autopilot/epics-features-user-stories
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
 current_epic: E07 Privacy and cleanup  
-current_feature: Offline QR transfer  
-current_story: S29 Offline QR transfer  
+current_feature: Local memories  
+current_story: S30 Local memories  
 status: IN_PROGRESS  
 source_commit_tested: d3d9257e4b8caf5d24ca0164956b5e30c530ee01 (S23 ACCEPTED; exact-head Android and API-35 green)
-latest_checkpoint_commit: 08ca13fad77a3b60ecf09898d14099e789c251bf
+latest_checkpoint_commit: 726cd8cb42489d07f3f4ff32a7c2514e1ad41211
 
 ## Source blueprint
 
@@ -866,3 +866,10 @@ Inspect attempt 2 of targeted run `37589482404`. If the same large-font launch/r
 - Active story: S29 Offline QR transfer.
 - Acceptance anchor: harden replay/conflict/byte/lifecycle behavior before exposing Receive/Send preview entry points.
 - Exact next action: inspect QR encoder/protocol/frame parser/assembler, payload and frame byte limits, duplicate/replay/conflicting-frame behavior, transfer IDs/checksums, timeout/reset lifecycle, Send preview and Receive scanner entry points, permissions, and tests. Keep transfer completely offline.
+
+
+## S30 start
+
+- Active story: S30 Local memories.
+- Acceptance anchor: memories discovery belongs in Albums, respects current access and the hide preference, widget/story launches validate current photo IDs, and story controls remain calm/non-surprising.
+- Exact next action: inspect memory curation, Albums presentation, hide preference, widget provider/receiver/deep-link launch, story viewer controls, access-scoped photo resolution, and tests. Do not start S31 until S30 is accepted.
