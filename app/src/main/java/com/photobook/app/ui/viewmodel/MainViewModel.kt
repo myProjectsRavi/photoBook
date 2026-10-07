@@ -299,6 +299,7 @@ class MainViewModel @Inject constructor(
     private var mediaObserver: ContentObserver? = null
     private var mediaRebuildJob: Job? = null
     private var permissionReconcileJob: Job? = null
+    private var cleanupScanJob: Job? = null
     private val accessGenerationGate = AccessGenerationGate()
     private val archivePublicationGate = ArchivePublicationGate()
     private val memoryPublicationLock = Any()
@@ -1108,7 +1109,8 @@ class MainViewModel @Inject constructor(
     }
 
     fun openDeclutterSwipe() {
-        viewModelScope.launch {
+        cleanupScanJob?.cancel()
+        cleanupScanJob = viewModelScope.launch {
             uiState.update {
                 it.copy(
                     isDeclutterLoading = true,
@@ -1116,30 +1118,37 @@ class MainViewModel @Inject constructor(
                     declutterCurrentPhoto = null,
                 )
             }
+            try {
+                val records = photoIndex.snapshot()
+                val groups = if (uiState.value.duplicateGroups.isNotEmpty()) {
+                    uiState.value.duplicateGroups
+                } else {
+                    duplicatePhotoFinder.findDuplicates(records)
+                }
+                currentCoroutineContext().ensureActive()
 
-            val records = photoIndex.snapshot()
-            val groups = if (uiState.value.duplicateGroups.isNotEmpty()) {
-                uiState.value.duplicateGroups
-            } else {
-                duplicatePhotoFinder.findDuplicates(records)
-            }
-
-            val candidates = withContext(Dispatchers.Default) {
-                buildDeclutterCandidates(records, groups)
-            }
-            val session = DeclutterSession(candidates = candidates)
-            uiState.update { state ->
-                state.copy(
-                    duplicateGroups = if (state.duplicateGroups.isEmpty()) groups else state.duplicateGroups,
-                    isDeclutterLoading = false,
-                    declutterSession = session,
-                    declutterCurrentPhoto = resolveDeclutterCurrentPhoto(session, records),
-                )
+                val candidates = withContext(Dispatchers.Default) {
+                    buildDeclutterCandidates(records, groups)
+                }
+                currentCoroutineContext().ensureActive()
+                val session = DeclutterSession(candidates = candidates)
+                uiState.update { state ->
+                    state.copy(
+                        duplicateGroups = if (state.duplicateGroups.isEmpty()) groups else state.duplicateGroups,
+                        isDeclutterLoading = false,
+                        declutterSession = session,
+                        declutterCurrentPhoto = resolveDeclutterCurrentPhoto(session, records),
+                    )
+                }
+            } finally {
+                uiState.update { it.copy(isDeclutterLoading = false) }
             }
         }
     }
 
     fun dismissDeclutterSwipe() {
+        cleanupScanJob?.cancel()
+        cleanupScanJob = null
         uiState.update {
             it.copy(
                 isDeclutterLoading = false,
@@ -1176,25 +1185,33 @@ class MainViewModel @Inject constructor(
     }
 
     fun refreshDuplicateGroups() {
-        viewModelScope.launch {
+        cleanupScanJob?.cancel()
+        cleanupScanJob = viewModelScope.launch {
             uiState.update {
                 it.copy(
                     isFindingDuplicates = true,
                     showDuplicateFinder = true,
                 )
             }
-            val groups = duplicatePhotoFinder.findDuplicates(photoIndex.snapshot())
-            uiState.update {
-                it.copy(
-                    duplicateGroups = groups,
-                    isFindingDuplicates = false,
-                )
+            try {
+                val groups = duplicatePhotoFinder.findDuplicates(photoIndex.snapshot())
+                currentCoroutineContext().ensureActive()
+                uiState.update {
+                    it.copy(
+                        duplicateGroups = groups,
+                        isFindingDuplicates = false,
+                    )
+                }
+            } finally {
+                uiState.update { it.copy(isFindingDuplicates = false) }
             }
         }
     }
 
     fun dismissDuplicateFinder() {
-        uiState.update { it.copy(showDuplicateFinder = false) }
+        cleanupScanJob?.cancel()
+        cleanupScanJob = null
+        uiState.update { it.copy(showDuplicateFinder = false, isFindingDuplicates = false) }
     }
 
     fun openDuplicatePhoto(groupId: String, index: Int) {
@@ -1808,6 +1825,7 @@ class MainViewModel @Inject constructor(
     override fun onCleared() {
         mediaRebuildJob?.cancel()
         permissionReconcileJob?.cancel()
+        cleanupScanJob?.cancel()
         memoryRefreshRequests.close()
         memoryRefreshJob.cancel()
         mediaObserver?.let { observer ->
