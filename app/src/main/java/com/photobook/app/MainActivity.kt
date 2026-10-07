@@ -38,6 +38,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.paging.compose.collectAsLazyPagingItems
 import com.photobook.app.R
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.feature.declutter.DeclutterSession
 import com.photobook.app.feature.metadata.ExifMetadataService
 import com.photobook.app.feature.metadata.SafeShareItem
 import com.photobook.app.feature.metadata.SafeShareIntentFactory
@@ -57,6 +58,7 @@ import com.photobook.app.feature.vault.VaultService
 import com.photobook.app.feature.vault.rememberVaultAuthenticator
 import com.photobook.app.feature.phototextsearch.vaultPhotoTextLayoutSource
 import com.photobook.app.ui.screen.ArchivesScreen
+import com.photobook.app.ui.screen.DeclutterSwipeScreen
 import com.photobook.app.ui.screen.MainScreen
 import com.photobook.app.ui.screen.OnboardingScreen
 import com.photobook.app.ui.screen.PhotoViewerScreen
@@ -741,6 +743,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         },
         onManagePhotoAccess = { permissionLauncher.launch(permissions.toTypedArray()) },
         onOpenArchives = viewModel::openArchives,
+        onOpenDeclutter = viewModel::openDeclutterSwipe,
         onAlbumSelected = viewModel::onAlbumSelected,
         onToggleAlbumPinned = viewModel::onToggleAlbumPinned,
         onToggleMemoriesHidden = viewModel::onToggleMemoriesHidden,
@@ -752,6 +755,31 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         onOpenOnThisDayStory = viewModel::onOpenOnThisDayStory,
         onMemoryStorySelected = viewModel::onMemoryStorySelected,
     )
+
+    val declutterOverlaySession = uiState.declutterSession ?: if (uiState.isDeclutterLoading) {
+        DeclutterSession(candidates = emptyList())
+    } else {
+        null
+    }
+    if (declutterOverlaySession != null) {
+        DeclutterSwipeScreen(
+            session = declutterOverlaySession,
+            currentPhoto = uiState.declutterCurrentPhoto,
+            isLoading = uiState.isDeclutterLoading,
+            onDismiss = viewModel::dismissDeclutterSwipe,
+            onKeepCurrent = viewModel::onDeclutterKeepCurrent,
+            onTrashCurrent = viewModel::onDeclutterTrashCurrent,
+            onUndoLast = viewModel::onDeclutterUndo,
+            onApplyTrash = { photoIds ->
+                coroutineScope.launch {
+                    val photos = viewModel.resolvePhotosByIds(photoIds)
+                    if (photos.isNotEmpty()) {
+                        requestMoveToTrash(photos)
+                    }
+                }
+            },
+        )
+    }
 
     val viewerIndex = uiState.viewerStartIndex
     val viewerPhotos = uiState.viewerPhotos
