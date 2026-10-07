@@ -5,11 +5,11 @@ authorized_branch: autopilot/epics-features-user-stories
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
 current_epic: E07 Privacy and cleanup  
-current_feature: Archives  
-current_story: S26 Archives  
+current_feature: Private notes  
+current_story: S27 Private notes  
 status: IN_PROGRESS  
 source_commit_tested: d3d9257e4b8caf5d24ca0164956b5e30c530ee01 (S23 ACCEPTED; exact-head Android and API-35 green)
-latest_checkpoint_commit: 3c21073283e39776751aa26f9d078d691c05910f
+latest_checkpoint_commit: 0bb57c236a345f3f6f55df1c99171c1efc151a9b
 
 ## Source blueprint
 
@@ -833,3 +833,20 @@ Inspect attempt 2 of targeted run `37589482404`. If the same large-font launch/r
 - Dependency S25 is ACCEPTED.
 - Acceptance anchor: Archives must remain conservative, results must be revision-scoped, scans must be bounded/cancellable, stale publication must be rejected, and no media may be deleted or trashed by surprise.
 - Exact next action: inspect `ArchiveService`, archive decision persistence/DAO, scan revision/generation handling, bounded/full-library scan code, direct `MainViewModel` and `MainActivity` callers, due-delete flow, Archives UI, workers, and existing archive tests. Preserve explicit selection and Android confirmation. Do not start S27 while S26 is incomplete.
+
+
+## S26 final acceptance
+
+- S26 Archives is ACCEPTED on tested source `0bb57c236a345f3f6f55df1c99171c1efc151a9b`.
+- Archive classification remains conservative; full scans use bounded independent keyset pages and honor cancellation.
+- Archive UI publication is latest-request-wins with request-time revision capture; stale partial/final summaries and dismissed-sheet results cannot overwrite newer state.
+- Retention work marks records due only. Media deletion remains foreground Android confirmation, with local due-delete state advanced only after RESULT_OK.
+- Offline API-35 `37604161299`: SUCCESS, 29/29 tests, artifact `11474401280`, digest `sha256:19ab132351493b6b160ffdfdc8831deb06c2aebe1ea1415ac018e690cd8230ff`.
+- Android Verification `37604161533`: SUCCESS, artifact `11474766342`, digest `sha256:0034a7ea3800e94b822c5cccaef95631e921a5c2a30fd12a4707fbe4d7924dda`.
+- `main` remains untouched. No physical-device evidence is claimed.
+
+## S27 start
+
+- Active story: S27 Private notes.
+- Acceptance anchor: restore viewer More note entry; notes remain encrypted locally with stable photo identity; no plaintext persistence fallback, logging, sharing, export, or search leakage.
+- Exact next action: inspect `PhotoNoteStore`, key/crypto handling, note identity and persistence, viewer More UI/callers, search/index integration, backup/export/share paths, and existing tests. Do not start S28 before S27 acceptance.
