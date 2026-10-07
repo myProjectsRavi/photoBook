@@ -44,8 +44,11 @@ import com.photobook.app.feature.metadata.SafeShareIntentFactory
 import com.photobook.app.feature.metadata.SafeShareResult
 import com.photobook.app.feature.pdf.PdfExportResult
 import com.photobook.app.feature.pdf.PdfExportService
+import com.photobook.app.feature.trash.TrashListResult
+import com.photobook.app.feature.trash.TrashListUiState
 import com.photobook.app.feature.trash.TrashRequestResult
 import com.photobook.app.feature.trash.TrashService
+import com.photobook.app.feature.trash.toTrashListUiState
 import com.photobook.app.feature.vault.VaultCryptoSession
 import com.photobook.app.feature.vault.VaultExportResult
 import com.photobook.app.feature.vault.VaultItem
@@ -154,6 +157,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     // Trash bin state
     var showTrashScreen by remember { mutableStateOf(false) }
     var trashedPhotos by remember { mutableStateOf<List<com.photobook.app.feature.trash.TrashedPhoto>>(emptyList()) }
+    var trashListUiState by remember { mutableStateOf(TrashListUiState.READY) }
     var isLoadingTrash by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -210,11 +214,12 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             isLoadingTrash = true
             val archiveManagedIds = viewModel.archiveManagedTrashPhotoIds()
             val listed = trashService.listTrashed()
+            trashListUiState = listed.toTrashListUiState()
             trashedPhotos = when (listed) {
-                is com.photobook.app.feature.trash.TrashListResult.Success ->
+                is TrashListResult.Success ->
                     listed.photos.filterNot { photo -> photo.id in archiveManagedIds }
-                com.photobook.app.feature.trash.TrashListResult.UnsupportedAndroid,
-                is com.photobook.app.feature.trash.TrashListResult.Error -> emptyList()
+                TrashListResult.UnsupportedAndroid,
+                is TrashListResult.Error -> emptyList()
             }
             isLoadingTrash = false
         }
@@ -225,11 +230,12 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             isLoadingTrash = true
             val archiveManagedIds = viewModel.archiveManagedTrashPhotoIds()
             val listed = trashService.listTrashed()
+            trashListUiState = listed.toTrashListUiState()
             trashedPhotos = when (listed) {
-                is com.photobook.app.feature.trash.TrashListResult.Success ->
+                is TrashListResult.Success ->
                     listed.photos.filterNot { photo -> photo.id in archiveManagedIds }
-                com.photobook.app.feature.trash.TrashListResult.UnsupportedAndroid,
-                is com.photobook.app.feature.trash.TrashListResult.Error -> emptyList()
+                TrashListResult.UnsupportedAndroid,
+                is TrashListResult.Error -> emptyList()
             }
             isLoadingTrash = false
         }
@@ -761,6 +767,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         com.photobook.app.ui.screen.TrashScreen(
             photos = trashedPhotos,
             isLoading = isLoadingTrash,
+            listState = trashListUiState,
             onDismiss = { showTrashScreen = false },
             onRestore = { item ->
                 when (val req = trashService.createRestoreRequest(listOf(item.uri))) {
