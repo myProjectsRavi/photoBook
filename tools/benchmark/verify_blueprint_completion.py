@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed structural verification for the frozen PhotoBook Blueprint 01 handoff."""
+"""Fail-closed structural verification for the accepted PhotoBook Blueprint 01 handoff."""
 
 from __future__ import annotations
 
