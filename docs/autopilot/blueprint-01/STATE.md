@@ -5,11 +5,11 @@ authorized_branch: autopilot/epics-features-user-stories
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
 current_epic: E07 Privacy and cleanup  
-current_feature: Vault operations  
-current_story: S22 Vault operations  
+current_feature: Duplicate analysis  
+current_story: S24 Duplicate analysis  
 status: IN_PROGRESS  
-source_commit_tested: a889a03e6065b78355fcce273ca75771f21de4fc (S22 production checkpoint; CI not yet evidenced)
-latest_checkpoint_commit: a889a03e6065b78355fcce273ca75771f21de4fc
+source_commit_tested: d3d9257e4b8caf5d24ca0164956b5e30c530ee01 (S23 ACCEPTED; exact-head Android and API-35 green)
+latest_checkpoint_commit: d3d9257e4b8caf5d24ca0164956b5e30c530ee01
 
 ## Source blueprint
 
@@ -757,3 +757,21 @@ Inspect runs `37543337661` and `37543337685`. Then retry the smallest normal con
 ### Exact next action
 
 On the next run, select S24 as the first incomplete dependency-satisfied story. Inspect its production metadata code, direct callers and tests before editing, then implement only the smallest coherent S24 change and obtain the required exact-source evidence.
+
+
+## S23 final paged acceptance
+
+- S23 Trash management is ACCEPTED on tested source `d3d9257e4b8caf5d24ca0164956b5e30c530ee01`.
+- Final implementation includes bounded MediaStore pages (default 120, max 200), stable `DATE_EXPIRES DESC, _ID DESC` ordering, one-item lookahead, exact offset advancement, explicit Load more UI, duplicate-ID suppression while appending, archive-managed filtering, typed unsupported/error/ready states, and truthful provider expiry display.
+- Android system-managed confirmation remains mandatory for restore and permanent deletion, and confirmation completion refreshes Trash.
+- Focused host regressions cover listing-state truthfulness and page-boundary semantics.
+- Android Verification run `37584049388`: SUCCESS. Artifact `11466207770`, digest `sha256:6d190cf0d84f327502522cda08ab6ad7fd439e3f423e130a4838bd2cddbff851`.
+- Offline API-35 targeted run `37584049334`: SUCCESS with 29/29 instrumentation tests, network isolation PASS and valid exact-checkout evidence manifest. Artifact `11465687691`, digest `sha256:04b4037a363835042acb8d73328a40c375c688af042cb129f06a69140e7634d3`.
+- Intermediate compile failure `37583745728` was diagnosed to an invalid explicit Compose weight import and fixed without weakening behavior or evidence gates.
+- No physical/OEM/camera/battery/thermal evidence is claimed. `main` remains untouched.
+
+## S24 start
+
+- Active story: S24 Duplicate analysis.
+- Dependencies are satisfied (S13 ACCEPTED; fixed scheduling predecessor S23 is now ACCEPTED).
+- Exact next action: inspect duplicate-analysis production code, direct callers and existing tests. Prove/fix near-duplicate candidate semantics, exact SHA verification and adversarial completeness before any acceptance decision. Do not start S25 while S24 is incomplete.
