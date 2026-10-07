@@ -17,9 +17,29 @@ STATE = """authorized_branch: autopilot/epics-features-user-stories
 current_story: S32 Final verification
 status: IN_PROGRESS
 """
+REMEDIATION_STATE = """authorized_branch: autopilot/epics-features-user-stories
+review_remediation: true
+current_story: S07 Design system
+status: IN_PROGRESS
+"""
 
 
 class BlueprintCompletionTest(unittest.TestCase):
+    def test_explicit_review_remediation_accepts_first_reopened_story(self):
+        text = backlog().replace(
+            "| S07 | Epic | Feature | deps | ACCEPTED |",
+            "| S07 | Epic | Feature | deps | IN_PROGRESS |",
+        )
+        self.assertEqual([], validate(text, REMEDIATION_STATE))
+
+    def test_review_remediation_requires_first_reopened_story_as_current(self):
+        text = backlog().replace(
+            "| S07 | Epic | Feature | deps | ACCEPTED |",
+            "| S07 | Epic | Feature | deps | IN_PROGRESS |",
+        )
+        errors = validate(text, REMEDIATION_STATE.replace("S07 Design system", "S09 Performance"))
+        self.assertTrue(any("current_story mismatch in remediation" in error for error in errors))
+
     def test_valid_final_structure_passes(self):
         self.assertEqual([], validate(backlog(), STATE))
 
