@@ -68,7 +68,7 @@ import com.photobook.app.ui.screen.VaultBottomSheet
 import com.photobook.app.ui.theme.PhotoBookTheme
 import com.photobook.app.ui.viewmodel.MainViewModel
 import com.photobook.app.util.PermissionUtils
-import com.photobook.app.widget.WidgetStoryLaunchPolicy
+import com.photobook.app.feature.memories.MemoryStoryLaunchPolicy
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 
@@ -96,13 +96,13 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun handleLaunchIntent(intent: Intent?) {
-        val storyIds = WidgetStoryLaunchPolicy.parseStoryIds(
+        val storyIds = MemoryStoryLaunchPolicy.parseExternalIds(
             intent?.getStringExtra(EXTRA_WIDGET_STORY_IDS).orEmpty(),
         )
-        val storyTitle = WidgetStoryLaunchPolicy.sanitizeTitle(
+        val storyTitle = MemoryStoryLaunchPolicy.sanitizeExternalTitle(
             intent?.getStringExtra(EXTRA_WIDGET_STORY_TITLE).orEmpty(),
         )
-        if (storyIds.isNotEmpty()) {
+        if (!storyIds.isNullOrEmpty()) {
             vm.openStoryFromPhotoIds(storyIds, storyTitle)
             return
         }
