@@ -38,6 +38,11 @@ python3 -m unittest \
   tools/benchmark/test_compatibility_report.py \
   tools/benchmark/test_blueprint_completion.py
 
+printf '%s\n' "[phase0] verifying Blueprint 01 durable completion structure"
+python3 tools/benchmark/verify_blueprint_completion.py \
+  --backlog docs/autopilot/blueprint-01/BACKLOG.md \
+  --state docs/autopilot/blueprint-01/STATE.md
+
 printf '%s\n' "[phase0] generating deterministic 303-record smoke corpus"
 rm -rf "$FIXTURE_ROOT"
 python3 tools/benchmark/generate_media_fixtures.py \
