@@ -55,6 +55,33 @@ class PhotoNoteStoreInstrumentedTest {
         }
     }
 
+
+    @Test
+    fun stableIdentity_survivesUriPathAndFileNameChanges() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val store = PhotoNoteStore(context)
+        val original = photo(id = 91_002L, dateAdded = 1_786_100_000_000L)
+        val movedRepresentation = original.copy(
+            uriString = "content://media/external_primary/images/media/91002",
+            filePath = "/storage/emulated/0/Pictures/Relocated/renamed.jpg",
+            fileName = "renamed.jpg",
+            folderName = "Relocated",
+            folderPath = "Pictures/Relocated",
+        )
+        val marker = "stable-private-note-after-path-change"
+
+        store.deleteNote(original)
+        store.deleteNote(movedRepresentation)
+        try {
+            assertTrue(store.saveNote(original, marker))
+            assertEquals(marker, store.getNote(movedRepresentation))
+            assertTrue(store.noteContains(movedRepresentation, "path-change"))
+        } finally {
+            store.deleteNote(original)
+            store.deleteNote(movedRepresentation)
+        }
+    }
+
     private fun photo(id: Long, dateAdded: Long) = PhotoRecord(
         id = id,
         uriString = "content://media/external/images/media/$id",
