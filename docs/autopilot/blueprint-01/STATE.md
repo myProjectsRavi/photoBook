@@ -5,11 +5,11 @@ authorized_branch: autopilot/epics-features-user-stories
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
 current_epic: E07 Privacy and cleanup  
-current_feature: Private notes  
-current_story: S27 Private notes  
+current_feature: Declutter review  
+current_story: S28 Declutter review  
 status: IN_PROGRESS  
 source_commit_tested: d3d9257e4b8caf5d24ca0164956b5e30c530ee01 (S23 ACCEPTED; exact-head Android and API-35 green)
-latest_checkpoint_commit: 0bb57c236a345f3f6f55df1c99171c1efc151a9b
+latest_checkpoint_commit: c19384f2a523df6c31b161e8b68c1dbcab076803
 
 ## Source blueprint
 
@@ -850,3 +850,11 @@ Inspect attempt 2 of targeted run `37589482404`. If the same large-font launch/r
 - Active story: S27 Private notes.
 - Acceptance anchor: restore viewer More note entry; notes remain encrypted locally with stable photo identity; no plaintext persistence fallback, logging, sharing, export, or search leakage.
 - Exact next action: inspect `PhotoNoteStore`, key/crypto handling, note identity and persistence, viewer More UI/callers, search/index integration, backup/export/share paths, and existing tests. Do not start S28 before S27 acceptance.
+
+
+## S28 start
+
+- S27 Private notes is ACCEPTED.
+- Active story: S28 Declutter review.
+- Acceptance anchor: bounded draft Keep/Trash/Undo review; no media mutation during review; only explicit Apply may request Android trash confirmation; cancellation must preserve media and draft truthfully; confirmed success must reconcile state.
+- Exact next action: inspect declutter model/candidate generation, screen controls, MainActivity Apply callback, Android confirmation result, duplicate/cleanup state reconciliation, candidate cap/paging, and focused tests. Do not start S29 until S28 is accepted.
