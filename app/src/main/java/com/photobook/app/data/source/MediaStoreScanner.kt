@@ -23,6 +23,20 @@ class MediaStoreScanner @Inject constructor(
     }
 
     @Suppress("DEPRECATION")
+    suspend fun scanAllBatches(
+        batchSize: Int = MediaScanBatchPolicy.DEFAULT_BATCH_SIZE,
+        onBatch: suspend (List<RawPhotoData>) -> Unit,
+    ) {
+        require(batchSize > 0)
+        queryPhotos(
+            selection = null,
+            selectionArgs = null,
+            batchSize = batchSize,
+            onBatch = onBatch,
+        )
+    }
+
+    @Suppress("DEPRECATION")
     suspend fun scanChangedSince(lastGeneration: Long): List<RawPhotoData> {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             return emptyList()
@@ -69,10 +83,13 @@ class MediaStoreScanner @Inject constructor(
     private suspend fun queryPhotos(
         selection: String?,
         selectionArgs: Array<String>?,
+        batchSize: Int = MediaScanBatchPolicy.DEFAULT_BATCH_SIZE,
+        onBatch: (suspend (List<RawPhotoData>) -> Unit)? = null,
     ): List<RawPhotoData> {
         val projection = mediaStoreImageProjectionForSdk(Build.VERSION.SDK_INT)
 
-        val photos = mutableListOf<RawPhotoData>()
+        val photos = if (onBatch == null) mutableListOf<RawPhotoData>() else null
+        val pendingBatch = if (onBatch != null) ArrayList<RawPhotoData>(batchSize) else null
         val cursor = context.contentResolver.query(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             projection,
@@ -143,7 +160,7 @@ class MediaStoreScanner @Inject constructor(
                     modifiedSeconds
                 }
 
-                photos += RawPhotoData(
+                val rawPhoto = RawPhotoData(
                     id = id,
                     uriString = uriString,
                     filePath = filePath,
@@ -158,10 +175,23 @@ class MediaStoreScanner @Inject constructor(
                     dateModified = modifiedMillis,
                     generationModified = if (generationIndex >= 0) cursor.getLong(generationIndex) else null,
                 )
+                if (onBatch == null) {
+                    photos!!.add(rawPhoto)
+                } else {
+                    pendingBatch!!.add(rawPhoto)
+                    if (pendingBatch.size >= batchSize) {
+                        onBatch(pendingBatch.toList())
+                        pendingBatch.clear()
+                    }
+                }
                 scanned += 1
             }
+            if (onBatch != null && pendingBatch!!.isNotEmpty()) {
+                onBatch(pendingBatch.toList())
+                pendingBatch.clear()
+            }
         }
-        return photos
+        return photos ?: emptyList()
     }
 
 }
