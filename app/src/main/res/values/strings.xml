@@ -262,4 +262,7 @@
     <string name="widget_open_memory">Open memory</string>
     <string name="widget_on_this_day_description">Shows your On This Day memory from PhotoBook.</string>
     <string name="story_progress">%1$d / %2$d</string>
+    <string name="story_previous">Previous memory photo</string>
+    <string name="story_next">Next memory photo</string>
+    <string name="story_user_paced_hint">Swipe or use the controls</string>
 </resources>
