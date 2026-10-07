@@ -30,17 +30,15 @@ class PhotoNoteStore @Inject constructor(
     fun getNote(photo: PhotoRecord): String {
         if (!isValidIdentity(photo)) return ""
         val prefs = securePrefsResult.getOrNull() ?: return ""
-        return prefs.getString(stableKey(photo), null)
-            ?: prefs.getString(legacyKey(photo.id), "")
-            .orEmpty()
+        // Legacy ID-only aliases are quarantined. Without the historical media identity,
+        // attaching one to the current row could disclose a private note after MediaStore ID reuse.
+        return prefs.getString(stableKey(photo), "").orEmpty()
     }
 
     fun noteContains(photo: PhotoRecord, text: String): Boolean {
         if (!isValidIdentity(photo) || text.isBlank()) return false
         val cache = noteCache ?: loadAllNotes().also { noteCache = it }
-        val note = cache.stable[stableKey(photo)]
-            ?: cache.legacy[photo.id]
-            ?: return false
+        val note = cache.stable[stableKey(photo)] ?: return false
         return note.contains(text, ignoreCase = true)
     }
 
@@ -73,8 +71,8 @@ class PhotoNoteStore @Inject constructor(
     }
 
     /**
-     * Compatibility helpers for historical callers/tests. Production note UI and search use the
-     * PhotoRecord-bound APIs above so newly written notes cannot follow a reused MediaStore ID.
+     * Explicit legacy-recovery helpers. Production note UI and search must never call these:
+     * ID-only aliases do not contain enough identity to bind safely after MediaStore ID reuse.
      */
     fun getNote(photoId: Long): String {
         if (photoId <= 0L) return ""
