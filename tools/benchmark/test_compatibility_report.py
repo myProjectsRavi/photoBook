@@ -20,6 +20,12 @@ class CompatibilityReportTest(unittest.TestCase):
         gradle = root / "build.gradle.kts"
         gradle.write_text(
             """
+tasks.register("extractAsset") {
+    doLast {
+        include("assets/mlkit_label_default_model/mobile_ica_8bit_with_metadata_tflite")
+    }
+}
+
 android {
     compileSdk = 36
     defaultConfig {
@@ -73,6 +79,25 @@ android {
         self.assertEqual(APK_MAX_BYTES, report["limits"]["apk_max_bytes"])
         self.assertEqual(AAB_MAX_BYTES, report["limits"]["aab_max_bytes"])
         self.assertTrue(all(apk["no_internet"] for apk in report["apks"]))
+
+
+    def test_unrelated_include_does_not_override_abi_splits(self):
+        tmp, gradle, deps, perms, apk_root, bundle_root = self.fixture()
+        self.addCleanup(tmp.cleanup)
+
+        report, errors = collect(
+            gradle_file=gradle,
+            dependency_report=deps,
+            permission_report=perms,
+            apk_root=apk_root,
+            bundle_root=bundle_root,
+        )
+
+        self.assertEqual([], errors)
+        self.assertEqual(
+            ["arm64-v8a", "armeabi-v7a"],
+            report["abi"]["declared_splits"],
+        )
 
     def test_missing_no_internet_evidence_fails_closed(self):
         tmp, gradle, deps, perms, apk_root, bundle_root = self.fixture()
