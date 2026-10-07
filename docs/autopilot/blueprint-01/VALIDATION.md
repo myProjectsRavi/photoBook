@@ -280,3 +280,20 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - `main` remained untouched.
 
 **Decision: S24 ACCEPTED.**
+
+
+## S25 final acceptance
+
+- Tested source commit: `3c21073283e39776751aa26f9d078d691c05910f`.
+- Cleanup groups are fully reviewable: each group exposes every member through a lazy horizontal list rather than truncating to four thumbnails, and category-specific reasons are shown before any action.
+- Hidden burst-group and blurry-member caps were removed so valid cleanup candidates are not silently omitted.
+- Archive cleanup no longer preselects destructive candidates. Refresh/category/enable flows retain only explicit user selections that still belong to the current candidate set; newly discovered candidates start unselected.
+- Confirmed-trash reconciliation is isolated in `CleanupGroupPolicy`: confirmed IDs are removed, groups with fewer than two survivors are dropped, and a deleted burst hero cannot remain as a stale hero reference.
+- Android's system confirmation remains the destructive boundary. Cancellation does not reconcile/delete cleanup state; successful confirmation reconciles the confirmed IDs.
+- Focused host regressions cover explicit cleanup selection retention and cleanup-group reconciliation, including removed hero handling.
+- First targeted attempt `37589482404` failed only in the unchanged large-font navigation harness at the first post-HOME relaunch assertion. The same test had passed on the immediately preceding exact source. The harness was hardened to relaunch through explicit shell `am start -W` while preserving all 200% font reachability assertions.
+- Offline API-35 targeted run `37590387971`: **SUCCESS** on exact source `3c210732...`; 29/29 instrumentation tests passed, including `mainShell_largeFont_keepsPrimaryNavigationReachable`. Fail-closed evidence manifest validated the exact checkout. Artifact ID `11468004866`, digest `sha256:5be9cb24b31c1a5ac919f50a4fc347c54a467dcab668ea6ff73dc61c4c2307b5`.
+- Android Verification run `37590387987`: **SUCCESS** on exact source `3c210732...`. Artifact ID `11469125995`, digest `sha256:da75c2fabf4f3e06d4fbc4b5dd314c08fa3866a282874a9e349ffe434f1c2e90`.
+- No physical/OEM/camera/battery/thermal evidence is claimed. `main` remained untouched.
+
+**Decision: S25 ACCEPTED.**
