@@ -51,6 +51,7 @@ object AppModule {
                 MIGRATION_10_11,
                 MIGRATION_11_12,
                 MIGRATION_12_13,
+                MIGRATION_13_14,
             )
             .build()
     }
@@ -327,6 +328,15 @@ object AppModule {
             db.execSQL("CREATE INDEX IF NOT EXISTS index_vault_operations_vaultItemId ON vault_operations(vaultItemId)")
             db.execSQL("CREATE INDEX IF NOT EXISTS index_vault_operations_sourcePhotoId ON vault_operations(sourcePhotoId)")
             db.execSQL("CREATE INDEX IF NOT EXISTS index_vault_operations_updatedAtMs ON vault_operations(updatedAtMs)")
+        }
+    }
+
+    private val MIGRATION_13_14 = object : Migration(13, 14) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            // Existing rows have no trustworthy MediaStore revision yet. The first successful
+            // post-upgrade scan repopulates this value and intentionally reopens derived content
+            // intelligence instead of attributing stale OCR/hash/ML data to changed bytes.
+            db.execSQL("ALTER TABLE photos ADD COLUMN sourceRevision INTEGER NOT NULL DEFAULT -1")
         }
     }
 
