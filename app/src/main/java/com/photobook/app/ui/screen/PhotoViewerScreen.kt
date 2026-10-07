@@ -83,6 +83,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -1241,6 +1242,7 @@ fun PhotoViewerScreen(
         if (showCropSelector && activePhoto != null) {
             CropSelectionDialog(
                 photo = activePhoto,
+                photoEditService = photoEditService,
                 initialRegion = editorState.customCrop?.rotatedClockwise(
                     (4 - ((editorState.rotationQuarterTurns % 4) + 4) % 4) % 4,
                 ),
@@ -1261,6 +1263,7 @@ fun PhotoViewerScreen(
 @Composable
 private fun CropSelectionDialog(
     photo: PhotoRecord,
+    photoEditService: PhotoEditService,
     initialRegion: NormalizedCropRegion?,
     onDismiss: () -> Unit,
     onCropSelected: (NormalizedCropRegion) -> Unit,
@@ -1273,6 +1276,12 @@ private fun CropSelectionDialog(
         )
     }
     var dragMode by remember { mutableStateOf(CropSelectionDragMode.None) }
+    val normalizedDimensions by produceState(
+        initialValue = photo.width.coerceAtLeast(1) to photo.height.coerceAtLeast(1),
+        key1 = photo.uriString,
+    ) {
+        value = photoEditService.normalizedSourceDimensions(photo)
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -1321,8 +1330,8 @@ private fun CropSelectionDialog(
                     val density = LocalDensity.current
                     val containerWidth = with(density) { maxWidth.toPx() }.coerceAtLeast(1f)
                     val containerHeight = with(density) { maxHeight.toPx() }.coerceAtLeast(1f)
-                    val imageWidth = photo.width.takeIf { it > 0 }?.toFloat() ?: 1f
-                    val imageHeight = photo.height.takeIf { it > 0 }?.toFloat() ?: 1f
+                    val imageWidth = normalizedDimensions.first.toFloat().coerceAtLeast(1f)
+                    val imageHeight = normalizedDimensions.second.toFloat().coerceAtLeast(1f)
                     val scale = min(containerWidth / imageWidth, containerHeight / imageHeight)
                     val displayWidth = (imageWidth * scale).coerceAtLeast(1f)
                     val displayHeight = (imageHeight * scale).coerceAtLeast(1f)
