@@ -7,7 +7,6 @@ import android.net.Uri
 import com.photobook.app.data.db.PhotoDao
 import com.photobook.app.data.model.PhotoRecord
 import dagger.hilt.android.qualifiers.ApplicationContext
-import java.security.MessageDigest
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -80,8 +79,8 @@ class DuplicatePhotoFinder @Inject constructor(
     private fun findExactDuplicates(records: List<PhotoRecord>): List<DuplicatePhotoGroup> {
         return records
             .asSequence()
-            .filter { it.fileSize > 0L && it.width > 0 && it.height > 0 }
-            .groupBy { ExactCandidateKey(it.fileSize, it.width, it.height) }
+            .filter { it.fileSize > 0L }
+            .groupBy { it.fileSize }
             .values
             .filter { it.size > 1 }
             .flatMap { candidates ->
@@ -108,27 +107,17 @@ class DuplicatePhotoFinder @Inject constructor(
     }
 
     private fun partialHash(uriString: String): String? {
-        val digest = MessageDigest.getInstance("MD5")
-        val buffer = ByteArray(8192)
         return runCatching {
             context.contentResolver.openInputStream(Uri.parse(uriString))?.use { input ->
-                var totalRead = 0
-                while (totalRead < PARTIAL_HASH_LIMIT) {
-                    val toRead = minOf(buffer.size, PARTIAL_HASH_LIMIT - totalRead)
-                    val read = input.read(buffer, 0, toRead)
-                    if (read <= 0) break
-                    digest.update(buffer, 0, read)
-                    totalRead += read
-                }
-            } ?: return null
-            digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+                DuplicateHash.partialMd5Hex(input, PARTIAL_HASH_LIMIT)
+            }
         }.getOrNull()
     }
 
     private fun findNearDuplicates(records: List<PhotoRecord>): List<DuplicatePhotoGroup> {
         val byId = records.associateBy { it.id }
         val unionFind = UnionFind<Long>()
-        val buckets = mutableMapOf<String, MutableList<HashRecord>>()
+        val buckets = mutableMapOf<Long, MutableList<HashRecord>>()
 
         records.forEach { photo ->
             val hash = photo.perceptualHash
@@ -137,9 +126,12 @@ class DuplicatePhotoFinder @Inject constructor(
             val current = HashRecord(photo.id, hash)
             unionFind.add(photo.id)
 
+            val candidateKeys = DuplicateHash.guaranteedCandidateBandKeys(
+                hash = hash,
+                maxDistance = NEAR_DUPLICATE_DISTANCE,
+            )
             val candidates = linkedSetOf<HashRecord>()
-            repeat(BAND_COUNT) { band ->
-                val key = bucketKey(band, hash)
+            candidateKeys.forEach { key ->
                 buckets[key].orEmpty().forEach(candidates::add)
             }
 
@@ -149,8 +141,8 @@ class DuplicatePhotoFinder @Inject constructor(
                 }
             }
 
-            repeat(BAND_COUNT) { band ->
-                buckets.getOrPut(bucketKey(band, hash)) { mutableListOf() } += current
+            candidateKeys.forEach { key ->
+                buckets.getOrPut(key) { mutableListOf() } += current
             }
         }
 
@@ -387,22 +379,11 @@ class DuplicatePhotoFinder @Inject constructor(
         }
     }
 
-    private fun bucketKey(band: Int, hash: Long): String {
-        return "$band:${DuplicateHash.bandKey(hash, band)}"
-    }
-
     private fun sha256(uriString: String): String? {
-        val digest = MessageDigest.getInstance("SHA-256")
-        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
         return runCatching {
             context.contentResolver.openInputStream(Uri.parse(uriString))?.use { input ->
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read <= 0) break
-                    digest.update(buffer, 0, read)
-                }
-            } ?: return null
-            digest.digest().joinToString(separator = "") { byte -> "%02x".format(byte) }
+                DuplicateHash.sha256Hex(input)
+            }
         }.getOrNull()
     }
 
@@ -442,12 +423,6 @@ class DuplicatePhotoFinder @Inject constructor(
             }
         }
     }
-
-    private data class ExactCandidateKey(
-        val fileSize: Long,
-        val width: Int,
-        val height: Int,
-    )
 
     private data class HashRecord(
         val photoId: Long,
@@ -513,7 +488,6 @@ class DuplicatePhotoFinder @Inject constructor(
     companion object {
         private const val PARTIAL_HASH_LIMIT = 64 * 1024 // 64KB
         private const val DB_PREFILTER_MIN_RECORDS = 1_000
-        private const val BAND_COUNT = 8
         private const val NEAR_DUPLICATE_DISTANCE = 8
         private const val MAX_GROUPS = 30
         private const val BURST_MIN_COUNT = 3
