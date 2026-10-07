@@ -401,9 +401,9 @@ fun MainScreen(
                             RefinedActionButton(if (favoritesOnly) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Favorites", onToggleFavoritesOnly, if (favoritesOnly) AccentPink else Color(0xFF64748B), searchReady, Modifier.width(76.dp))
                             RefinedActionButton(Icons.Default.Slideshow, stringResource(R.string.reels_browsing_action), onToggleReels, if (reelsEnabled) AccentPink else Color(0xFF64748B), searchReady && !isSelectionMode, Modifier.width(76.dp))
                             RefinedActionButton(Icons.Default.Archive, stringResource(R.string.archives_action), onOpenArchives, AccentTeal, searchReady && !isSelectionMode, Modifier.width(76.dp), archiveCandidateCount + archiveDueDeleteCount)
-                            RefinedActionButton(Icons.Default.Delete, stringResource(R.string.declutter_title), onOpenDeclutter, AccentAmber, searchReady && !isSelectionMode, Modifier.width(76.dp))
                             RefinedActionButton(Icons.Default.Lock, stringResource(R.string.vault_short_action), onOpenVault, Color(0xFF7C2D12), searchReady && !isSelectionMode, Modifier.width(76.dp))
                             RefinedActionButton(Icons.Default.Delete, "Trash", onOpenTrash, AccentViolet, searchReady && !isSelectionMode, Modifier.width(76.dp))
+                            RefinedActionButton(Icons.Default.Delete, stringResource(R.string.declutter_title), onOpenDeclutter, AccentAmber, searchReady && !isSelectionMode, Modifier.width(76.dp))
                         }
                     }
                 }
