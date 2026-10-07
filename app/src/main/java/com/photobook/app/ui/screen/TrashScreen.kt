@@ -26,6 +26,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import java.text.DateFormat
+import java.util.Date
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -117,6 +119,18 @@ fun TrashScreen(
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier.fillMaxSize(),
                                     )
+                                    photo.expiresAtMillis?.let { expiresAtMillis ->
+                                        Text(
+                                            text = "Expires " + DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(expiresAtMillis)),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color.White,
+                                            modifier = Modifier
+                                                .align(Alignment.TopCenter)
+                                                .fillMaxWidth()
+                                                .background(Color.Black.copy(alpha = 0.45f))
+                                                .padding(horizontal = 4.dp, vertical = 2.dp),
+                                        )
+                                    }
                                     Row(
                                         modifier = Modifier
                                             .align(Alignment.BottomCenter)
