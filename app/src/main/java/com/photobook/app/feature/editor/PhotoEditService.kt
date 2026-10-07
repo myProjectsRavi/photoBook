@@ -97,6 +97,28 @@ class PhotoEditService @Inject constructor(
         }
     }
 
+    suspend fun normalizedSourceDimensions(photo: PhotoRecord): Pair<Int, Int> =
+        withContext(Dispatchers.IO) {
+            val rawWidth = photo.width.coerceAtLeast(1)
+            val rawHeight = photo.height.coerceAtLeast(1)
+            val orientation = runCatching {
+                context.contentResolver.openInputStream(Uri.parse(photo.uriString))?.use { input ->
+                    ExifInterface(input).getAttributeInt(
+                        ExifInterface.TAG_ORIENTATION,
+                        ExifInterface.ORIENTATION_NORMAL,
+                    )
+                } ?: ExifInterface.ORIENTATION_NORMAL
+            }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+            when (orientation) {
+                ExifInterface.ORIENTATION_ROTATE_90,
+                ExifInterface.ORIENTATION_ROTATE_270,
+                ExifInterface.ORIENTATION_TRANSPOSE,
+                ExifInterface.ORIENTATION_TRANSVERSE,
+                -> rawHeight to rawWidth
+                else -> rawWidth to rawHeight
+            }
+        }
+
     /**
      * Returns an app-owned, bounded bitmap rendered by the exact same transform pipeline as export.
      * The caller owns the returned bitmap and must recycle it when the preview is replaced/disposed.
