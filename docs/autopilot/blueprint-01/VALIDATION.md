@@ -264,3 +264,19 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - `main` remained untouched.
 
 **Decision: S23 ACCEPTED.**
+
+
+## S24 final acceptance
+
+- Tested source commit: `baf9e1fb1f72fae8f2b4e3543c1470bbd2bbbaf4`.
+- Near-duplicate candidate generation now uses `maxDistance + 1` disjoint perceptual-hash bands. For the configured Hamming threshold of 8, any accepted pair must share at least one candidate band; the final Hamming-distance check remains authoritative.
+- Exact duplicate candidate grouping no longer requires matching dimensions. File size is only the first prefilter, the partial MD5 is only a second prefilter, and byte identity is accepted only after full SHA-256 equality.
+- The database exact-duplicate prefilter no longer trusts row-count equality alone. It is used only when Room photo IDs exactly match the in-memory duplicate-analysis snapshot; otherwise analysis fails open to the full supplied record set.
+- Removed the final global duplicate-group truncation so valid groups are not silently omitted.
+- Focused host regressions exercise adversarial distance-8 patterns, all single-bit positions, equal partial-prefix/different-tail SHA-256 rejection, identical-content SHA-256 equality, and database/snapshot identity mismatch cases.
+- Android Verification run `37587447134`: **SUCCESS** on exact source `baf9e1fb...`. Artifact ID `11466913277`, digest `sha256:a88373eb2d0f576afe5af7df5ad2a0cd0860bd8dddcab20b501bacdd9125cb62`.
+- Offline API-35 targeted run `37587447136`: **SUCCESS** on exact source `baf9e1fb...`; host verification, APK/manifest no-INTERNET gates, emulator isolation, 29/29 instrumentation tests, and fail-closed evidence-manifest validation passed. Artifact ID `11467322134`, digest `sha256:f0408f7f5e88fc1a5f698104d3b073815b20a4a3c5bc11d416aff797f58bdd57`.
+- No physical/OEM/camera/battery/thermal evidence is claimed. Hosted API-35 is correctness/privacy evidence, not native-ARM performance certification.
+- `main` remained untouched.
+
+**Decision: S24 ACCEPTED.**
