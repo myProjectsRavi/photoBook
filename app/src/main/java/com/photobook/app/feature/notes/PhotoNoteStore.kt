@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.photobook.app.data.model.PhotoRecord
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -23,35 +24,76 @@ class PhotoNoteStore @Inject constructor(
 
     fun changes(): StateFlow<Long> = revisionFlow.asStateFlow()
 
-    // In-memory cache for fast search across all notes. Invalidated on save/delete.
     @Volatile
-    private var noteCache: Map<Long, String>? = null
+    private var noteCache: NoteCache? = null
 
-    fun getNote(photoId: Long): String {
-        if (photoId <= 0L) return ""
-        return securePrefsResult.getOrNull()?.getString(key(photoId), "").orEmpty()
+    fun getNote(photo: PhotoRecord): String {
+        if (!isValidIdentity(photo)) return ""
+        val prefs = securePrefsResult.getOrNull() ?: return ""
+        return prefs.getString(stableKey(photo), null)
+            ?: prefs.getString(legacyKey(photo.id), "")
+            .orEmpty()
+    }
+
+    fun noteContains(photo: PhotoRecord, text: String): Boolean {
+        if (!isValidIdentity(photo) || text.isBlank()) return false
+        val cache = noteCache ?: loadAllNotes().also { noteCache = it }
+        val note = cache.stable[stableKey(photo)]
+            ?: cache.legacy[photo.id]
+            ?: return false
+        return note.contains(text, ignoreCase = true)
+    }
+
+    fun saveNote(photo: PhotoRecord, note: String): Boolean {
+        if (!isValidIdentity(photo)) return false
+        val trimmed = note.trim()
+        if (trimmed.isEmpty()) {
+            return deleteNote(photo)
+        }
+        val prefs = securePrefsResult.getOrNull() ?: return false
+        val committed = prefs.edit()
+            .putString(stableKey(photo), trimmed.take(MAX_NOTE_CHARS))
+            // Once a legacy encrypted note is explicitly saved for this concrete media record,
+            // retire the ID-only alias so a future MediaStore ID reuse cannot inherit it.
+            .remove(legacyKey(photo.id))
+            .commit()
+        if (committed) publishRevision()
+        return committed
+    }
+
+    fun deleteNote(photo: PhotoRecord): Boolean {
+        if (!isValidIdentity(photo)) return false
+        val prefs = securePrefsResult.getOrNull() ?: return false
+        val committed = prefs.edit()
+            .remove(stableKey(photo))
+            .remove(legacyKey(photo.id))
+            .commit()
+        if (committed) publishRevision()
+        return committed
     }
 
     /**
-     * Fast search helper: checks if the note for [photoId] contains [text] (case-insensitive).
-     * Uses an in-memory cache so this is O(1) per call after first load.
+     * Compatibility helpers for historical callers/tests. Production note UI and search use the
+     * PhotoRecord-bound APIs above so newly written notes cannot follow a reused MediaStore ID.
      */
+    fun getNote(photoId: Long): String {
+        if (photoId <= 0L) return ""
+        return securePrefsResult.getOrNull()?.getString(legacyKey(photoId), "").orEmpty()
+    }
+
     fun noteContains(photoId: Long, text: String): Boolean {
         if (photoId <= 0L || text.isBlank()) return false
         val cache = noteCache ?: loadAllNotes().also { noteCache = it }
-        val note = cache[photoId] ?: return false
-        return note.contains(text, ignoreCase = true)
+        return cache.legacy[photoId]?.contains(text, ignoreCase = true) == true
     }
 
     fun saveNote(photoId: Long, note: String): Boolean {
         if (photoId <= 0L) return false
         val trimmed = note.trim()
-        if (trimmed.isEmpty()) {
-            return deleteNote(photoId)
-        }
+        if (trimmed.isEmpty()) return deleteNote(photoId)
         val prefs = securePrefsResult.getOrNull() ?: return false
         val committed = prefs.edit()
-            .putString(key(photoId), trimmed.take(MAX_NOTE_CHARS))
+            .putString(legacyKey(photoId), trimmed.take(MAX_NOTE_CHARS))
             .commit()
         if (committed) publishRevision()
         return committed
@@ -60,23 +102,27 @@ class PhotoNoteStore @Inject constructor(
     fun deleteNote(photoId: Long): Boolean {
         if (photoId <= 0L) return false
         val prefs = securePrefsResult.getOrNull() ?: return false
-        val committed = prefs.edit().remove(key(photoId)).commit()
+        val committed = prefs.edit().remove(legacyKey(photoId)).commit()
         if (committed) publishRevision()
         return committed
     }
 
-    private fun loadAllNotes(): Map<Long, String> {
-        val prefs = securePrefsResult.getOrNull() ?: return emptyMap()
-        val all = prefs.all ?: return emptyMap()
-        val result = HashMap<Long, String>(all.size)
-        val prefix = "photo_note_"
-        for ((k, v) in all) {
-            if (k.startsWith(prefix) && v is String && v.isNotBlank()) {
-                val id = k.removePrefix(prefix).toLongOrNull() ?: continue
-                result[id] = v
+    private fun loadAllNotes(): NoteCache {
+        val prefs = securePrefsResult.getOrNull() ?: return NoteCache()
+        val all = prefs.all ?: return NoteCache()
+        val stable = HashMap<String, String>()
+        val legacy = HashMap<Long, String>()
+        for ((key, value) in all) {
+            if (value !is String || value.isBlank()) continue
+            when {
+                key.startsWith(STABLE_PREFIX) -> stable[key] = value
+                key.startsWith(LEGACY_PREFIX) -> {
+                    val id = key.removePrefix(LEGACY_PREFIX).toLongOrNull() ?: continue
+                    legacy[id] = value
+                }
             }
         }
-        return result
+        return NoteCache(stable = stable, legacy = legacy)
     }
 
     private fun publishRevision() {
@@ -97,10 +143,23 @@ class PhotoNoteStore @Inject constructor(
         )
     }
 
-    private fun key(photoId: Long): String = "photo_note_$photoId"
+    private fun stableKey(photo: PhotoRecord): String =
+        "${STABLE_PREFIX}${photo.id}_${photo.dateAdded}"
+
+    private fun legacyKey(photoId: Long): String = "$LEGACY_PREFIX$photoId"
+
+    private fun isValidIdentity(photo: PhotoRecord): Boolean =
+        photo.id > 0L && photo.dateAdded > 0L
+
+    private data class NoteCache(
+        val stable: Map<String, String> = emptyMap(),
+        val legacy: Map<Long, String> = emptyMap(),
+    )
 
     companion object {
-        private const val PREFS_NAME = "photobook_private_notes"
+        internal const val PREFS_NAME = "photobook_private_notes"
+        private const val LEGACY_PREFIX = "photo_note_"
+        private const val STABLE_PREFIX = "photo_note_v2_"
         // The historical plaintext fallback file is intentionally left untouched for forensic/
         // recovery purposes, but new code never reads or writes it.
         const val MAX_NOTE_CHARS = 1000
