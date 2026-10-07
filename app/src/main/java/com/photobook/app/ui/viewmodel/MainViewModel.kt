@@ -1109,14 +1109,7 @@ class MainViewModel @Inject constructor(
     fun onDeclutterUndo() {
         uiState.update { state ->
             val session = state.declutterSession ?: return@update state
-            if (session.currentIndex <= 0 || session.candidates.isEmpty()) return@update state
-            val previousIndex = session.currentIndex - 1
-            val previousCandidate = session.candidates.getOrNull(previousIndex) ?: return@update state
-            val nextSession = session.copy(
-                currentIndex = previousIndex,
-                markedTrashIds = session.markedTrashIds - previousCandidate.photoId,
-                keptIds = session.keptIds - previousCandidate.photoId,
-            )
+            val nextSession = session.undoLast()
             state.copy(
                 declutterSession = nextSession,
                 declutterCurrentPhoto = resolveDeclutterCurrentPhoto(nextSession, photoIndex.snapshot()),
@@ -1953,20 +1946,11 @@ class MainViewModel @Inject constructor(
     private fun mutateDeclutterSession(markTrash: Boolean) {
         uiState.update { state ->
             val session = state.declutterSession ?: return@update state
-            val candidate = session.currentCandidate ?: return@update state
-            val nextSession = session.copy(
-                currentIndex = (session.currentIndex + 1).coerceAtMost(session.candidates.size),
-                markedTrashIds = if (markTrash) {
-                    session.markedTrashIds + candidate.photoId
-                } else {
-                    session.markedTrashIds - candidate.photoId
-                },
-                keptIds = if (markTrash) {
-                    session.keptIds - candidate.photoId
-                } else {
-                    session.keptIds + candidate.photoId
-                },
-            )
+            val nextSession = if (markTrash) {
+                session.markCurrentForTrash()
+            } else {
+                session.keepCurrent()
+            }
             state.copy(
                 declutterSession = nextSession,
                 declutterCurrentPhoto = resolveDeclutterCurrentPhoto(nextSession, photoIndex.snapshot()),
