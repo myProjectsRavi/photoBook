@@ -64,7 +64,7 @@ def _declared_abis(text: str) -> set[str]:
     abi_block = _named_block(splits_block, "abi")
     if abi_block is None:
         return set()
-    match = re.search(r"\\binclude\\(([^)]*)\\)", abi_block)
+    match = re.search(r"\binclude\(([^)]*)\)", abi_block)
     if not match:
         return set()
     return set(re.findall(r'"([^"]+)"', match.group(1)))
