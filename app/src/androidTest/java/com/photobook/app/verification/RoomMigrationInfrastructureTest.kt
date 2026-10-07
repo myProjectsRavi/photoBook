@@ -13,7 +13,7 @@ import org.junit.runner.RunWith
 class RoomMigrationInfrastructureTest {
 
     @Test
-    fun productionSchema13_canCreateIntegrityCleanDatabase() {
+    fun productionSchema14_canCreateIntegrityCleanDatabase() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         context.deleteDatabase(TEST_DATABASE)
 
@@ -37,6 +37,6 @@ class RoomMigrationInfrastructureTest {
 
     companion object {
         private const val TEST_DATABASE = "photobook.db"
-        private const val CURRENT_VERSION = 13
+        private const val CURRENT_VERSION = 14
     }
 }
