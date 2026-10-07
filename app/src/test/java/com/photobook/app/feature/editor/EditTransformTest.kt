@@ -52,6 +52,30 @@ class EditTransformTest {
     }
 
     @Test
+    fun cropRotation_roundTripsAcrossEveryQuarterTurn() {
+        val source = NormalizedCropRegion(0.10f, 0.20f, 0.35f, 0.55f)
+        for (turns in 0..3) {
+            val rotated = source.rotatedClockwise(turns)
+            val roundTrip = rotated.rotatedClockwise((4 - turns) % 4)
+            assertThat(roundTrip.left).isWithin(0.0001f).of(source.left)
+            assertThat(roundTrip.top).isWithin(0.0001f).of(source.top)
+            assertThat(roundTrip.right).isWithin(0.0001f).of(source.right)
+            assertThat(roundTrip.bottom).isWithin(0.0001f).of(source.bottom)
+        }
+    }
+
+    @Test
+    fun clockwiseRotation_mapsAsymmetricCornerIntoRenderedCoordinates() {
+        val source = NormalizedCropRegion(0.05f, 0.10f, 0.30f, 0.40f)
+        assertThat(source.rotatedClockwise(1)).isEqualTo(
+            NormalizedCropRegion(0.60f, 0.05f, 0.90f, 0.30f),
+        )
+        assertThat(source.rotatedClockwise(3)).isEqualTo(
+            NormalizedCropRegion(0.10f, 0.70f, 0.40f, 0.95f),
+        )
+    }
+
+    @Test
     fun identityToneMatrix_isExactIdentity() {
         assertThat(
             EditTransform.toneMatrix(
