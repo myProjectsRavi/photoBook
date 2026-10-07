@@ -779,6 +779,9 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                     )
                 }
             },
+            onLoadPrivateNote = viewModel::loadPrivateNote,
+            onSavePrivateNote = viewModel::savePrivateNote,
+            onDeletePrivateNote = viewModel::deletePrivateNote,
             reelsEnabled = uiState.reelsEnabled,
             initialSearchRequested = uiState.viewerInitialSearchRequested,
         )
