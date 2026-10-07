@@ -93,3 +93,11 @@ For offline first-use verification, build/resolve host tooling before isolation,
 - Publication revision is captured when the user action begins, not after long synchronization work.
 - Full scans remain bounded by keyset pagination and must honor coroutine cancellation between pages.
 - Retention workers may mark due state only. Media deletion remains a foreground Android-confirmed action.
+
+
+## S27 private note identity
+
+- Private notes are bound to a stable media identity of MediaStore ID + `dateAdded`, not URI/path/filename.
+- Newly written notes use encrypted storage only. If encrypted preferences cannot be created or committed, note operations fail closed.
+- Legacy ID-only aliases may be read only as encrypted compatibility data and are retired when a concrete current media record is explicitly saved.
+- Private-note plaintext must never be exported, logged, or written to plaintext preferences.
