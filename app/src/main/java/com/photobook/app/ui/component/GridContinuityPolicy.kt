@@ -3,6 +3,16 @@ package com.photobook.app.ui.component
 import kotlin.math.roundToInt
 
 internal object GridContinuityPolicy {
+    fun loadedAnchorIndex(
+        anchorId: Long,
+        loadedIds: List<Long>,
+        placeholdersBefore: Int,
+    ): Int? {
+        if (anchorId <= 0L || placeholdersBefore < 0) return null
+        val loadedIndex = loadedIds.indexOf(anchorId)
+        return loadedIndex.takeIf { it >= 0 }?.plus(placeholdersBefore)
+    }
+
     fun scrubTargetIndex(
         rawY: Float,
         trackHeightPx: Float,
