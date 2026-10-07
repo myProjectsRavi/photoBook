@@ -60,3 +60,8 @@ Pre-acceptance exact head `28e569aa12d6aa62fa6dbce671fa1ff8d708268c` passed both
 - Offline API-35 targeted verification `37632969193`: SUCCESS; artifact `11487940750`, digest `sha256:2ee9d08a6fe70428b3133f298ae9ee4dd049ed8b4c37c1b91e2ab9273e556d0b`.
 
 S32 is ACCEPTED. Blueprint 01 is complete and ready for independent review. The accepted-state branch head receives one final exact-head verification pair after these ledger updates; any failure there reopens S32.
+
+
+## Superseded release disposition — 7 October 2026
+
+The independent production review of `16c37216a8a14e079a4055df8c5fafcc7a8c3837` reproduced release-blocking defects and mandatory evidence gaps. Therefore the earlier completion packet is historical only and MUST NOT be used to justify production upload. Reopened stories and repair evidence are tracked in STATE.md, BACKLOG.md and VALIDATION.md. A new final evidence packet is required after the repair candidate passes its regression and compatibility gates.
