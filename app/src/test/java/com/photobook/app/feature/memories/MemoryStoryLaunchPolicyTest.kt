@@ -47,6 +47,31 @@ class MemoryStoryLaunchPolicyTest {
         ).isNull()
     }
 
+
+    @Test
+    fun externalCsv_requiresPositiveUniqueBoundedIds() {
+        assertThat(MemoryStoryLaunchPolicy.parseExternalIds("7,2,9"))
+            .containsExactly(7L, 2L, 9L).inOrder()
+        assertThat(MemoryStoryLaunchPolicy.parseExternalIds("7,7")).isNull()
+        assertThat(MemoryStoryLaunchPolicy.parseExternalIds("7,0")).isNull()
+        assertThat(MemoryStoryLaunchPolicy.parseExternalIds("7,nope")).isNull()
+
+        val oversized = (1..MemoryStoryLaunchPolicy.MAX_WIDGET_STORY_IDS + 1)
+            .joinToString(",")
+        assertThat(MemoryStoryLaunchPolicy.parseExternalIds(oversized)).isNull()
+    }
+
+    @Test
+    fun externalTitle_isTrimmedAndBounded() {
+        val value = "  " + "A".repeat(MemoryStoryLaunchPolicy.MAX_WIDGET_TITLE_LENGTH + 20) + "  "
+
+        val sanitized = MemoryStoryLaunchPolicy.sanitizeExternalTitle(value)
+
+        assertThat(sanitized.length).isEqualTo(MemoryStoryLaunchPolicy.MAX_WIDGET_TITLE_LENGTH)
+        assertThat(sanitized).doesNotStartWith(" ")
+        assertThat(sanitized).doesNotEndWith(" ")
+    }
+
     @Test
     fun malformedExternalIds_areRejected() {
         assertThat(
