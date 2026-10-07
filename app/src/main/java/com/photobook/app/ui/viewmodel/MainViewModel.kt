@@ -747,6 +747,18 @@ class MainViewModel @Inject constructor(
         uiState.update { it.copy(selectedPhotoIds = emptySet()) }
     }
 
+    suspend fun loadPrivateNote(photo: PhotoRecord): String = withContext(Dispatchers.IO) {
+        photoNoteStore.getNote(photo)
+    }
+
+    suspend fun savePrivateNote(photo: PhotoRecord, note: String): Boolean = withContext(Dispatchers.IO) {
+        photoNoteStore.saveNote(photo, note)
+    }
+
+    suspend fun deletePrivateNote(photo: PhotoRecord): Boolean = withContext(Dispatchers.IO) {
+        photoNoteStore.deleteNote(photo)
+    }
+
     fun onPhotosMovedToTrash(photoIds: Set<Long>) {
         if (photoIds.isEmpty()) return
         viewModelScope.launch {
