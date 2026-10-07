@@ -16,8 +16,15 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -27,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.core.content.ContextCompat
@@ -43,6 +51,7 @@ import com.photobook.app.feature.metadata.ExifMetadataService
 import com.photobook.app.feature.metadata.SafeShareItem
 import com.photobook.app.feature.metadata.SafeShareIntentFactory
 import com.photobook.app.feature.metadata.SafeShareResult
+import com.photobook.app.feature.pdf.PdfExportProgress
 import com.photobook.app.feature.pdf.PdfExportResult
 import com.photobook.app.feature.pdf.PdfExportService
 import com.photobook.app.feature.trash.TrashListResult
@@ -70,6 +79,7 @@ import com.photobook.app.ui.viewmodel.MainViewModel
 import com.photobook.app.util.PermissionUtils
 import com.photobook.app.feature.memories.MemoryStoryLaunchPolicy
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
@@ -150,6 +160,8 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     var vaultPreviewRequests by remember { mutableStateOf<Set<String>>(emptySet()) }
     var isVaultLoading by remember { mutableStateOf(false) }
     var isVaultBusy by remember { mutableStateOf(false) }
+    var pdfExportJob by remember { mutableStateOf<Job?>(null) }
+    var pdfExportProgress by remember { mutableStateOf<PdfExportProgress?>(null) }
     val vaultTextLayoutSource = remember(vaultService, vaultSession) {
         vaultPhotoTextLayoutSource(
             context = context.applicationContext,
@@ -599,9 +611,13 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             Toast.LENGTH_SHORT,
         ).show()
         val result = if (persistToDownloads) {
-            pdfExportService.exportPhotos(photos)
+            pdfExportService.exportPhotos(photos) { progress ->
+                coroutineScope.launch { pdfExportProgress = progress }
+            }
         } else {
-            pdfExportService.exportPhotosForSharing(photos)
+            pdfExportService.exportPhotosForSharing(photos) { progress ->
+                coroutineScope.launch { pdfExportProgress = progress }
+            }
         }
         when (result) {
             is PdfExportResult.Success -> {
@@ -674,6 +690,13 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         return
     }
 
+    if (pdfExportJob?.isActive == true) {
+        PdfExportProgressDialog(
+            progress = pdfExportProgress,
+            onCancel = { pdfExportJob?.cancel() },
+        )
+    }
+
     MainScreen(
         query = uiState.query,
         results = pagedResults,
@@ -721,13 +744,26 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             }
         },
         onCreatePdfSelected = { selectedIds ->
-            coroutineScope.launch {
-                val selectedPhotos = viewModel.resolvePhotosByIds(selectedIds)
-                createAndSharePdf(
-                    photos = selectedPhotos,
-                    persistToDownloads = true,
-                    clearSelectionOnSuccess = true,
-                )
+            if (pdfExportJob?.isActive != true) {
+                pdfExportJob = coroutineScope.launch {
+                    try {
+                        val selectedPhotos = viewModel.resolvePhotosByIds(selectedIds)
+                        pdfExportProgress = PdfExportProgress(
+                            totalItems = selectedPhotos.size,
+                            processedItems = 0,
+                            writtenPages = 0,
+                            skippedItems = 0,
+                        )
+                        createAndSharePdf(
+                            photos = selectedPhotos,
+                            persistToDownloads = true,
+                            clearSelectionOnSuccess = true,
+                        )
+                    } finally {
+                        pdfExportProgress = null
+                        pdfExportJob = null
+                    }
+                }
             }
         },
         onAddSelectedToVault = { selectedIds ->
@@ -978,6 +1014,35 @@ private fun vaultAuthenticators(): Int {
     } else {
         BiometricManager.Authenticators.BIOMETRIC_STRONG
     }
+}
+
+@Composable
+private fun PdfExportProgressDialog(
+    progress: PdfExportProgress?,
+    onCancel: () -> Unit,
+) {
+    val total = progress?.totalItems?.coerceAtLeast(1) ?: 1
+    val processed = progress?.processedItems?.coerceIn(0, total) ?: 0
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text(text = stringResource(R.string.create_pdf_preparing)) },
+        text = {
+            Column {
+                Text(text = stringResource(R.string.create_pdf_progress, processed, total))
+                LinearProgressIndicator(
+                    progress = { processed.toFloat() / total.toFloat() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onCancel) {
+                Text(text = stringResource(R.string.cancel))
+            }
+        },
+    )
 }
 
 private fun sharePhotos(context: Context, photos: List<SafeShareItem>) {
