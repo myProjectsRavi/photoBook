@@ -8,7 +8,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items as lazyItems
+import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -915,31 +917,51 @@ private fun DuplicateGroupCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-             Text(
+            Text(
                 text = when (group.kind) {
-                    DuplicateMatchKind.Exact -> "Exact Duplicates (${group.photos.size})"
-                    DuplicateMatchKind.Similar -> "Similar Photos (${group.photos.size})"
-                    DuplicateMatchKind.Burst -> "Best from Burst (${group.photos.size})"
-                    DuplicateMatchKind.Blurry -> "Blurry Photos (${group.photos.size})"
+                    DuplicateMatchKind.Exact -> stringResource(R.string.duplicates_exact_group, group.photos.size)
+                    DuplicateMatchKind.Similar -> stringResource(R.string.duplicates_similar_group, group.photos.size)
+                    DuplicateMatchKind.Burst -> stringResource(R.string.duplicates_burst_group, group.photos.size)
+                    DuplicateMatchKind.Blurry -> stringResource(R.string.duplicates_blurry_group, group.photos.size)
                 },
-                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Black)
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Black),
             )
-            Row(
+            Text(
+                text = when (group.kind) {
+                    DuplicateMatchKind.Exact -> stringResource(R.string.duplicates_exact_hint)
+                    DuplicateMatchKind.Similar -> stringResource(R.string.duplicates_similar_hint)
+                    DuplicateMatchKind.Burst -> stringResource(R.string.duplicates_burst_hint)
+                    DuplicateMatchKind.Blurry -> stringResource(R.string.duplicates_blurry_hint)
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (group.heroPhotoId != null) {
+                Text(
+                    text = stringResource(R.string.duplicates_hero_shot),
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = AccentIndigo,
+                )
+            }
+            LazyRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                group.photos.take(4).forEachIndexed { index, photo ->
+                lazyItemsIndexed(
+                    items = group.photos,
+                    key = { _, photo -> photo.id },
+                ) { index, photo ->
                     val isHero = photo.id == group.heroPhotoId
                     AsyncImage(
                         model = Uri.parse(photo.uriString),
-                        contentDescription = null,
+                        contentDescription = photo.fileName,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
                             .size(64.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .border(
                                 width = if (isHero) 2.dp else 0.dp,
-                                color = if (isHero) Color(0xFF4F46E5) else Color.Transparent,
+                                color = if (isHero) AccentIndigo else Color.Transparent,
                                 shape = RoundedCornerShape(12.dp),
                             )
                             .clickable { onPhotoClick(index) },
