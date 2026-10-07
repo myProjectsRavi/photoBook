@@ -85,11 +85,18 @@ private val AccentViolet = PhotoBookGalleryAccentViolet
 private val AccentTeal = PhotoBookGalleryAccentTeal
 private val AccentAmber = PhotoBookGalleryAccentAmber
 
-private enum class MainDestination {
+internal enum class MainDestination {
     Photos,
     Albums,
     Tools,
 }
+
+internal fun shouldShowMemoryDiscovery(
+    destination: MainDestination,
+    memoriesHidden: Boolean,
+    hasMemoryContent: Boolean,
+): Boolean =
+    destination == MainDestination.Albums && !memoriesHidden && hasMemoryContent
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -331,7 +338,13 @@ fun MainScreen(
                         }
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        if (!memoriesHidden && (onThisDayStory != null || memoryStories.isNotEmpty())) {
+                        if (
+                            shouldShowMemoryDiscovery(
+                                destination = destination,
+                                memoriesHidden = memoriesHidden,
+                                hasMemoryContent = onThisDayStory != null || memoryStories.isNotEmpty(),
+                            )
+                        ) {
                             WelcomeState(
                                 memories = memoryStories,
                                 onThisDayStory = onThisDayStory,
