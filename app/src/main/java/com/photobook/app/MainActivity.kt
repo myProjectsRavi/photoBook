@@ -305,9 +305,8 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         vaultPreviewRequests = emptySet()
         isVaultLoading = false
         isVaultBusy = false
-        coroutineScope.launch {
-            vaultService.clearPreviewCache(previewCleanupGeneration)
-        }
+        // Cleanup is process-owned, not composition-owned, so activity disposal cannot cancel it.
+        vaultService.schedulePreviewCacheCleanup(previewCleanupGeneration)
     }
 
     suspend fun loadVisibleVaultItems(session: VaultCryptoSession): List<VaultItem> {
@@ -426,35 +425,39 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         photos: List<PhotoRecord>,
         session: VaultCryptoSession,
     ) {
-        if (photos.isEmpty()) return
+        if (photos.isEmpty() || isVaultBusy) return
+        // Claim ownership synchronously so a duplicate tap cannot enqueue a second Vault mutation.
+        isVaultBusy = true
         coroutineScope.launch {
-            isVaultBusy = true
-            when (val result = vaultService.addPhotos(photos = photos, session = session)) {
-                is VaultSaveResult.Success -> {
-                    val protectedPhotos = photos.filter { photo -> photo.id in result.addedPhotoIds }
-                    Toast.makeText(
-                        context,
-                        context.getString(R.string.vault_move_success, protectedPhotos.size),
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                    viewModel.clearSelection()
-                    vaultItems = runCatching {
-                        loadVisibleVaultItems(session)
-                    }.getOrDefault(emptyList())
-                    if (protectedPhotos.isNotEmpty()) {
-                        requestMoveToTrash(protectedPhotos)
+            try {
+                when (val result = vaultService.addPhotos(photos = photos, session = session)) {
+                    is VaultSaveResult.Success -> {
+                        val protectedPhotos = photos.filter { photo -> photo.id in result.addedPhotoIds }
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.vault_move_success, protectedPhotos.size),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                        viewModel.clearSelection()
+                        vaultItems = runCatching {
+                            loadVisibleVaultItems(session)
+                        }.getOrDefault(emptyList())
+                        if (protectedPhotos.isNotEmpty()) {
+                            requestMoveToTrash(protectedPhotos)
+                        }
+                    }
+
+                    is VaultSaveResult.Error -> {
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.vault_add_error),
+                            Toast.LENGTH_SHORT,
+                        ).show()
                     }
                 }
-
-                is VaultSaveResult.Error -> {
-                    Toast.makeText(
-                        context,
-                        context.getString(R.string.vault_add_error),
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                }
+            } finally {
+                isVaultBusy = false
             }
-            isVaultBusy = false
         }
     }
 
