@@ -150,6 +150,7 @@ class IndexBuilder @Inject constructor(
             ocrText = "",
             isOcrProcessed = false,
             ocrStatus = IntelligenceStatus.PENDING,
+            sourceRevision = raw.generationModified ?: raw.dateModified,
         )
         return MeasuredPhotoRecord(
             record = record,
