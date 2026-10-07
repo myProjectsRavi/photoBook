@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -25,6 +26,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import java.text.DateFormat
 import java.util.Date
@@ -45,6 +47,9 @@ fun TrashScreen(
     photos: List<TrashedPhoto>,
     isLoading: Boolean,
     listState: TrashListUiState,
+    hasMore: Boolean,
+    isLoadingMore: Boolean,
+    onLoadMore: () -> Unit,
     onDismiss: () -> Unit,
     onRestore: (TrashedPhoto) -> Unit,
     onDeleteForever: (TrashedPhoto) -> Unit,
@@ -119,67 +124,92 @@ fun TrashScreen(
                         }
                     }
                     else -> {
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(3),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 8.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            items(photos, key = { it.id }) { photo ->
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .aspectRatio(1f)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(Color.Black.copy(alpha = 0.08f)),
-                                ) {
-                                    AsyncImage(
-                                        model = photo.uri,
-                                        contentDescription = photo.displayName,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize(),
-                                    )
-                                    photo.expiresAtMillis?.let { expiresAtMillis ->
-                                        Text(
-                                            text = "Expires " + DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(expiresAtMillis)),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = Color.White,
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(3),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                items(photos, key = { it.id }) { photo ->
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .aspectRatio(1f)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(Color.Black.copy(alpha = 0.08f)),
+                                    ) {
+                                        AsyncImage(
+                                            model = photo.uri,
+                                            contentDescription = photo.displayName,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize(),
+                                        )
+                                        photo.expiresAtMillis?.let { expiresAtMillis ->
+                                            Text(
+                                                text = "Expires " + DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(expiresAtMillis)),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color.White,
+                                                modifier = Modifier
+                                                    .align(Alignment.TopCenter)
+                                                    .fillMaxWidth()
+                                                    .background(Color.Black.copy(alpha = 0.45f))
+                                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                                            )
+                                        }
+                                        Row(
                                             modifier = Modifier
-                                                .align(Alignment.TopCenter)
+                                                .align(Alignment.BottomCenter)
                                                 .fillMaxWidth()
                                                 .background(Color.Black.copy(alpha = 0.45f))
                                                 .padding(horizontal = 4.dp, vertical = 2.dp),
-                                        )
-                                    }
-                                    Row(
-                                        modifier = Modifier
-                                            .align(Alignment.BottomCenter)
-                                            .fillMaxWidth()
-                                            .background(Color.Black.copy(alpha = 0.45f))
-                                            .padding(horizontal = 4.dp, vertical = 2.dp),
-                                        horizontalArrangement = Arrangement.SpaceEvenly,
-                                    ) {
-                                        FilledTonalIconButton(
-                                            onClick = { onRestore(photo) },
-                                            modifier = Modifier.size(32.dp),
+                                            horizontalArrangement = Arrangement.SpaceEvenly,
                                         ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Restore,
-                                                contentDescription = "Restore",
-                                                modifier = Modifier.size(18.dp),
-                                            )
+                                            FilledTonalIconButton(
+                                                onClick = { onRestore(photo) },
+                                                modifier = Modifier.size(32.dp),
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Restore,
+                                                    contentDescription = "Restore",
+                                                    modifier = Modifier.size(18.dp),
+                                                )
+                                            }
+                                            FilledTonalIconButton(
+                                                onClick = { onDeleteForever(photo) },
+                                                modifier = Modifier.size(32.dp),
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.DeleteForever,
+                                                    contentDescription = "Delete forever",
+                                                    modifier = Modifier.size(18.dp),
+                                                )
+                                            }
                                         }
-                                        FilledTonalIconButton(
-                                            onClick = { onDeleteForever(photo) },
-                                            modifier = Modifier.size(32.dp),
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.DeleteForever,
-                                                contentDescription = "Delete forever",
+                                    }
+                                }
+                            }
+                            if (hasMore) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(8.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                ) {
+                                    TextButton(
+                                        onClick = onLoadMore,
+                                        enabled = !isLoadingMore,
+                                    ) {
+                                        if (isLoadingMore) {
+                                            CircularProgressIndicator(
                                                 modifier = Modifier.size(18.dp),
+                                                strokeWidth = 2.dp,
                                             )
+                                        } else {
+                                            Text("Load more")
                                         }
                                     }
                                 }
