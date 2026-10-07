@@ -297,3 +297,18 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - No physical/OEM/camera/battery/thermal evidence is claimed. `main` remained untouched.
 
 **Decision: S25 ACCEPTED.**
+
+
+## S26 final acceptance
+
+- Tested source commit: `0bb57c236a345f3f6f55df1c99171c1efc151a9b`.
+- Archive candidate classification remains conservative: favorites, fresh media, non-images, sensitive-document cues, weak payment evidence, weak/legacy food evidence, and live-subject food photos are rejected.
+- Full scans remain bounded by independent keyset pages and now explicitly check coroutine cancellation between pages.
+- Archive UI publication is revision-scoped. Every refresh/toggle/keep/confirmed-trash/due-delete request is ordered by a monotonic publication revision captured at request time; stale partial/final summaries and dismissed-sheet work cannot overwrite a newer request.
+- Background retention only marks decisions due. Actual deletion remains a foreground MediaStore system-confirmation flow, and local state is marked deleted only after RESULT_OK.
+- The targeted suite exposed two unrelated navigation-fixture races during S26. Both were fixed without weakening assertions: large-font relaunch uses explicit shell launch, and the common @Before fixture now asserts deterministic launch readiness.
+- Offline API-35 run `37604161299`: **SUCCESS**, 29/29 instrumentation tests, exact checkout evidence manifest valid. Artifact `11474401280`, digest `sha256:19ab132351493b6b160ffdfdc8831deb06c2aebe1ea1415ac018e690cd8230ff`.
+- Android Verification `37604161533`: **SUCCESS**. Artifact `11474766342`, digest `sha256:0034a7ea3800e94b822c5cccaef95631e921a5c2a30fd12a4707fbe4d7924dda`.
+- No physical/OEM/camera/battery/thermal evidence is claimed. `main` remained untouched.
+
+**Decision: S26 ACCEPTED.**
