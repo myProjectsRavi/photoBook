@@ -756,10 +756,14 @@ class MainViewModel @Inject constructor(
 
     fun onArchivePhotosMovedToTrash(photoIds: Set<Long>, retentionDays: Int) {
         if (photoIds.isEmpty()) return
+        val publicationRevision = archivePublicationGate.begin()
         viewModelScope.launch {
             archiveService.markTrashed(photoIds, retentionDays)
             removePhotosAfterTrash(photoIds)
-            loadArchiveSummary(refreshCandidates = false)
+            loadArchiveSummary(
+                refreshCandidates = false,
+                publicationRevision = publicationRevision,
+            )
         }
     }
 
@@ -840,6 +844,7 @@ class MainViewModel @Inject constructor(
     }
 
     fun openArchives() {
+        val publicationRevision = archivePublicationGate.begin()
         uiState.update {
             it.copy(
                 showArchives = true,
@@ -850,11 +855,13 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             loadArchiveSummary(
                 refreshCandidates = true,
+                publicationRevision = publicationRevision,
             )
         }
     }
 
     fun refreshArchives() {
+        val publicationRevision = archivePublicationGate.begin()
         viewModelScope.launch {
             uiState.update { it.copy(isArchivesLoading = true) }
             runCatching {
@@ -864,6 +871,7 @@ class MainViewModel @Inject constructor(
                 loadArchiveSummary(
                     refreshCandidates = true,
                     fullLibraryScan = true,
+                    publicationRevision = publicationRevision,
                 )
             }.onFailure {
                 // A revoked/partial MediaStore permission must leave the dialog usable.
@@ -987,16 +995,24 @@ class MainViewModel @Inject constructor(
     fun keepSelectedArchiveCandidates() {
         val selectedIds = uiState.value.archiveSelectedPhotoIds
         if (selectedIds.isEmpty()) return
+        val publicationRevision = archivePublicationGate.begin()
         viewModelScope.launch {
             archiveService.markKept(selectedIds)
-            loadArchiveSummary(refreshCandidates = false)
+            loadArchiveSummary(
+                refreshCandidates = false,
+                publicationRevision = publicationRevision,
+            )
         }
     }
 
     fun keepArchiveCandidate(photoId: Long) {
+        val publicationRevision = archivePublicationGate.begin()
         viewModelScope.launch {
             archiveService.markKept(setOf(photoId))
-            loadArchiveSummary(refreshCandidates = false)
+            loadArchiveSummary(
+                refreshCandidates = false,
+                publicationRevision = publicationRevision,
+            )
         }
     }
 
@@ -1018,9 +1034,13 @@ class MainViewModel @Inject constructor(
 
     fun onArchiveDueItemsDeleted(photoIds: Set<Long>) {
         if (photoIds.isEmpty()) return
+        val publicationRevision = archivePublicationGate.begin()
         viewModelScope.launch {
             archiveService.markDueDeleted(photoIds)
-            loadArchiveSummary(refreshCandidates = false)
+            loadArchiveSummary(
+                refreshCandidates = false,
+                publicationRevision = publicationRevision,
+            )
         }
     }
 
@@ -1252,8 +1272,8 @@ class MainViewModel @Inject constructor(
     private suspend fun loadArchiveSummary(
         refreshCandidates: Boolean,
         fullLibraryScan: Boolean = false,
+        publicationRevision: Long = archivePublicationGate.begin(),
     ) {
-        val publicationRevision = archivePublicationGate.begin()
         val accessiblePhotoIds = currentArchiveAccessiblePhotoIds()
         val summary = if (refreshCandidates) {
             if (fullLibraryScan) {
