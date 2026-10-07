@@ -5,6 +5,38 @@ import org.junit.Test
 
 class DeclutterSessionTest {
 
+
+    @Test
+    fun draftTrashAndUndo_onlyChangeSessionState() {
+        val original = DeclutterSession(candidates = candidates(1L, 2L))
+
+        val marked = original.markCurrentForTrash()
+        assertThat(marked.candidates).isEqualTo(original.candidates)
+        assertThat(marked.currentIndex).isEqualTo(1)
+        assertThat(marked.markedTrashIds).containsExactly(1L)
+        assertThat(marked.keptIds).isEmpty()
+
+        val undone = marked.undoLast()
+        assertThat(undone.candidates).isEqualTo(original.candidates)
+        assertThat(undone.currentIndex).isEqualTo(0)
+        assertThat(undone.markedTrashIds).isEmpty()
+        assertThat(undone.keptIds).isEmpty()
+    }
+
+    @Test
+    fun draftKeepAndTrash_areMutuallyExclusivePerCandidate() {
+        val original = DeclutterSession(candidates = candidates(1L, 2L))
+
+        val kept = original.keepCurrent()
+        assertThat(kept.keptIds).containsExactly(1L)
+        assertThat(kept.markedTrashIds).isEmpty()
+
+        val reviewedSecond = kept.markCurrentForTrash()
+        assertThat(reviewedSecond.keptIds).containsExactly(1L)
+        assertThat(reviewedSecond.markedTrashIds).containsExactly(2L)
+        assertThat(reviewedSecond.isComplete).isTrue()
+    }
+
     @Test
     fun confirmedTrash_beforeCurrentItem_keepsSameCurrentCandidate() {
         val session = DeclutterSession(
