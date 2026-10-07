@@ -331,6 +331,18 @@ fun MainScreen(
                         }
                         Spacer(modifier = Modifier.height(12.dp))
 
+                        if (!memoriesHidden && (onThisDayStory != null || memoryStories.isNotEmpty())) {
+                            WelcomeState(
+                                memories = memoryStories,
+                                onThisDayStory = onThisDayStory,
+                                onOnThisDayClick = onOpenOnThisDayStory,
+                                onMemoryClick = onMemoryStorySelected,
+                                compact = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                        }
+
                         if (albumCatalog.isEmpty()) {
                             Text(
                                 text = "No albums in current access",
@@ -430,8 +442,8 @@ fun MainScreen(
                 when (searchFeedback) {
                     SearchFeedbackState.NOT_READY -> {
                         WelcomeState(
-                            memories = if (memoriesHidden) emptyList() else memoryStories,
-                            onThisDayStory = if (memoriesHidden) null else onThisDayStory,
+                            memories = emptyList(),
+                            onThisDayStory = null,
                             onOnThisDayClick = onOpenOnThisDayStory,
                             onMemoryClick = onMemoryStorySelected,
                             compact = searchReady,
@@ -452,8 +464,8 @@ fun MainScreen(
                     SearchFeedbackState.EMPTY -> {
                         if (query.isBlank()) {
                             WelcomeState(
-                                memories = if (memoriesHidden) emptyList() else memoryStories,
-                                onThisDayStory = if (memoriesHidden) null else onThisDayStory,
+                                memories = emptyList(),
+                                onThisDayStory = null,
                                 onOnThisDayClick = onOpenOnThisDayStory,
                                 onMemoryClick = onMemoryStorySelected,
                                 compact = true,
