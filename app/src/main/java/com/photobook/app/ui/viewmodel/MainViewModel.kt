@@ -3,6 +3,7 @@ package com.photobook.app.ui.viewmodel
 import android.content.Context
 import android.content.SharedPreferences
 import android.database.ContentObserver
+import android.database.sqlite.SQLiteException
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
@@ -18,6 +19,7 @@ import com.photobook.app.data.index.PhotoIndex
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.data.model.RawPhotoData
 import com.photobook.app.data.source.MediaStoreScanner
+import com.photobook.app.data.source.MediaStoreScanException
 import com.photobook.app.feature.archive.ArchiveCandidate
 import com.photobook.app.feature.archive.ArchiveDueDeleteItem
 import com.photobook.app.feature.archive.ArchivePublicationGate
@@ -66,8 +68,10 @@ import com.photobook.app.worker.ArchiveScanWorker
 import com.photobook.app.worker.TrashPurgeWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.IOException
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -117,6 +121,7 @@ class MainViewModel @Inject constructor(
         val basicBrowseReady: Boolean = false,
         val enrichmentScheduled: Boolean = false,
         val searchReady: Boolean = false,
+        val indexErrorMessage: String? = null,
         val query: String = "",
         val albumCatalog: List<AlbumDescriptor> = emptyList(),
         val pinnedAlbumKeys: List<String> = emptyList(),
@@ -445,15 +450,23 @@ class MainViewModel @Inject constructor(
                     // Archive sheet is closed, so permission reselection must clamp Archive state
                     // on every reconciliation, not only while the sheet is open.
                     loadArchiveSummary(refreshCandidates = false)
-                } finally {
+                    clearIndexFailure()
                     if (accessModeChanged) {
                         uiState.update {
                             it.copy(
-                                isIndexing = false,
                                 indexProgress = 1f,
                                 searchReady = true,
                             )
                         }
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    if (!isRecoverableIndexFailure(failure)) throw failure
+                    publishIndexFailure()
+                } finally {
+                    if (accessModeChanged) {
+                        uiState.update { it.copy(isIndexing = false) }
                     }
                 }
             }
@@ -1227,13 +1240,15 @@ class MainViewModel @Inject constructor(
 
     private fun initializeIndex(accessGeneration: Long) {
         viewModelScope.launch {
-            uiState.update {
+            try {
+                uiState.update {
                 it.copy(
                     isIndexing = true,
                     indexProgress = 0f,
                     basicBrowseReady = false,
                     enrichmentScheduled = false,
                     searchReady = false,
+                    indexErrorMessage = null,
                 )
             }
 
@@ -1307,7 +1322,40 @@ class MainViewModel @Inject constructor(
             }
             loadArchiveSummary(refreshCandidates = true)
             registerMediaObserver()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                if (!isRecoverableIndexFailure(failure)) throw failure
+                publishIndexFailure()
+            }
         }
+    }
+
+    fun retryIndexing() {
+        val state = uiState.value
+        if (!state.hasPhotoPermission || state.isIndexing) return
+        initializeIndex(accessGenerationGate.current())
+    }
+
+    private fun publishIndexFailure() {
+        uiState.update {
+            it.copy(
+                isIndexing = false,
+                searchReady = false,
+                indexErrorMessage = "Photos are temporarily unavailable. Retry when storage access is ready.",
+            )
+        }
+    }
+
+    private fun clearIndexFailure() {
+        uiState.update { it.copy(indexErrorMessage = null) }
+    }
+
+    private fun isRecoverableIndexFailure(failure: Throwable): Boolean {
+        return failure is SecurityException ||
+            failure is SQLiteException ||
+            failure is IOException ||
+            failure is MediaStoreScanException
     }
 
     private suspend fun loadArchiveSummary(
@@ -1431,7 +1479,15 @@ class MainViewModel @Inject constructor(
                 mediaRebuildJob?.cancel()
                 mediaRebuildJob = viewModelScope.launch {
                     delay(Constants.MEDIA_OBSERVER_DEBOUNCE_MS)
-                    syncMediaStoreIncremental(forceFullSync = false)
+                    try {
+                        syncMediaStoreIncremental(forceFullSync = false)
+                        clearIndexFailure()
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        if (!isRecoverableIndexFailure(failure)) throw failure
+                        publishIndexFailure()
+                    }
                 }
             }
         }
