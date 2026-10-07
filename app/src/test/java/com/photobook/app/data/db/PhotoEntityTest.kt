@@ -4,6 +4,7 @@ import com.google.common.truth.Truth.assertThat
 import com.photobook.app.data.model.IntelligenceStatus
 import com.photobook.app.data.model.MLTag
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.data.model.withRetainedStateFrom
 import org.junit.Test
 
 class PhotoEntityTest {
@@ -33,6 +34,34 @@ class PhotoEntityTest {
         assertThat(entity.isArchiveFoodCandidate).isFalse()
     }
 
+    @Test
+    fun sourceRevision_roundTripsWithRecord() {
+        val restored = sampleRecord(sourceRevision = 42L).toPhotoEntity().toPhotoRecord()
+        assertThat(restored.sourceRevision).isEqualTo(42L)
+    }
+
+    @Test
+    fun changedRevision_retainsFavoriteButDropsDerivedIntelligence() {
+        val current = sampleRecord(
+            isMlProcessed = true,
+            mlStatus = IntelligenceStatus.PROCESSED,
+            sourceRevision = 41L,
+        ).copy(
+            isFavorite = true,
+            perceptualHash = 123L,
+            ocrText = "old bytes",
+            isOcrProcessed = true,
+            ocrStatus = IntelligenceStatus.PROCESSED,
+        )
+        val rebuilt = sampleRecord(sourceRevision = 42L).withRetainedStateFrom(current)
+
+        assertThat(rebuilt.isFavorite).isTrue()
+        assertThat(rebuilt.perceptualHash).isNull()
+        assertThat(rebuilt.ocrText).isEmpty()
+        assertThat(rebuilt.isOcrProcessed).isFalse()
+        assertThat(rebuilt.isMlProcessed).isFalse()
+    }
+
     private fun sampleRecord(
         mlTags: List<MLTag> = emptyList(),
         isArchiveFoodCandidate: Boolean = false,
@@ -42,6 +71,7 @@ class PhotoEntityTest {
         } else {
             IntelligenceStatus.PENDING
         },
+        sourceRevision: Long = 1L,
     ): PhotoRecord {
         return PhotoRecord(
             id = 41L,
@@ -72,6 +102,7 @@ class PhotoEntityTest {
             isArchiveFoodCandidate = isArchiveFoodCandidate,
             isMlProcessed = isMlProcessed,
             mlStatus = mlStatus,
+            sourceRevision = sourceRevision,
         )
     }
 }
