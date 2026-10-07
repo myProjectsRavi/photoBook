@@ -35,16 +35,17 @@ class MediaStoreScanner @Inject constructor(
 
     fun scanAllIds(): Set<Long> {
         val ids = linkedSetOf<Long>()
-        context.contentResolver.query(
+        val cursor = context.contentResolver.query(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             arrayOf(MediaStore.Images.Media._ID),
             null,
             null,
             null,
-        )?.use { cursor ->
-            val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-            while (cursor.moveToNext()) {
-                ids += cursor.getLong(idIndex)
+        ) ?: throw MediaStoreScanException("MediaStore ID query returned null")
+        cursor.use {
+            val idIndex = it.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+            while (it.moveToNext()) {
+                ids += it.getLong(idIndex)
             }
         }
         return ids
@@ -72,13 +73,14 @@ class MediaStoreScanner @Inject constructor(
         val projection = mediaStoreImageProjectionForSdk(Build.VERSION.SDK_INT)
 
         val photos = mutableListOf<RawPhotoData>()
-        context.contentResolver.query(
+        val cursor = context.contentResolver.query(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             projection,
             selection,
             selectionArgs,
             "${MediaStore.Images.Media.DATE_ADDED} DESC",
-        )?.use { cursor ->
+        ) ?: throw MediaStoreScanException("MediaStore image query returned null")
+        cursor.use { cursor ->
             val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
             val displayNameIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
             val dateAddedIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED)
@@ -155,6 +157,8 @@ class MediaStoreScanner @Inject constructor(
     }
 
 }
+
+class MediaStoreScanException(message: String) : IllegalStateException(message)
 
 @Suppress("DEPRECATION")
 internal fun mediaStoreImageProjectionForSdk(sdkInt: Int): Array<String> {
