@@ -1,6 +1,6 @@
 # Blueprint 01 Final Evidence Packet
 
-Status: S32 final verification in progress
+Status: COMPLETE — S01 through S32 ACCEPTED
 
 ## Frozen candidate
 
@@ -55,4 +55,8 @@ Hosted API-35 x86_64 emulator results are correctness/privacy evidence. They are
 
 ## Final S32 gate
 
-This packet and the Blueprint-completion verifier are committed before S32 acceptance. The resulting exact commit must pass Android Verification and the offline API-35 targeted workflow. Any failure reopens S32 and must be diagnosed. Only after those exact-source gates are green may S32 be marked ACCEPTED and the branch handed off for independent review.
+Pre-acceptance exact head `28e569aa12d6aa62fa6dbce671fa1ff8d708268c` passed both required gates:
+- Android Verification `37632969166`: SUCCESS; artifact `11487464064`, digest `sha256:190fe6a372759c817265ecdd0056a23a96a5b9950e44560f96239203fa498af1`.
+- Offline API-35 targeted verification `37632969193`: SUCCESS; artifact `11487940750`, digest `sha256:2ee9d08a6fe70428b3133f298ae9ee4dd049ed8b4c37c1b91e2ab9273e556d0b`.
+
+S32 is ACCEPTED. Blueprint 01 is complete and ready for independent review. The accepted-state branch head receives one final exact-head verification pair after these ledger updates; any failure there reopens S32.
