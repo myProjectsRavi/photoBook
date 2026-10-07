@@ -24,6 +24,7 @@ import com.photobook.app.feature.archive.ArchiveService
 import com.photobook.app.feature.declutter.DeclutterCandidate
 import com.photobook.app.feature.declutter.DeclutterReason
 import com.photobook.app.feature.declutter.DeclutterSession
+import com.photobook.app.feature.duplicates.CleanupGroupPolicy
 import com.photobook.app.feature.duplicates.DuplicatePhotoFinder
 import com.photobook.app.feature.duplicates.DuplicatePhotoGroup
 import com.photobook.app.feature.duplicates.DuplicateMatchKind
@@ -1342,11 +1343,10 @@ class MainViewModel @Inject constructor(
                 viewerStartIndex = null,
                 viewerPhotos = emptyList(),
                 viewerUsesVisibleWindow = false,
-                duplicateGroups = state.duplicateGroups
-                    .map { group ->
-                        group.copy(photos = group.photos.filterNot { photo -> photo.id in photoIds })
-                    }
-                    .filter { group -> group.photos.size > 1 },
+                duplicateGroups = CleanupGroupPolicy.afterConfirmedTrash(
+                    groups = state.duplicateGroups,
+                    removedPhotoIds = photoIds,
+                ),
                 declutterSession = nextDeclutterSession,
                 declutterCurrentPhoto = nextDeclutterSession?.let { session ->
                     resolveDeclutterCurrentPhoto(session, photoIndex.snapshot())
