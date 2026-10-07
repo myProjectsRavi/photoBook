@@ -37,12 +37,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import com.photobook.app.feature.trash.TrashListUiState
 import com.photobook.app.feature.trash.TrashedPhoto
 
 @Composable
 fun TrashScreen(
     photos: List<TrashedPhoto>,
     isLoading: Boolean,
+    listState: TrashListUiState,
     onDismiss: () -> Unit,
     onRestore: (TrashedPhoto) -> Unit,
     onDeleteForever: (TrashedPhoto) -> Unit,
@@ -84,6 +86,26 @@ fun TrashScreen(
                     isLoading -> {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             CircularProgressIndicator()
+                        }
+                    }
+                    listState == TrashListUiState.UNSUPPORTED -> {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "Recently Deleted is not supported on this Android version.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(32.dp),
+                            )
+                        }
+                    }
+                    listState == TrashListUiState.ERROR -> {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "Unable to load Recently Deleted. Close and reopen to retry.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(32.dp),
+                            )
                         }
                     }
                     photos.isEmpty() -> {
