@@ -5,11 +5,11 @@ authorized_branch: autopilot/epics-features-user-stories
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
 current_epic: E07 Privacy and cleanup  
-current_feature: Declutter review  
-current_story: S28 Declutter review  
+current_feature: Offline QR transfer  
+current_story: S29 Offline QR transfer  
 status: IN_PROGRESS  
 source_commit_tested: d3d9257e4b8caf5d24ca0164956b5e30c530ee01 (S23 ACCEPTED; exact-head Android and API-35 green)
-latest_checkpoint_commit: c19384f2a523df6c31b161e8b68c1dbcab076803
+latest_checkpoint_commit: 124cfc35dcb527c39b91faac86ff9d6be410d285
 
 ## Source blueprint
 
@@ -858,3 +858,11 @@ Inspect attempt 2 of targeted run `37589482404`. If the same large-font launch/r
 - Active story: S28 Declutter review.
 - Acceptance anchor: bounded draft Keep/Trash/Undo review; no media mutation during review; only explicit Apply may request Android trash confirmation; cancellation must preserve media and draft truthfully; confirmed success must reconcile state.
 - Exact next action: inspect declutter model/candidate generation, screen controls, MainActivity Apply callback, Android confirmation result, duplicate/cleanup state reconciliation, candidate cap/paging, and focused tests. Do not start S29 until S28 is accepted.
+
+
+## S29 start
+
+- S28 Declutter review is ACCEPTED.
+- Active story: S29 Offline QR transfer.
+- Acceptance anchor: harden replay/conflict/byte/lifecycle behavior before exposing Receive/Send preview entry points.
+- Exact next action: inspect QR encoder/protocol/frame parser/assembler, payload and frame byte limits, duplicate/replay/conflicting-frame behavior, transfer IDs/checksums, timeout/reset lifecycle, Send preview and Receive scanner entry points, permissions, and tests. Keep transfer completely offline.
