@@ -667,7 +667,9 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         OnboardingScreen(
             isIndexing = uiState.isIndexing,
             progress = uiState.indexProgress,
-            onGrantPermission = {}
+            onGrantPermission = {},
+            errorMessage = uiState.indexErrorMessage,
+            onRetry = viewModel::retryIndexing,
         )
         return
     }
