@@ -271,10 +271,10 @@ dependencies {
 
 tasks.register("verifyApkSize") {
     group = "verification"
-    description = "Fails when any generated per-ABI release APK exceeds 30 MiB."
+    description = "Fails when any generated per-ABI release APK exceeds 30,000,000 bytes."
 
     doLast {
-        val maxBytes = 30L * 1024L * 1024L
+        val maxBytes = 30_000_000L
         val apkRoot = layout.buildDirectory.dir("outputs/apk/release").get().asFile
         check(apkRoot.exists()) {
             "Release APK size gate could not find ${apkRoot.path}; run assembleRelease first."
@@ -292,7 +292,7 @@ tasks.register("verifyApkSize") {
             val sizeMiB = sizeBytes.toDouble() / (1024.0 * 1024.0)
             println("releaseApk=${apk.name} bytes=$sizeBytes mib=${"%.2f".format(sizeMiB)}")
             check(sizeBytes <= maxBytes) {
-                "Per-device APK size gate failed for ${apk.path}: ${"%.2f".format(sizeMiB)} MiB > 30 MiB"
+                "Per-device APK size gate failed for ${apk.path}: $sizeBytes bytes > 30,000,000 bytes"
             }
         }
     }
