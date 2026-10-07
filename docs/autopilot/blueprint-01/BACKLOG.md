@@ -35,8 +35,8 @@ Execution rule: select the first incomplete story whose dependencies pass. Do no
 | S27 | E08 Useful local features | Private notes | S15,S21 | ACCEPTED | Restore viewer More note entry; encrypted local notes, stable identity, no plaintext fallback/log/export leakage. |
 | S28 | E08 Useful local features | Declutter review | S25 | ACCEPTED | Restore bounded draft Keep/Trash/Undo review; no media changes until explicit Apply + Android confirmation. |
 | S29 | E08 Useful local features | Offline QR transfer | S20 | ACCEPTED | Harden replay/conflict/byte/lifecycle behavior before exposing Receive/Send preview entry points. |
-| S30 | E08 Useful local features | Local memories | S06,S17 | IN_PROGRESS | Move discovery to Albums, respect access/hide preference, validate widget IDs and calm story controls. |
-| S31 | E09 Compatibility and completion | Compatibility | S01-S30 | NOT_STARTED | Package/privacy/ABI/API matrix, 30,000,000-byte APK + 20 MiB AAB, no INTERNET, dependency/native provenance. |
+| S30 | E08 Useful local features | Local memories | S06,S17 | ACCEPTED | Move discovery to Albums, respect access/hide preference, validate widget IDs and calm story controls. |
+| S31 | E09 Compatibility and completion | Compatibility | S01-S30 | IN_PROGRESS | Package/privacy/ABI/API matrix, 30,000,000-byte APK + 20 MiB AAB, no INTERNET, dependency/native provenance. |
 | S32 | E09 Compatibility and completion | Final verification | S31 | NOT_STARTED | Freeze candidate, whole-branch evidence packet, accumulated diff review, reopen failures, independent-review handoff. |
 
 ## Fixed scheduling order
