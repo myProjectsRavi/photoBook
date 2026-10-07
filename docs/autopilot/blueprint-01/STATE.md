@@ -5,11 +5,11 @@ authorized_branch: autopilot/epics-features-user-stories
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
 current_epic: E07 Privacy and cleanup  
-current_feature: Offline QR transfer  
-current_story: S29 Offline QR transfer  
+current_feature: Declutter review  
+current_story: S28 Declutter review  
 status: IN_PROGRESS  
 source_commit_tested: d3d9257e4b8caf5d24ca0164956b5e30c530ee01 (S23 ACCEPTED; exact-head Android and API-35 green)
-latest_checkpoint_commit: 124cfc35dcb527c39b91faac86ff9d6be410d285
+latest_checkpoint_commit: c19384f2a523df6c31b161e8b68c1dbcab076803
 
 ## Source blueprint
 
