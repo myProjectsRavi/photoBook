@@ -324,3 +324,10 @@ Reviewed changed/direct-call/test scope: `feature/metadata/ExifMetadataService.k
 ## S23 targeted review closure
 
 Reviewed changed/direct-call/test scope: `feature/trash/TrashService.kt`, `MainActivity.kt`, `ui/screen/TrashScreen.kt`, and `feature/trash/TrashListUiStateTest.kt`. Final S23 review confirms bounded MediaStore paging with stable ordering and one-item lookahead, truthful provider expiry, distinct ready/unsupported/error presentation, archive-managed filtering across initial/additional pages, retry-safe append behavior, and unchanged Android system confirmation for restore/permanent deletion. Exact-source Android Verification and offline API-35 evidence are recorded in VALIDATION.md. No physical-device claim is made.
+
+
+## S24 targeted review closure
+
+Reviewed changed/direct-call/test scope: `feature/duplicates/DuplicateHash.kt`, `DuplicateCandidatePolicy.kt`, `DuplicatePhotoFinder.kt`, `data/db/PhotoDao.kt`, `ui/viewmodel/MainViewModel.kt`, duplicate presentation in `MainScreen.kt`, `DuplicateHashTest.kt`, and `DuplicateCandidatePolicyTest.kt`.
+
+Final review confirms exact groups require full SHA-256 equality after size/partial-hash prefilters; near-duplicate candidate generation is complete for the configured Hamming threshold by disjoint-band construction; the final Hamming check remains authoritative; stale/equal-count-but-different-ID database snapshots fail open to full analysis; and valid result groups are not globally truncated. Duplicate UI remains review-only and does not preselect or delete media. Exact-source Android Verification and offline API-35 evidence are recorded in VALIDATION.md. No physical-device claim is made.
