@@ -72,18 +72,26 @@ class MainNavigationInstrumentedTest {
         val originalFontScale = device.executeShellCommand("settings get system font_scale").trim()
         try {
             device.executeShellCommand("settings put system font_scale 2.0")
+            assertTrue(
+                device.executeShellCommand("settings get system font_scale")
+                    .trim()
+                    .toFloatOrNull() == 2.0f,
+            )
             // Do not force-stop the target package: instrumentation is hosted in the same
             // package process and force-stop would terminate the test runner itself.
-            // HOME backgrounds the activity; launching the package again recreates the
-            // activity with the updated font-scale configuration.
+            // HOME backgrounds the activity. Relaunch through the shell so Android 15 cannot
+            // intermittently reject a background activity start from the target app context.
+            // NEW_TASK | CLEAR_TASK still recreates the activity for the new font configuration.
             device.pressHome()
             val launchIntent = targetContext.packageManager
                 .getLaunchIntentForPackage(targetContext.packageName)
-                ?.apply {
-                    addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
             assertNotNull(launchIntent)
-            targetContext.startActivity(launchIntent)
+            val component = launchIntent?.component
+            assertNotNull(component)
+            val launchOutput = device.executeShellCommand(
+                "am start -W -f 0x10008000 -n ${component!!.flattenToShortString()}",
+            )
+            assertFalse(launchOutput.contains("Error", ignoreCase = true))
 
             assertTrue(device.wait(Until.hasObject(By.text("Photos")), 10_000))
             assertTrue(device.wait(Until.hasObject(By.text("Albums")), 10_000))
