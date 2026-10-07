@@ -37,8 +37,34 @@ def _string_value(text: str, name: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _named_block(text: str, name: str, start: int = 0) -> str | None:
+    match = re.search(rf"\\b{re.escape(name)}\\s*\\{{", text[start:])
+    if not match:
+        return None
+    open_brace = start + match.end() - 1
+    depth = 0
+    for index in range(open_brace, len(text)):
+        char = text[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_brace + 1:index]
+    return None
+
+
 def _declared_abis(text: str) -> set[str]:
-    match = re.search(r'\binclude\(([^)]*)\)', text)
+    android_block = _named_block(text, "android")
+    if android_block is None:
+        return set()
+    splits_block = _named_block(android_block, "splits")
+    if splits_block is None:
+        return set()
+    abi_block = _named_block(splits_block, "abi")
+    if abi_block is None:
+        return set()
+    match = re.search(r"\\binclude\\(([^)]*)\\)", abi_block)
     if not match:
         return set()
     return set(re.findall(r'"([^"]+)"', match.group(1)))
