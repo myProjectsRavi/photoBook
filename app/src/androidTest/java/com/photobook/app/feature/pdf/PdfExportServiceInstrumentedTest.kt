@@ -2,6 +2,7 @@ package com.photobook.app.feature.pdf
 
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
 import androidx.core.content.FileProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -9,6 +10,7 @@ import com.photobook.app.data.model.PhotoRecord
 import java.io.File
 import java.io.FileOutputStream
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -62,6 +64,45 @@ class PdfExportServiceInstrumentedTest {
         } finally {
             deletePublished(result)
             fixture.close()
+        }
+    }
+
+    @Test
+    fun concurrentDownloadsExports_haveIndependentPublishedOutputsAndNoStaleJournal() = runBlocking {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return@runBlocking
+
+        val firstFixture = createFixture("pdf_concurrent_a")
+        val secondFixture = createFixture("pdf_concurrent_b")
+        val firstService = PdfExportService(firstFixture.context)
+        val secondService = PdfExportService(secondFixture.context)
+        var firstResult: PdfExportResult? = null
+        var secondResult: PdfExportResult? = null
+        try {
+            val first = async { firstService.exportPhotos(listOf(firstFixture.photo)) }
+            val second = async { secondService.exportPhotos(listOf(secondFixture.photo)) }
+            firstResult = first.await()
+            secondResult = second.await()
+
+            assertTrue(firstResult is PdfExportResult.Success)
+            assertTrue(secondResult is PdfExportResult.Success)
+            val firstSuccess = firstResult as PdfExportResult.Success
+            val secondSuccess = secondResult as PdfExportResult.Success
+            assertTrue(firstSuccess.uri != secondSuccess.uri)
+            assertTrue(firstSuccess.fileName != secondSuccess.fileName)
+            assertPdfHeader(firstSuccess.uri)
+            assertPdfHeader(secondSuccess.uri)
+
+            val journal = firstFixture.context.getSharedPreferences(
+                "pdf_publication_journal_v1",
+                android.content.Context.MODE_PRIVATE,
+            )
+            assertFalse(journal.contains("pending_pdf_uri"))
+            assertTrue(partialFiles(firstFixture.context.cacheDir).isEmpty())
+        } finally {
+            deletePublished(firstResult)
+            deletePublished(secondResult)
+            firstFixture.close()
+            secondFixture.close()
         }
     }
 
