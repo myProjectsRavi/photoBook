@@ -72,7 +72,7 @@ class TaggingWorker @AssistedInject constructor(
             val requestedIdList = requestedIds.toList()
             val focused = indexPersistence.getByIdsOrdered(requestedIdList)
             if (focused.isEmpty()) return Result.success()
-            if (!processPhotoBatch(focused, processedBefore = 0)) return Result.retry()
+            if (!processPhotoBatch(focused, processedBefore = 0, pauseWhenForeground = false)) return Result.retry()
             val hasRemainingFocusedWork = indexPersistence.getByIdsOrdered(requestedIdList)
                 .any { photo -> photo.needsIntelligenceWork() }
             return resultForRemainingWork(hasRemainingFocusedWork)
@@ -95,10 +95,10 @@ class TaggingWorker @AssistedInject constructor(
             val visibleIds = mediaStoreScanner.scanAllIds().sorted()
             var processed = 0
             visibleIds.chunked(DURABLE_FETCH_BATCH_SIZE).forEach { batchIds ->
-                if (isStopped) return Result.retry()
+                if (isStopped || isAppInForeground()) return Result.retry()
                 val photos = indexPersistence.getByIdsOrdered(batchIds)
                     .filter { photo -> photo.needsIntelligenceWork() }
-                if (!processPhotoBatch(photos, processedBefore = processed)) {
+                if (!processPhotoBatch(photos, processedBefore = processed, pauseWhenForeground = true)) {
                     return Result.retry()
                 }
                 processed += photos.size
@@ -115,7 +115,7 @@ class TaggingWorker @AssistedInject constructor(
         var afterId = -1L
         var processed = 0
         while (true) {
-            if (isStopped) return Result.retry()
+            if (isStopped || isAppInForeground()) return Result.retry()
 
             val photos = indexPersistence.getPendingIntelligenceBatch(
                 afterId = afterId,
@@ -123,7 +123,7 @@ class TaggingWorker @AssistedInject constructor(
             )
             if (photos.isEmpty()) break
 
-            if (!processPhotoBatch(photos, processedBefore = processed)) {
+            if (!processPhotoBatch(photos, processedBefore = processed, pauseWhenForeground = true)) {
                 return Result.retry()
             }
             processed += photos.size
@@ -140,11 +140,12 @@ class TaggingWorker @AssistedInject constructor(
     private suspend fun processPhotoBatch(
         photos: List<PhotoRecord>,
         processedBefore: Int,
+        pauseWhenForeground: Boolean,
     ): Boolean {
         val pendingIndexUpdates = mutableListOf<PhotoIndex.PhotoIntelligenceUpdate>()
 
         photos.forEachIndexed { index, photo ->
-            if (isStopped) return false
+            if (isStopped || (pauseWhenForeground && isAppInForeground())) return false
 
             val needsMl = photo.mlStatus.shouldProcess
             val needsOcr = photo.ocrStatus.shouldProcess
@@ -238,7 +239,7 @@ class TaggingWorker @AssistedInject constructor(
 
             if (pendingIndexUpdates.size >= Constants.BATCH_SIZE) {
                 flushPendingUpdates(pendingIndexUpdates)
-                if (isBatteryTooLow()) return false
+                if (isBatteryTooLow() || (pauseWhenForeground && isAppInForeground())) return false
                 delay(Constants.BATCH_DELAY_MS)
             }
 
