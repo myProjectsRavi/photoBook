@@ -58,3 +58,11 @@ Exactly one story is the active unit of work. Resume an IN_PROGRESS or BLOCKED s
 The reusable S02 hosted-emulator route deliberately excludes performance-only instrumentation from its correctness/privacy suite. The API-35 runner is x86_64 while PhotoBook production APKs are ARM; translated execution is useful for correctness, offline inference, package-permission, Room and access-safety checks but is not native ARM timing evidence.
 
 For offline first-use verification, build/resolve host tooling before isolation, install the already-built app/test APKs, then disable emulator Wi-Fi/data, enable airplane mode, block the hosted runner user's outbound traffic while preserving loopback, and invoke AndroidJUnitRunner directly. This prevents Gradle/UTP dependency resolution from being confused with app network behavior. Dedicated performance workflows remain unchanged until their own stories.
+
+
+## S24 duplicate completeness
+
+- Near-duplicate indexing may optimize candidate generation only when it preserves the mathematical completeness of the final Hamming-distance predicate. For threshold 8, PhotoBook uses 9 disjoint bands so every pair with distance <= 8 shares at least one band.
+- Exact-duplicate performance filters are never identity proof. File size and partial MD5 may reduce work, but full SHA-256 equality is required before an Exact group is published.
+- Room-based exact-candidate pruning is permitted only when database photo IDs exactly match the in-memory analysis snapshot. Equal counts alone are insufficient. Any uncertainty or DAO failure fails open to analyzing all supplied records rather than risking a false negative.
+- Duplicate result presentation remains non-destructive. Cleanup/deletion selection policy belongs to S25 and later destructive confirmation boundaries.
