@@ -798,3 +798,17 @@ On the next run, select S24 as the first incomplete dependency-satisfied story. 
 - Dependency S24 is ACCEPTED and the fixed sequence predecessor is complete.
 - Acceptance anchor: cleanup categories and reasons must be reviewable; destructive candidates must not be preselected; groups must remain complete/paged rather than silently truncated; and any destructive confirmation result must reconcile back into local UI/state.
 - Exact next action: inspect Cleanup/Declutter production code, duplicate/blur/archive category inputs, selection defaults, paging/group limits, destructive action callers, confirmation launchers/results, and existing tests before editing. Preserve Android system confirmation and original-media safety. Do not start S26 while S25 is incomplete.
+
+
+## S25 checkpoint — exact-source CI diagnosis
+
+- Active story remains S25 Cleanup experience; S01-S24 remain accepted. Branch scope remains `autopilot/epics-features-user-stories`; main was not modified.
+- Exact tested candidate source: `4df7fa0f5507b6a1d70e4d787a7afdf1a43b4b58` (cleanup explicit-selection policy tests).
+- Android Verification run `37589482414` was cancelled during Phase-0 verification, so it is not acceptance evidence.
+- Targeted API-35 offline run `37589482404` completed attempt 1 with 28/29 instrumentation tests passing. The single failure was the pre-existing S05 regression `MainNavigationInstrumentedTest.mainShell_largeFont_keepsPrimaryNavigationReachable` at line 88 while waiting for the Photos navigation node after the 2.0 font-scale relaunch. The S25 cleanup tests were not the reported failure.
+- The failure was diagnosed from the job log before retry. Because it is an unrelated launch/readiness failure and not a cleanup assertion, only the failed targeted job was re-run; attempt 2 is currently in progress. No gate or test was weakened.
+- No physical/OEM/camera/battery/thermal evidence is claimed.
+
+### Exact next action
+
+Inspect attempt 2 of targeted run `37589482404`. If the same large-font launch/readiness failure repeats, treat it as reproducible and fix the test/application launch synchronization without weakening the accessibility assertion. Obtain exact-source Android Verification and targeted API-35 green evidence before marking S25 ACCEPTED or starting S26.
