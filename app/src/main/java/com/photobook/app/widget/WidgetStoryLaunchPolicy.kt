@@ -7,12 +7,16 @@ internal object WidgetStoryLaunchPolicy {
 
     fun parseStoryIds(csv: String): List<Long> {
         if (csv.isBlank() || csv.length > MAX_CSV_LENGTH) return emptyList()
-        val result = ArrayList<Long>(minOf(MAX_STORY_IDS, 16))
-        val seen = HashSet<Long>()
-        csv.split(',').forEach { token ->
-            if (result.size >= MAX_STORY_IDS) return@forEach
-            val id = token.trim().toLongOrNull() ?: return@forEach
-            if (id <= 0L || !seen.add(id)) return@forEach
+        val tokens = csv.split(',')
+        if (tokens.isEmpty() || tokens.size > MAX_STORY_IDS) return emptyList()
+
+        val result = ArrayList<Long>(tokens.size)
+        val seen = HashSet<Long>(tokens.size)
+        tokens.forEach { token ->
+            val normalized = token.trim()
+            if (normalized.isEmpty()) return emptyList()
+            val id = normalized.toLongOrNull() ?: return emptyList()
+            if (id <= 0L || !seen.add(id)) return emptyList()
             result += id
         }
         return result
