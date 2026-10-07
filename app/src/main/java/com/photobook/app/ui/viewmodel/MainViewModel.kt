@@ -1648,29 +1648,77 @@ class MainViewModel @Inject constructor(
         existing: List<PhotoRecord>,
         accessGeneration: Long,
     ) {
-        val rebuilt = indexBuilder.buildIndex { processed, total ->
-            if (total <= 0) return@buildIndex
-            uiState.update {
-                it.copy(indexProgress = processed.toFloat() / total.toFloat())
-            }
-        }.preservingIntelligence(existing)
+        // Keep only compact identity state across the scan. Raw MediaStore rows and enriched
+        // PhotoRecords are processed one bounded batch at a time, so a 100k-photo first launch does
+        // not retain simultaneous full raw + enriched collections.
+        val staleIds = existing.asSequence().map { record -> record.id }.toMutableSet()
+        var scannedCount = 0
+        var firstPagePublished = existing.isNotEmpty()
 
+        mediaStoreScanner.scanAllBatches { rawBatch ->
+            currentCoroutineContext().ensureActive()
+            if (!accessGenerationGate.isCurrent(accessGeneration)) {
+                throw CancellationException("Photo access changed during MediaStore scan")
+            }
+
+            val basicBatch = indexBuilder.buildBasicRecords(rawBatch)
+                .preservingIntelligence(existing)
+
+            indexCommitCoordinator.withCommit {
+                if (!accessGenerationGate.isCurrent(accessGeneration)) {
+                    throw CancellationException("Photo access changed before basic index commit")
+                }
+                indexPersistence.upsertAll(basicBatch)
+                if (!firstPagePublished && basicBatch.isNotEmpty()) {
+                    // Publish browse-safe metadata before EXIF/geocoding/intelligence enrichment.
+                    photoIndex.setRecords(basicBatch)
+                    accessGenerationGate.markPublished(accessGeneration)
+                    firstPagePublished = true
+                    uiState.update { state ->
+                        state.copy(
+                            basicBrowseReady = StartupReadinessPolicy.canBrowse(
+                                hasPhotoPermission = state.hasPhotoPermission,
+                                publishedVisiblePhotoCount = basicBatch.size,
+                                baseSyncComplete = false,
+                            ),
+                        )
+                    }
+                }
+            }
+
+            staleIds.removeAll(rawBatch.asSequence().map { raw -> raw.id }.toSet())
+            scannedCount += rawBatch.size
+            uiState.update { state ->
+                // Progress remains intentionally open-ended until the successful terminal sweep.
+                state.copy(indexProgress = (scannedCount / (scannedCount + 1_000f)).coerceAtMost(0.9f))
+            }
+
+            val enrichedBatch = indexBuilder.buildIndexFromRaw(rawBatch)
+                .preservingIntelligence(existing)
+            indexCommitCoordinator.withCommit {
+                if (!accessGenerationGate.isCurrent(accessGeneration)) {
+                    throw CancellationException("Photo access changed before enrichment commit")
+                }
+                indexPersistence.upsertAll(enrichedBatch)
+                if (photoIndex.size() > 0 && existing.isEmpty() && scannedCount == rawBatch.size) {
+                    // Refresh the already-visible first page with EXIF metadata without waiting for
+                    // the remainder of the library.
+                    photoIndex.setRecords(enrichedBatch)
+                    accessGenerationGate.markPublished(accessGeneration)
+                }
+            }
+        }
+
+        // A missing-row sweep is destructive to retained metadata, so it happens only after the
+        // cursor reached a successful terminal state. Null/error/cancellation never reaches here.
         indexCommitCoordinator.withCommit {
             if (!accessGenerationGate.isCurrent(accessGeneration)) {
-                return@withCommit
+                throw CancellationException("Photo access changed before final index commit")
             }
-            val limitedAccess = uiState.value.photoAccessMode == PermissionUtils.PhotoAccessMode.Limited
-            val committed = if (limitedAccess) {
-                // A limited grant is a visibility boundary, not deletion. Keep previously granted
-                // rows durable so favorites/intelligence survive a later regrant, but publish only
-                // the IDs MediaStore currently exposes to this app.
-                indexPersistence.upsertAll(rebuilt)
-                indexPersistence.getByIdsOrdered(rebuilt.map { record -> record.id })
-            } else {
-                // Under full access, a missing MediaStore row is a genuine structural removal.
-                indexPersistence.save(rebuilt)
-                indexPersistence.load()
+            if (staleIds.isNotEmpty()) {
+                indexPersistence.removeByIds(staleIds)
             }
+            val committed = indexPersistence.load()
             photoIndex.setRecords(committed)
             accessGenerationGate.markPublished(accessGeneration)
         }
