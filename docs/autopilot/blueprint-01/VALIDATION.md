@@ -312,3 +312,17 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - No physical/OEM/camera/battery/thermal evidence is claimed. `main` remained untouched.
 
 **Decision: S26 ACCEPTED.**
+
+
+## S27 final acceptance
+
+- Tested source commit: `c19384f2a523df6c31b161e8b68c1dbcab076803`.
+- Viewer More exposes the private-note entry and binds async load/save/delete to the active `PhotoRecord` identity.
+- Production notes use `EncryptedSharedPreferences` only. Storage failure is fail-closed; there is no plaintext fallback path.
+- Stable identity is MediaStore ID + `dateAdded`: URI, path, filename, and folder changes do not orphan the note, while a reused MediaStore ID with a different `dateAdded` cannot inherit it.
+- Encrypted-at-rest instrumentation verifies neither note plaintext nor stable key plaintext appears in the preferences XML; the new identity regression verifies retrieval after URI/path/filename/folder changes.
+- Offline API-35 run `37608695583`: **SUCCESS**, exact checkout evidence valid. Artifact `11477275330`, digest `sha256:250ec383aef50f793d7fa0007045f9dc550f4f46ec23e84d2ccd10d752366f5f`.
+- Android Verification run `37608695584`: **SUCCESS**. Artifact `11476811942`, digest `sha256:32353911f4cd0c3aba3c3f4d9cf96c57bc9467918d22b997a91546e9f6ff0b6a`.
+- No physical-device evidence is claimed. `main` remained untouched.
+
+**Decision: S27 ACCEPTED.**
