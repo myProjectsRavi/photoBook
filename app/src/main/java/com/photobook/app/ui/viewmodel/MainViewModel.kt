@@ -92,6 +92,7 @@ import kotlinx.coroutines.withContext
 import androidx.paging.cachedIn
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
 @HiltViewModel
@@ -1686,7 +1687,7 @@ class MainViewModel @Inject constructor(
                 }
             }
 
-            staleIds.removeAll(rawBatch.asSequence().map { raw -> raw.id }.toSet())
+            rawBatch.forEach { raw -> staleIds.remove(raw.id) }
             scannedCount += rawBatch.size
             uiState.update { state ->
                 // Progress remains intentionally open-ended until the successful terminal sweep.
