@@ -25,6 +25,18 @@ sealed interface TrashListResult {
     data class Error(val throwable: Throwable? = null) : TrashListResult
 }
 
+enum class TrashListUiState {
+    READY,
+    UNSUPPORTED,
+    ERROR,
+}
+
+fun TrashListResult.toTrashListUiState(): TrashListUiState = when (this) {
+    is TrashListResult.Success -> TrashListUiState.READY
+    TrashListResult.UnsupportedAndroid -> TrashListUiState.UNSUPPORTED
+    is TrashListResult.Error -> TrashListUiState.ERROR
+}
+
 data class TrashedPhoto(
     val id: Long,
     val uri: Uri,
