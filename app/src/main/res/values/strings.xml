@@ -3,6 +3,7 @@
     <string name="search_placeholder">Search... try &quot;today&quot; or &quot;selfie&quot;</string>
     <string name="allow_photo_access">Allow Photo Access</string>
     <string name="retry">Retry</string>
+    <string name="cancel">Cancel</string>
     <string name="permission_message">Allow photo access so PhotoBook can show only your on-device results. Nothing is uploaded.</string>
     <string name="limited_access_title">Limited library mode</string>
     <string name="limited_access_subtitle">PhotoBook can search only the photos you selected.</string>
@@ -19,6 +20,7 @@
     <string name="share_selected">Share selected</string>
     <string name="trash_selected">Move to Trash</string>
     <string name="create_pdf_selected">Create PDF</string>
+    <string name="create_pdf_progress">Creating PDF %1$d of %2$d</string>
     <string name="create_pdf_preparing">Preparing PDF...</string>
     <string name="create_pdf_success">PDF created (%1$d pages)</string>
     <string name="create_pdf_partial_success">PDF created with %1$d pages; %2$d unreadable images skipped</string>
