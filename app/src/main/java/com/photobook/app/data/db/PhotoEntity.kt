@@ -55,6 +55,7 @@ data class PhotoEntity(
     val ocrStatus: String,
     val isArchiveScreenshotCandidate: Boolean,
     val isArchiveFoodCandidate: Boolean,
+    val sourceRevision: Long,
 )
 
 fun PhotoEntity.toPhotoRecord(): PhotoRecord {
@@ -93,6 +94,7 @@ fun PhotoEntity.toPhotoRecord(): PhotoRecord {
         ocrText = ocrText,
         isOcrProcessed = isOcrProcessed,
         ocrStatus = IntelligenceStatus.fromStored(ocrStatus, isOcrProcessed),
+        sourceRevision = sourceRevision,
     )
 }
 
@@ -141,6 +143,7 @@ fun PhotoRecord.toPhotoEntity(): PhotoEntity {
             append(fileName)
         }.containsScreenshotCue(),
         isArchiveFoodCandidate = isMlProcessed && isArchiveFoodCandidate,
+        sourceRevision = sourceRevision,
     )
 }
 
