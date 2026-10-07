@@ -45,6 +45,40 @@ class IndexBuilder @Inject constructor(
         return records
     }
 
+    fun buildBasicRecords(rawPhotos: List<RawPhotoData>): List<PhotoRecord> {
+        if (rawPhotos.isEmpty()) return emptyList()
+        return rawPhotos.map { raw ->
+            val dateParts = DateUtils.toDateParts(raw.dateAdded)
+            PhotoRecord(
+                id = raw.id,
+                uriString = raw.uriString,
+                filePath = raw.filePath,
+                fileName = raw.fileName,
+                dateAdded = raw.dateAdded,
+                year = dateParts.year,
+                month = dateParts.month,
+                dayOfMonth = dateParts.dayOfMonth,
+                dayOfWeek = dateParts.dayOfWeekIso,
+                hourOfDay = dateParts.hourOfDay,
+                latitude = null,
+                longitude = null,
+                city = null,
+                state = null,
+                country = null,
+                fileSize = raw.fileSize,
+                width = raw.width,
+                height = raw.height,
+                mimeType = raw.mimeType,
+                folderName = raw.folderName.lowercase(),
+                folderPath = raw.folderPath.lowercase(),
+                cameraModel = null,
+                isFrontCamera = false,
+                isHdr = false,
+                sourceRevision = raw.generationModified ?: raw.dateModified,
+            )
+        }
+    }
+
     suspend fun buildIndexFromRaw(
         rawPhotos: List<RawPhotoData>,
         onProgress: (processed: Int, total: Int) -> Unit = { _, _ -> },
