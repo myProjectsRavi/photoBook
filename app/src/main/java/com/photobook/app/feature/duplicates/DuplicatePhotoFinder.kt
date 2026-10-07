@@ -60,8 +60,12 @@ class DuplicatePhotoFinder @Inject constructor(
         if (records.size < DB_PREFILTER_MIN_RECORDS) return records
 
         return runCatching {
-            val dbPhotoCount = photoDao.getPhotoCount()
-            if (dbPhotoCount != records.size) {
+            val databaseIds = photoDao.getAllIds()
+            if (!DuplicateCandidatePolicy.matchesSnapshot(
+                    recordIds = records.map { photo -> photo.id },
+                    databaseIds = databaseIds,
+                )
+            ) {
                 return@runCatching records
             }
 
