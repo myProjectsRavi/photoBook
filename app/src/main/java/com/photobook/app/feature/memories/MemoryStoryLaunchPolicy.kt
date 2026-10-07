@@ -2,6 +2,10 @@ package com.photobook.app.feature.memories
 
 internal object MemoryStoryLaunchPolicy {
     const val MAX_WIDGET_STORY_IDS = 256
+    const val MAX_WIDGET_TITLE_LENGTH = 80
+
+    fun sanitizeExternalTitle(value: String): String =
+        value.trim().take(MAX_WIDGET_TITLE_LENGTH)
 
     fun parseExternalIds(rawValue: String): List<Long>? {
         if (rawValue.isBlank()) return null
