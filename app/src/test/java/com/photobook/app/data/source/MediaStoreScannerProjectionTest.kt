@@ -10,6 +10,7 @@ class MediaStoreScannerProjectionTest {
     fun api26Projection_omitsColumnsUnavailableBeforeScopedStorage() {
         val projection = mediaStoreImageProjectionForSdk(26).toSet()
 
+        assertThat(projection).contains(MediaStore.Images.Media.DATE_MODIFIED)
         assertThat(projection).doesNotContain(MediaStore.Images.Media.RELATIVE_PATH)
         assertThat(projection).doesNotContain(MediaStore.MediaColumns.GENERATION_MODIFIED)
         @Suppress("DEPRECATION")
@@ -20,6 +21,7 @@ class MediaStoreScannerProjectionTest {
     fun api29Projection_includesRelativePathButNotGeneration() {
         val projection = mediaStoreImageProjectionForSdk(29).toSet()
 
+        assertThat(projection).contains(MediaStore.Images.Media.DATE_MODIFIED)
         assertThat(projection).contains(MediaStore.Images.Media.RELATIVE_PATH)
         assertThat(projection).doesNotContain(MediaStore.MediaColumns.GENERATION_MODIFIED)
     }
@@ -28,6 +30,7 @@ class MediaStoreScannerProjectionTest {
     fun api30Projection_includesRelativePathAndGeneration() {
         val projection = mediaStoreImageProjectionForSdk(30).toSet()
 
+        assertThat(projection).contains(MediaStore.Images.Media.DATE_MODIFIED)
         assertThat(projection).contains(MediaStore.Images.Media.RELATIVE_PATH)
         assertThat(projection).contains(MediaStore.MediaColumns.GENERATION_MODIFIED)
     }
