@@ -1218,8 +1218,12 @@ fun PhotoViewerScreen(
                 onRotate = {
                     if (!isApplyingEditorAction) {
                         editorSaveState = EditorSaveUiState.Idle
+                        val previousTurns = ((editorState.rotationQuarterTurns % 4) + 4) % 4
+                        val nextTurns = (previousTurns + 1) % 4
+                        val sourceCrop = editorState.customCrop?.rotatedClockwise((4 - previousTurns) % 4)
                         editorState = editorState.copy(
-                            rotationQuarterTurns = (editorState.rotationQuarterTurns + 1) % 4,
+                            rotationQuarterTurns = nextTurns,
+                            customCrop = sourceCrop?.rotatedClockwise(nextTurns),
                         )
                     }
                 },
@@ -1237,13 +1241,15 @@ fun PhotoViewerScreen(
         if (showCropSelector && activePhoto != null) {
             CropSelectionDialog(
                 photo = activePhoto,
-                initialRegion = editorState.customCrop,
+                initialRegion = editorState.customCrop?.rotatedClockwise(
+                    (4 - ((editorState.rotationQuarterTurns % 4) + 4) % 4) % 4,
+                ),
                 onDismiss = { showCropSelector = false },
                 onCropSelected = { region ->
                     editorSaveState = EditorSaveUiState.Idle
                     editorState = editorState.copy(
                         cropPreset = CropPreset.Original,
-                        customCrop = region.normalized(),
+                        customCrop = region.normalized().rotatedClockwise(editorState.rotationQuarterTurns),
                     )
                     showCropSelector = false
                 },
