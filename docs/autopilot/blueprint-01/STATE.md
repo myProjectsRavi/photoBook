@@ -4,12 +4,12 @@ cycle: blueprint-01
 authorized_branch: autopilot/epics-features-user-stories  
 blueprint_printed_branch: autopilot/photobook-blueprint-01  
 baseline_sha: d693acd7c52f285b6ba475fdd3712a10e419d4e1  
-current_epic: E07 Privacy and cleanup  
-current_feature: Local memories  
-current_story: S30 Local memories  
+current_epic: E09 Compatibility and completion  
+current_feature: Compatibility  
+current_story: S31 Compatibility  
 status: IN_PROGRESS  
 source_commit_tested: d3d9257e4b8caf5d24ca0164956b5e30c530ee01 (S23 ACCEPTED; exact-head Android and API-35 green)
-latest_checkpoint_commit: 726cd8cb42489d07f3f4ff32a7c2514e1ad41211
+latest_checkpoint_commit: 41bf144e8f1b8a11082efc25aeffa9ad227867b3
 
 ## Source blueprint
 
@@ -873,3 +873,11 @@ Inspect attempt 2 of targeted run `37589482404`. If the same large-font launch/r
 - Active story: S30 Local memories.
 - Acceptance anchor: memories discovery belongs in Albums, respects current access and the hide preference, widget/story launches validate current photo IDs, and story controls remain calm/non-surprising.
 - Exact next action: inspect memory curation, Albums presentation, hide preference, widget provider/receiver/deep-link launch, story viewer controls, access-scoped photo resolution, and tests. Do not start S31 until S30 is accepted.
+
+
+## S31 start
+
+- Active story: S31 Compatibility.
+- Dependencies S01-S30 are ACCEPTED.
+- Acceptance anchor: package/privacy/ABI/API compatibility matrix; every generated APK <= 30,000,000 bytes; release AAB <= 20 MiB; no INTERNET permission; dependency/native provenance recorded and reviewed.
+- Exact next action: inspect Gradle Android/API/ABI configuration, manifest merge/no-INTERNET gates, release size gates, dependency lock/provenance inputs, native libraries/ABIs, and existing compatibility workflows. Add fail-closed compatibility evidence where the current gates do not already prove the acceptance matrix. Do not start S32 until S31 is accepted.
