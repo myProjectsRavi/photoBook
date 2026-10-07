@@ -343,3 +343,8 @@ Final review confirms category reasons are visible, cleanup group members are no
 ## S26 targeted review closure
 
 Reviewed `ArchiveService`, `ArchiveClassifier`, Archive DAO/decision state, Archive scan/retention workers, `ArchivesScreen`, all direct `MainViewModel` publication/action paths, `MainActivity` confirmation callbacks, keyset pagination tests, classifier tests, publication-gate tests, and the targeted navigation harness. Final review confirms bounded/cancellable scans, conservative candidate publication, latest-request-wins UI state, limited-access filtering, explicit user selection, and foreground Android confirmation before destructive deletion.
+
+
+## S27 targeted review closure
+
+Reviewed `PhotoNoteStore`, viewer More/private-note sheet, MainViewModel note APIs, MainActivity wiring, search integration, encrypted storage behavior, and focused instrumentation. Final review confirms encrypted local-only storage, stable identity across URI/path changes, ID-reuse isolation, no plaintext fallback, and no note export/log surface.
