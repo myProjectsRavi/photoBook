@@ -1,11 +1,5 @@
 package com.photobook.app.ui.screen
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -20,6 +14,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
@@ -27,13 +23,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -43,7 +37,6 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.photobook.app.R
 import com.photobook.app.data.model.PhotoRecord
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -59,26 +52,6 @@ fun MemoryStoryViewerScreen(
     val coroutineScope = rememberCoroutineScope()
     val pagerState = rememberPagerState(initialPage = 0, pageCount = { photos.size })
 
-    LaunchedEffect(pagerState.currentPage, photos.size) {
-        if (photos.size <= 1) return@LaunchedEffect
-        val current = pagerState.currentPage
-        delay(STORY_ADVANCE_MS)
-        if (pagerState.currentPage != current) return@LaunchedEffect
-        if (current >= photos.lastIndex) {
-            onDismiss()
-        } else {
-            // IMPORTANT: launch the scroll on `coroutineScope` (not on the LaunchedEffect's
-            // own scope). `animateScrollToPage` updates `pagerState.currentPage` as soon as the
-            // animation crosses the 50 % threshold, which re-keys this LaunchedEffect and
-            // cancels its coroutine — leaving the pager visually "stuck" between two pages
-            // (the half / half story bug). `rememberCoroutineScope` survives that re-key so
-            // the snap animation always finishes cleanly.
-            coroutineScope.launch {
-                pagerState.animateScrollToPage(current + 1)
-            }
-        }
-    }
-
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -89,16 +62,6 @@ fun MemoryStoryViewerScreen(
             modifier = Modifier.fillMaxSize(),
         ) { page ->
             val photo = photos[page]
-            val infiniteTransition = rememberInfiniteTransition(label = "story_ken_burns")
-            val scale by infiniteTransition.animateFloat(
-                initialValue = 1.0f,
-                targetValue = 1.08f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(durationMillis = 7000, easing = LinearEasing),
-                    repeatMode = RepeatMode.Reverse,
-                ),
-                label = "story_ken_burns_scale",
-            )
             val density = LocalDensity.current
             val tapThresholdPx = with(density) { 120.dp.toPx() }
             Box(
@@ -134,12 +97,7 @@ fun MemoryStoryViewerScreen(
                     model = photo.uriString,
                     contentDescription = photo.fileName,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer {
-                            scaleX = scale
-                            scaleY = scale
-                        },
+                    modifier = Modifier.fillMaxSize(),
                 )
             }
         }
@@ -218,7 +176,52 @@ fun MemoryStoryViewerScreen(
                 }
             }
         }
+
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 18.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(
+                onClick = {
+                    val current = pagerState.currentPage
+                    if (current > 0) {
+                        coroutineScope.launch { pagerState.animateScrollToPage(current - 1) }
+                    }
+                },
+                enabled = pagerState.currentPage > 0,
+                modifier = Modifier.size(48.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ArrowBack,
+                    contentDescription = stringResource(R.string.story_previous),
+                    tint = Color.White,
+                )
+            }
+            Text(
+                text = stringResource(R.string.story_user_paced_hint),
+                color = Color.White.copy(alpha = 0.82f),
+                style = MaterialTheme.typography.labelSmall,
+            )
+            IconButton(
+                onClick = {
+                    val current = pagerState.currentPage
+                    if (current < photos.lastIndex) {
+                        coroutineScope.launch { pagerState.animateScrollToPage(current + 1) }
+                    }
+                },
+                enabled = pagerState.currentPage < photos.lastIndex,
+                modifier = Modifier.size(48.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ArrowForward,
+                    contentDescription = stringResource(R.string.story_next),
+                    tint = Color.White,
+                )
+            }
+        }
     }
 }
-
-private const val STORY_ADVANCE_MS = 4200L
