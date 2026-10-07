@@ -85,3 +85,11 @@ For offline first-use verification, build/resolve host tooling before isolation,
 - Partial and final full-scan summaries must carry the same revision and are discarded after any newer refresh, category/configuration mutation, confirmed action, or sheet dismissal.
 - Full Archive scans use bounded keyset pages and honor coroutine cancellation between pages.
 - Retention workers may mark records due but must never delete media; destructive deletion remains a foreground Android confirmation.
+
+
+## S26 Archive publication safety
+
+- Archive scans may do safe local Room work after becoming stale, but stale revisions must never publish UI state.
+- Publication revision is captured when the user action begins, not after long synchronization work.
+- Full scans remain bounded by keyset pagination and must honor coroutine cancellation between pages.
+- Retention workers may mark due state only. Media deletion remains a foreground Android-confirmed action.
