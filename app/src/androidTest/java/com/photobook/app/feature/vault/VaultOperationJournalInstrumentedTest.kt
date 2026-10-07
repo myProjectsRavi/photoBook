@@ -90,6 +90,25 @@ class VaultOperationJournalInstrumentedTest {
     }
 
     @Test
+    fun startupCleanup_removesPlaintextPreviewLeftByAbruptTermination() = runBlocking {
+        val database = AppModule.providePhotoBookDatabase(context)
+        val previewDir = File(context.cacheDir, "vault_preview").apply { mkdirs() }
+        val stalePreview = File(previewDir, "abrupt-session.jpg").apply {
+            writeBytes(byteArrayOf(1, 2, 3, 4))
+        }
+        val service = VaultService(context, database.vaultDao(), database.vaultOperationDao())
+        try {
+            assertTrue(stalePreview.isFile)
+            assertTrue(service.clearStalePreviewCacheAtStartup())
+            assertTrue(!stalePreview.exists())
+            assertTrue(!previewDir.exists() || previewDir.listFiles().orEmpty().isEmpty())
+        } finally {
+            database.close()
+            previewDir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun liveCommittedAdd_isNeverReapedByConcurrentRecovery() = runBlocking {
         val database = AppModule.providePhotoBookDatabase(context)
         val source = File(context.cacheDir, "vault-race-" + System.nanoTime() + ".jpg")
