@@ -84,6 +84,7 @@ class MediaStoreScanner @Inject constructor(
             val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
             val displayNameIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
             val dateAddedIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED)
+            val dateModifiedIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_MODIFIED)
             val sizeIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
             val widthIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.WIDTH)
             val heightIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.HEIGHT)
@@ -135,6 +136,12 @@ class MediaStoreScanner @Inject constructor(
                 } else {
                     dateSeconds
                 }
+                val modifiedSeconds = cursor.getLong(dateModifiedIndex)
+                val modifiedMillis = if (modifiedSeconds < 10_000_000_000L) {
+                    modifiedSeconds * 1000L
+                } else {
+                    modifiedSeconds
+                }
 
                 photos += RawPhotoData(
                     id = id,
@@ -148,6 +155,7 @@ class MediaStoreScanner @Inject constructor(
                     mimeType = cursor.getString(mimeIndex).orEmpty().lowercase(),
                     folderName = folderName,
                     folderPath = folderPath,
+                    dateModified = modifiedMillis,
                     generationModified = if (generationIndex >= 0) cursor.getLong(generationIndex) else null,
                 )
                 scanned += 1
@@ -166,6 +174,7 @@ internal fun mediaStoreImageProjectionForSdk(sdkInt: Int): Array<String> {
         add(MediaStore.Images.Media._ID)
         add(MediaStore.Images.Media.DISPLAY_NAME)
         add(MediaStore.Images.Media.DATE_ADDED)
+        add(MediaStore.Images.Media.DATE_MODIFIED)
         add(MediaStore.Images.Media.SIZE)
         add(MediaStore.Images.Media.WIDTH)
         add(MediaStore.Images.Media.HEIGHT)
