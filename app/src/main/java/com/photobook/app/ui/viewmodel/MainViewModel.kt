@@ -18,6 +18,7 @@ import com.photobook.app.data.index.IndexPersistence
 import com.photobook.app.data.index.PhotoIndex
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.data.model.RawPhotoData
+import com.photobook.app.data.model.withRetainedStateFrom
 import com.photobook.app.data.source.MediaStoreScanner
 import com.photobook.app.data.source.MediaStoreScanException
 import com.photobook.app.feature.archive.ArchiveCandidate
@@ -1771,19 +1772,7 @@ class MainViewModel @Inject constructor(
         if (isEmpty() || current.isEmpty()) return this
         val byId = current.associateBy { it.id }
         return map { rebuilt ->
-            val existing = byId[rebuilt.id] ?: return@map rebuilt
-            rebuilt.copy(
-                isFavorite = existing.isFavorite,
-                perceptualHash = existing.perceptualHash,
-                blurScore = existing.blurScore,
-                mlTags = existing.mlTags,
-                isArchiveFoodCandidate = existing.isArchiveFoodCandidate,
-                isMlProcessed = existing.isMlProcessed,
-                mlStatus = existing.mlStatus,
-                ocrText = existing.ocrText,
-                isOcrProcessed = existing.isOcrProcessed,
-                ocrStatus = existing.ocrStatus,
-            )
+            rebuilt.withRetainedStateFrom(byId[rebuilt.id])
         }
     }
 
