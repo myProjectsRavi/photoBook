@@ -326,3 +326,19 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - No physical-device evidence is claimed. `main` remained untouched.
 
 **Decision: S27 ACCEPTED.**
+
+
+## S28 final acceptance
+
+- Tested source commit: `124cfc35dcb527c39b91faac86ff9d6be410d285`.
+- Declutter review is restored in the live Tools surface and remains bounded to the existing 300-candidate draft.
+- Keep/Trash/Undo mutate only `DeclutterSession`; no media API is called during review.
+- Explicit Apply resolves the marked IDs and routes through the existing Android system trash confirmation.
+- Cancellation leaves the draft and media unchanged. Confirmed success reconciles candidates, marked/kept sets, and current position.
+- Reconciliation now preserves the same current candidate when earlier reviewed trash items disappear and keeps completed sessions complete.
+- Existing Vault/Trash/Archive Tools reachability was preserved by placing Declutter after the established primary actions.
+- Offline API-35 run `37611005386`: **SUCCESS**. Artifact `11477907657`, digest `sha256:4583741ed9dceb9b933d1d39954e4c31d49128b6a6c47fb30b584b881eb02785`.
+- Android Verification run `37611005344`: **SUCCESS**. Artifact `11477358716`, digest `sha256:346154a56bfd6dabb6cf895b3fbbd1083f73cbb5374da71dfee023fb5d5d9306`.
+- No physical-device evidence is claimed. `main` remained untouched.
+
+**Decision: S28 ACCEPTED.**
