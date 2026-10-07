@@ -52,6 +52,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
@@ -60,6 +61,8 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -148,6 +151,7 @@ import com.photobook.app.feature.metadata.ExifDetailsResult
 import com.photobook.app.feature.metadata.ExifMetadataService
 import com.photobook.app.feature.metadata.MetadataCleanResult
 import com.photobook.app.feature.metadata.SafeShareIntentFactory
+import com.photobook.app.feature.notes.PhotoNoteStore
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -168,6 +172,9 @@ fun PhotoViewerScreen(
     onMoveToTrash: (PhotoRecord) -> Unit,
     onMoveToVault: (PhotoRecord) -> Unit,
     onShareAsPdf: (PhotoRecord) -> Unit,
+    onLoadPrivateNote: suspend (PhotoRecord) -> String,
+    onSavePrivateNote: suspend (PhotoRecord, String) -> Boolean,
+    onDeletePrivateNote: suspend (PhotoRecord) -> Boolean,
     reelsEnabled: Boolean = false,
     initialSearchRequested: Boolean = false,
     photoTextLayoutSourceOverride: PhotoTextLayoutSource? = null,
@@ -232,6 +239,89 @@ fun PhotoViewerScreen(
     var editorActionToken by remember { mutableStateOf(0L) }
     var showCropSelector by remember { mutableStateOf(false) }
     var showControls by remember { mutableStateOf(true) }
+    var showMoreMenu by remember { mutableStateOf(false) }
+    var showPrivateNoteSheet by remember { mutableStateOf(false) }
+    var privateNotePhoto by remember { mutableStateOf<PhotoRecord?>(null) }
+    var privateNoteText by remember { mutableStateOf("") }
+    var isPrivateNoteBusy by remember { mutableStateOf(false) }
+
+    fun samePrivateNoteIdentity(left: PhotoRecord?, right: PhotoRecord?): Boolean {
+        return left != null &&
+            right != null &&
+            left.id == right.id &&
+            left.dateAdded == right.dateAdded
+    }
+
+    fun dismissPrivateNoteSheet() {
+        showPrivateNoteSheet = false
+        privateNotePhoto = null
+        privateNoteText = ""
+        isPrivateNoteBusy = false
+    }
+
+    fun openPrivateNote() {
+        val active = photos.getOrNull(pagerState.currentPage) ?: return
+        showMoreMenu = false
+        val requested = active
+        coroutineScope.launch {
+            val note = onLoadPrivateNote(requested).take(PhotoNoteStore.MAX_NOTE_CHARS)
+            val current = photos.getOrNull(pagerState.currentPage)
+            if (samePrivateNoteIdentity(requested, current)) {
+                privateNotePhoto = requested
+                privateNoteText = note
+                showPrivateNoteSheet = true
+            }
+        }
+    }
+
+    fun savePrivateNote() {
+        val boundPhoto = privateNotePhoto ?: return
+        if (isPrivateNoteBusy) return
+        val note = privateNoteText.take(PhotoNoteStore.MAX_NOTE_CHARS)
+        isPrivateNoteBusy = true
+        coroutineScope.launch {
+            val saved = onSavePrivateNote(boundPhoto, note)
+            if (saved && samePrivateNoteIdentity(boundPhoto, privateNotePhoto)) {
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.viewer_note_saved),
+                    Toast.LENGTH_SHORT,
+                ).show()
+                dismissPrivateNoteSheet()
+            } else {
+                isPrivateNoteBusy = false
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.viewer_note_storage_error),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+    }
+
+    fun clearPrivateNote() {
+        val boundPhoto = privateNotePhoto ?: return
+        if (isPrivateNoteBusy) return
+        isPrivateNoteBusy = true
+        coroutineScope.launch {
+            val cleared = onDeletePrivateNote(boundPhoto)
+            if (cleared && samePrivateNoteIdentity(boundPhoto, privateNotePhoto)) {
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.viewer_note_cleared),
+                    Toast.LENGTH_SHORT,
+                ).show()
+                dismissPrivateNoteSheet()
+            } else {
+                isPrivateNoteBusy = false
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.viewer_note_storage_error),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+    }
 
     fun resetViewerZoom() {
         currentPageZoom = MIN_VIEWER_ZOOM
@@ -535,6 +625,10 @@ fun PhotoViewerScreen(
         if (exifSheetPhotoId != null && exifSheetPhotoId != activeId) {
             dismissExifSheet()
         }
+        if (privateNotePhoto != null && !samePrivateNoteIdentity(privateNotePhoto, active)) {
+            dismissPrivateNoteSheet()
+        }
+        showMoreMenu = false
         if (showEditorSheet) {
             showEditorSheet = false
             editorState = PhotoEditState()
@@ -977,6 +1071,41 @@ fun PhotoViewerScreen(
                                                     )
                                                 }
                                             }
+                                            Box {
+                                                Surface(
+                                                    color = Color(0x22FFFFFF),
+                                                    shape = RoundedCornerShape(28.dp),
+                                                ) {
+                                                    IconButton(
+                                                        modifier = Modifier.size(42.dp),
+                                                        onClick = { showMoreMenu = true },
+                                                    ) {
+                                                        Icon(
+                                                            Icons.Default.MoreVert,
+                                                            contentDescription = stringResource(
+                                                                R.string.more_actions,
+                                                            ),
+                                                            tint = Color.White,
+                                                            modifier = Modifier.size(22.dp),
+                                                        )
+                                                    }
+                                                }
+                                                DropdownMenu(
+                                                    expanded = showMoreMenu,
+                                                    onDismissRequest = { showMoreMenu = false },
+                                                ) {
+                                                    DropdownMenuItem(
+                                                        text = {
+                                                            Text(
+                                                                text = stringResource(
+                                                                    R.string.viewer_private_note,
+                                                                ),
+                                                            )
+                                                        },
+                                                        onClick = ::openPrivateNote,
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
 
@@ -1047,6 +1176,19 @@ fun PhotoViewerScreen(
                 onDismiss = ::dismissExifSheet,
                 onRetry = ::openExifSheet,
                 onCleanCopy = ::cleanMetadataCopy,
+            )
+        }
+        if (showPrivateNoteSheet && privateNotePhoto != null) {
+            PrivateNoteBottomSheet(
+                noteText = privateNoteText,
+                maxChars = PhotoNoteStore.MAX_NOTE_CHARS,
+                isBusy = isPrivateNoteBusy,
+                onDismiss = ::dismissPrivateNoteSheet,
+                onTextChange = { next ->
+                    privateNoteText = next.take(PhotoNoteStore.MAX_NOTE_CHARS)
+                },
+                onSave = ::savePrivateNote,
+                onClear = ::clearPrivateNote,
             )
         }
 
@@ -1827,6 +1969,7 @@ private fun QuickEditorBottomSheet(
 private fun PrivateNoteBottomSheet(
     noteText: String,
     maxChars: Int,
+    isBusy: Boolean,
     onDismiss: () -> Unit,
     onTextChange: (String) -> Unit,
     onSave: () -> Unit,
@@ -1876,12 +2019,14 @@ private fun PrivateNoteBottomSheet(
             ) {
                 TextButton(
                     onClick = onClear,
+                    enabled = !isBusy,
                     modifier = Modifier.weight(1f),
                 ) {
                     Text(text = stringResource(R.string.viewer_note_clear))
                 }
                 Button(
                     onClick = onSave,
+                    enabled = !isBusy,
                     modifier = Modifier.weight(1f),
                 ) {
                     Text(text = stringResource(R.string.viewer_note_save))
