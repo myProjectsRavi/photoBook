@@ -342,3 +342,19 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - No physical-device evidence is claimed. `main` remained untouched.
 
 **Decision: S28 ACCEPTED.**
+
+
+## S29 final acceptance
+
+- Tested source: `726cd8cb42489d07f3f4ff32a7c2514e1ad41211`.
+- QR protocol retains hard limits for transfer ID, frame length, chunk count, per-chunk payload, encoded payload, decoded byte size, MIME types, and safe filenames.
+- Receiver replay/conflict guard now survives "Scan another" and receiver assembler recreation; completed/conflicted transfer IDs remain bounded and time-limited.
+- `reset()` clears only active assembly, not replay protection.
+- Active-session TTL refreshes on valid frames instead of expiring a progressing transfer based only on creation time.
+- Conflicting metadata/chunks quarantine the transfer ID rather than immediately allowing a fresh conflicting session.
+- Received bytes remain preview-only until the user explicitly chooses Save to device.
+- Offline API-35 `37615845287`: SUCCESS. Artifact `11479860889`, digest `sha256:0345f8a5b31ebcc2a40f62133693dbaca79bc586672ff48f9e732ce23d1fbd4d`.
+- Android Verification `37615845284`: SUCCESS. Artifact `11480676306`, digest `sha256:52276c5a64e0d3223b734b9d015d3415ef58b31b4c47eac28f11816c575d249f`.
+- `main` untouched; no physical-device evidence claimed.
+
+**Decision: S29 ACCEPTED.**
