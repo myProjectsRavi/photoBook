@@ -390,3 +390,16 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - Hosted emulator evidence is correctness/privacy evidence only, not native ARM performance or physical/OEM certification. `main` remained untouched.
 
 **Decision: S31 ACCEPTED.**
+
+
+## S32 final acceptance
+
+- Frozen production source remains `583da1bac1525f7a2a898e7e58b6510778debf86`; S32 introduced only evidence/checkpoint/tooling verification changes.
+- Final pre-acceptance exact head: `28e569aa12d6aa62fa6dbce671fa1ff8d708268c`.
+- Offline API-35 targeted run `37632969193`: SUCCESS. Artifact `11487940750`, digest `sha256:2ee9d08a6fe70428b3133f298ae9ee4dd049ed8b4c37c1b91e2ab9273e556d0b`.
+- Android Verification run `37632969166`: SUCCESS. Artifact `11487464064`, digest `sha256:190fe6a372759c817265ecdd0056a23a96a5b9950e44560f96239203fa498af1`.
+- The final S32 accumulated-diff review found no confirmed production defect requiring a story reopen.
+- `main` remained exactly `d693acd7c52f285b6ba475fdd3712a10e419d4e1`; branch was ahead only and never behind.
+- Evidence boundaries remain explicit: hosted API-35 emulator evidence is not physical/OEM/camera/battery/thermal certification.
+
+**Decision: S32 ACCEPTED. Blueprint 01 is complete and ready for independent branch review.**
