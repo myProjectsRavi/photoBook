@@ -38,7 +38,7 @@ def _string_value(text: str, name: str) -> str | None:
 
 
 def _named_block(text: str, name: str, start: int = 0) -> str | None:
-    match = re.search(rf"\\b{re.escape(name)}\\s*\\{{", text[start:])
+    match = re.search(rf"\b{re.escape(name)}\s*\{{", text[start:])
     if not match:
         return None
     open_brace = start + match.end() - 1
