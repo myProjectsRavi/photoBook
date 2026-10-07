@@ -353,3 +353,8 @@ Reviewed `PhotoNoteStore`, viewer More/private-note sheet, MainViewModel note AP
 ## S28 targeted review closure
 
 Reviewed Declutter models/state machine, bounded candidate construction, live Tools entry, overlay wiring, Apply-to-Trash callback, Android confirmation result handling, confirmed-success index/group/session reconciliation, and focused session tests. No destructive media mutation occurs before explicit Apply plus Android confirmation.
+
+
+## S30 targeted review closure
+
+Reviewed memory curation/publication, access-generation invalidation, hide preference, Albums placement, widget cache/deep-link validation, MainActivity launch handling, story viewer controls, and focused tests. Final review confirms memories are discoverable only in Albums, hidden memories cannot be opened from the widget, external IDs must exactly match current visible PhotoIndex IDs, and story playback no longer auto-advances or continuously animates.
