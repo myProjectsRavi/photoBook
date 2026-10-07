@@ -889,3 +889,12 @@ Inspect attempt 2 of targeted run `37589482404`. If the same large-font launch/r
 - Active story: S32 Final verification.
 - Candidate production source is frozen at `583da1bac1525f7a2a898e7e58b6510778debf86` unless accumulated-diff review reopens a concrete defect.
 - Required work: compare the entire Blueprint branch against baseline/main, verify S01-S31 durable statuses/evidence, review accumulated production/security/privacy/destructive-flow diffs, verify main remains untouched, create a whole-branch evidence packet, reopen any confirmed failure instead of papering it over, and run final exact-head Android/offline gates before independent-review handoff.
+
+
+## S32 accumulated review checkpoint
+
+- `main` confirmed unchanged at `d693acd7c52f285b6ba475fdd3712a10e419d4e1`.
+- Branch compare: 379 commits ahead, 0 behind; 102 changed files; 52 production/resource files; 32 changed unit/instrumentation test files.
+- BACKLOG verified as exactly S01-S32, with S01-S31 ACCEPTED and only S32 active.
+- High-risk accumulated deletion/export/storage review found no confirmed arbitrary original-media deletion or network regression.
+- Final evidence packet and fail-closed completion-structure verifier are being committed. Exact next action: require both Android Verification and offline API-35 success on this S32 evidence commit, then mark S32 ACCEPTED and hand off for independent review.

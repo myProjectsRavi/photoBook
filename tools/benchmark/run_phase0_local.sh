@@ -25,15 +25,18 @@ python3 -m py_compile \
   tools/benchmark/report_artifact_sizes.py \
   tools/benchmark/build_ci_evidence_manifest.py \
   tools/benchmark/build_compatibility_report.py \
+  tools/benchmark/verify_blueprint_completion.py \
   tools/benchmark/test_phase0_tools.py \
   tools/benchmark/test_ci_evidence_manifest.py \
-  tools/benchmark/test_compatibility_report.py
+  tools/benchmark/test_compatibility_report.py \
+  tools/benchmark/test_blueprint_completion.py
 
 printf '%s\n' "[phase0] running host self-tests"
 python3 -m unittest \
   tools/benchmark/test_phase0_tools.py \
   tools/benchmark/test_ci_evidence_manifest.py \
-  tools/benchmark/test_compatibility_report.py
+  tools/benchmark/test_compatibility_report.py \
+  tools/benchmark/test_blueprint_completion.py
 
 printf '%s\n' "[phase0] generating deterministic 303-record smoke corpus"
 rm -rf "$FIXTURE_ROOT"
