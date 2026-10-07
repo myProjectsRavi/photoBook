@@ -22,6 +22,8 @@ fun OnboardingScreen(
     isIndexing: Boolean,
     progress: Float,
     onGrantPermission: () -> Unit,
+    errorMessage: String? = null,
+    onRetry: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -56,17 +58,24 @@ fun OnboardingScreen(
                     .padding(top = 20.dp),
             )
         } else {
+            val hasRecoverableError = !errorMessage.isNullOrBlank()
             Text(
-                text = stringResource(R.string.permission_message),
+                text = errorMessage ?: stringResource(R.string.permission_message),
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(top = 20.dp),
             )
             Button(
-                onClick = onGrantPermission,
+                onClick = if (hasRecoverableError) onRetry else onGrantPermission,
                 modifier = Modifier.padding(top = 24.dp),
             ) {
-                Text(text = stringResource(R.string.allow_photo_access))
+                Text(
+                    text = if (hasRecoverableError) {
+                        stringResource(R.string.retry)
+                    } else {
+                        stringResource(R.string.allow_photo_access)
+                    },
+                )
             }
         }
     }
