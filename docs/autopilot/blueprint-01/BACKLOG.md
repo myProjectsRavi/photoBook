@@ -29,8 +29,8 @@ Execution rule: select the first incomplete story whose dependencies pass. Do no
 | S21 | E07 Privacy and cleanup | Vault privacy | S02 | ACCEPTED | Central Vault session lifecycle cleanup; no stale decrypted previews/search state after lock/background/failure. |
 | S22 | E07 Privacy and cleanup | Vault operations | S21 | ACCEPTED | Transaction-safe add/move-out with per-item results, integrity checks, durable recovery and no data loss. |
 | S23 | E07 Privacy and cleanup | Trash management | S22 | ACCEPTED | Complete paged Trash, explicit unsupported/error states, truthful expiry and confirmation recovery. |
-| S24 | E07 Privacy and cleanup | Duplicate analysis | S13 | NOT_STARTED | Fix/prove near-duplicate candidate semantics; exact SHA verification; adversarial completeness tests. |
-| S25 | E07 Privacy and cleanup | Cleanup experience | S24 | NOT_STARTED | Reviewable cleanup categories/reasons, nothing destructively preselected, paged groups and confirmation reconciliation. |
+| S24 | E07 Privacy and cleanup | Duplicate analysis | S13 | ACCEPTED | Fix/prove near-duplicate candidate semantics; exact SHA verification; adversarial completeness tests. |
+| S25 | E07 Privacy and cleanup | Cleanup experience | S24 | IN_PROGRESS | Reviewable cleanup categories/reasons, nothing destructively preselected, paged groups and confirmation reconciliation. |
 | S26 | E07 Privacy and cleanup | Archives | S25 | NOT_STARTED | Conservative Archives, revision-scoped results, bounded scans, no surprise deletion or stale publication. |
 | S27 | E08 Useful local features | Private notes | S15,S21 | NOT_STARTED | Restore viewer More note entry; encrypted local notes, stable identity, no plaintext fallback/log/export leakage. |
 | S28 | E08 Useful local features | Declutter review | S25 | NOT_STARTED | Restore bounded draft Keep/Trash/Undo review; no media changes until explicit Apply + Android confirmation. |
