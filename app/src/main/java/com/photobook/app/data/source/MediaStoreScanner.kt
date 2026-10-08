@@ -29,8 +29,12 @@ class MediaStoreScanner @Inject constructor(
         selection: String?,
         selectionArgs: Array<String>?,
         sortOrder: String?,
-    ): Cursor? = queryOverride?.invoke(uri, projection, selection, selectionArgs, sortOrder)
-        ?: context.contentResolver.query(uri, projection, selection, selectionArgs, sortOrder)
+    ): Cursor? {
+        queryOverride?.let { override ->
+            return override(uri, projection, selection, selectionArgs, sortOrder)
+        }
+        return context.contentResolver.query(uri, projection, selection, selectionArgs, sortOrder)
+    }
 
 
     @Suppress("DEPRECATION")
