@@ -12,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import kotlin.math.abs
 
 class DuplicatePhotoFinder @Inject constructor(
@@ -156,6 +157,14 @@ class DuplicatePhotoFinder @Inject constructor(
             candidates.forEachIndexed { candidateIndex, candidate ->
                 if (candidateIndex % CANDIDATE_CANCELLATION_CHECK_INTERVAL == 0) {
                     currentCoroutineContext().ensureActive()
+                }
+                if (candidateIndex > 0 && candidateIndex % CANDIDATE_YIELD_INTERVAL == 0) {
+                    yield()
+                }
+                // Once this photo is connected to a candidate component, additional pair checks
+                // against members already in that component cannot change connectivity.
+                if (unionFind.areConnected(photo.id, candidate.photoId)) {
+                    return@forEachIndexed
                 }
                 if (DuplicateHash.hammingDistance(hash, candidate.hash) <= NEAR_DUPLICATE_DISTANCE) {
                     unionFind.union(photo.id, candidate.photoId)
@@ -493,6 +502,11 @@ class DuplicatePhotoFinder @Inject constructor(
             }
         }
 
+        fun areConnected(left: T, right: T): Boolean {
+            if (!parent.containsKey(left) || !parent.containsKey(right)) return false
+            return find(left) == find(right)
+        }
+
         fun groups(): List<List<T>> {
             return parent.keys.groupBy(::find).values.filter { it.size > 1 }
         }
@@ -509,6 +523,7 @@ class DuplicatePhotoFinder @Inject constructor(
     companion object {
         private const val CANCELLATION_CHECK_INTERVAL = 32
         private const val CANDIDATE_CANCELLATION_CHECK_INTERVAL = 256
+        private const val CANDIDATE_YIELD_INTERVAL = 4_096
         private const val PARTIAL_HASH_LIMIT = 64 * 1024 // 64KB
         private const val DB_PREFILTER_MIN_RECORDS = 1_000
         private const val NEAR_DUPLICATE_DISTANCE = 8
