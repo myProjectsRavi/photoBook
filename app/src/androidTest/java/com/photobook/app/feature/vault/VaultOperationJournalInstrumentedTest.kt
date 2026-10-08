@@ -111,7 +111,10 @@ class VaultOperationJournalInstrumentedTest {
     @Test
     fun liveCommittedAdd_isNeverReapedByConcurrentRecovery() = runBlocking {
         val database = AppModule.providePhotoBookDatabase(context)
-        val source = File(context.cacheDir, "vault-race-" + System.nanoTime() + ".jpg")
+        val source = File(
+            File(context.cacheDir, "safe_share").apply { mkdirs() },
+            "vault-race-" + System.nanoTime() + ".jpg",
+        )
         val bitmap = Bitmap.createBitmap(24, 24, Bitmap.Config.ARGB_8888)
         FileOutputStream(source).use { output ->
             assertTrue(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output))
