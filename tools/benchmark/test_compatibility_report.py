@@ -52,7 +52,7 @@ android {
         bundle_root.mkdir()
         for abi in ("arm64-v8a", "armeabi-v7a"):
             apk = apk_root / f"app-{abi}-release.apk"
-            with zipfile.ZipFile(apk, "w") as archive:
+            with zipfile.ZipFile(apk, "w", compression=zipfile.ZIP_DEFLATED) as archive:
                 archive.writestr(f"lib/{abi}/libdemo.so", f"native-{abi}".encode())
         perms.write_text(
             "\n".join(f"{p.name} no_internet=PASS" for p in sorted(apk_root.glob("*.apk"))) + "\n",
@@ -116,6 +116,28 @@ android {
             ["arm64-v8a", "armeabi-v7a"],
             report["abi"]["declared_splits"],
         )
+
+    def test_misaligned_stored_native_library_fails_closed(self):
+        tmp, gradle, deps, perms, apk_root, bundle_root = self.fixture()
+        self.addCleanup(tmp.cleanup)
+        apk = next(apk_root.glob("*arm64-v8a*.apk"))
+        with zipfile.ZipFile(apk, "w") as archive:
+            archive.writestr("lib/arm64-v8a/libdemo.so", b"stored-native")
+        perms.write_text(
+            "\n".join(f"{p.name} no_internet=PASS" for p in sorted(apk_root.glob("*.apk"))) + "\n",
+            encoding="utf-8",
+        )
+
+        report, errors = collect(
+            gradle_file=gradle,
+            dependency_report=deps,
+            permission_report=perms,
+            apk_root=apk_root,
+            bundle_root=bundle_root,
+        )
+
+        self.assertEqual("INVALID", report["status"])
+        self.assertTrue(any("ZIP aligned" in error for error in errors))
 
     def test_missing_no_internet_evidence_fails_closed(self):
         tmp, gradle, deps, perms, apk_root, bundle_root = self.fixture()
