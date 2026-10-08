@@ -1,15 +1,10 @@
 package com.photobook.app.data.source
 
-import android.content.ContentProvider
-import android.content.ContentResolver
-import android.content.ContentValues
 import android.content.Context
-import android.content.ContextWrapper
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
 import android.provider.MediaStore
-import android.test.mock.MockContentResolver
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.runBlocking
@@ -102,35 +97,12 @@ class MediaStoreScannerFailureInstrumentedTest {
             sortOrder: String?,
         ) -> Cursor?,
     ): MediaStoreScanner {
-        val base = ApplicationProvider.getApplicationContext<Context>()
-        val resolver = MockContentResolver(base)
-        resolver.addProvider(
-            MediaStore.AUTHORITY,
-            object : ContentProvider() {
-                override fun onCreate(): Boolean = true
-                override fun getType(uri: Uri): String? = null
-                override fun insert(uri: Uri, values: ContentValues?): Uri? = null
-                override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int = 0
-                override fun update(
-                    uri: Uri,
-                    values: ContentValues?,
-                    selection: String?,
-                    selectionArgs: Array<out String>?,
-                ): Int = 0
-
-                override fun query(
-                    uri: Uri,
-                    projection: Array<out String>?,
-                    selection: String?,
-                    selectionArgs: Array<out String>?,
-                    sortOrder: String?,
-                ): Cursor? = query(uri, projection, selection, selectionArgs, sortOrder)
-            },
-        )
-        val context = object : ContextWrapper(base) {
-            override fun getContentResolver(): ContentResolver = resolver
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        return MediaStoreScanner(context).apply {
+            queryOverride = { uri, projection, selection, selectionArgs, sortOrder ->
+                query(uri, projection, selection, selectionArgs, sortOrder)
+            }
         }
-        return MediaStoreScanner(context)
     }
 
     private fun rowFor(columns: Array<out String>, id: Long): Array<Any?> {
