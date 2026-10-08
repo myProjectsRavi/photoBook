@@ -97,7 +97,7 @@ class PdfExportService @Inject constructor(
         return exportMutex.withLock {
             withContext(Dispatchers.IO) {
             if (
-                destination is PdfExportDestination.Downloads &&
+                destination == PdfExportDestination.Downloads &&
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
                 !reconcilePendingDownload()
             ) {
