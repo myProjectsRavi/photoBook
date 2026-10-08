@@ -163,6 +163,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     var isVaultBusy by remember { mutableStateOf(false) }
     var pdfExportJob by remember { mutableStateOf<Job?>(null) }
     var pdfExportProgress by remember { mutableStateOf<PdfExportProgress?>(null) }
+    var pendingLegacyPdfPhotos by remember { mutableStateOf<List<PhotoRecord>>(emptyList()) }
     val vaultTextLayoutSource = remember(vaultService, vaultSession) {
         vaultPhotoTextLayoutSource(
             context = context.applicationContext,
@@ -178,6 +179,41 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     var trashNextOffset by remember { mutableStateOf<Int?>(null) }
     var isLoadingTrash by remember { mutableStateOf(false) }
     var isLoadingMoreTrash by remember { mutableStateOf(false) }
+
+    val legacyPdfDestinationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/pdf"),
+    ) { destinationUri ->
+        val photos = pendingLegacyPdfPhotos
+        pendingLegacyPdfPhotos = emptyList()
+        if (destinationUri == null || photos.isEmpty() || pdfExportJob?.isActive == true) {
+            return@rememberLauncherForActivityResult
+        }
+        pdfExportJob = coroutineScope.launch {
+            try {
+                pdfExportProgress = PdfExportProgress(
+                    totalItems = photos.size,
+                    processedItems = 0,
+                    writtenPages = 0,
+                    skippedItems = 0,
+                )
+                val result = pdfExportService.exportPhotosToDocumentUri(
+                    photos = photos,
+                    destinationUri = destinationUri,
+                ) { progress ->
+                    coroutineScope.launch { pdfExportProgress = progress }
+                }
+                handlePdfExportResult(
+                    context = context,
+                    result = result,
+                    clearSelectionOnSuccess = true,
+                    viewModel = viewModel,
+                )
+            } finally {
+                pdfExportProgress = null
+                pdfExportJob = null
+            }
+        }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -620,51 +656,12 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                 coroutineScope.launch { pdfExportProgress = progress }
             }
         }
-        when (result) {
-            is PdfExportResult.Success -> {
-                Toast.makeText(
-                    context,
-                    context.getString(R.string.create_pdf_success, result.pageCount),
-                    Toast.LENGTH_SHORT,
-                ).show()
-                sharePdf(context, result.uri, result.fileName)
-                if (clearSelectionOnSuccess) {
-                    viewModel.clearSelection()
-                }
-            }
-
-            is PdfExportResult.PartialSuccess -> {
-                Toast.makeText(
-                    context,
-                    context.getString(
-                        R.string.create_pdf_partial_success,
-                        result.pageCount,
-                        result.skippedCount,
-                    ),
-                    Toast.LENGTH_LONG,
-                ).show()
-                sharePdf(context, result.uri, result.fileName)
-                if (clearSelectionOnSuccess) {
-                    viewModel.clearSelection()
-                }
-            }
-
-            is PdfExportResult.TooManyPages -> {
-                Toast.makeText(
-                    context,
-                    context.getString(R.string.create_pdf_too_many_pages, result.maxAllowed),
-                    Toast.LENGTH_SHORT,
-                ).show()
-            }
-
-            is PdfExportResult.Error -> {
-                Toast.makeText(
-                    context,
-                    context.getString(R.string.create_pdf_error),
-                    Toast.LENGTH_SHORT,
-                ).show()
-            }
-        }
+        handlePdfExportResult(
+            context = context,
+            result = result,
+            clearSelectionOnSuccess = clearSelectionOnSuccess,
+            viewModel = viewModel,
+        )
     }
 
     LaunchedEffect(Unit) {
@@ -746,23 +743,28 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         },
         onCreatePdfSelected = { selectedIds ->
             if (pdfExportJob?.isActive != true) {
-                pdfExportJob = coroutineScope.launch {
-                    try {
-                        val selectedPhotos = viewModel.resolvePhotosByIds(selectedIds)
-                        pdfExportProgress = PdfExportProgress(
-                            totalItems = selectedPhotos.size,
-                            processedItems = 0,
-                            writtenPages = 0,
-                            skippedItems = 0,
-                        )
-                        createAndSharePdf(
-                            photos = selectedPhotos,
-                            persistToDownloads = true,
-                            clearSelectionOnSuccess = true,
-                        )
-                    } finally {
-                        pdfExportProgress = null
-                        pdfExportJob = null
+                val selectedPhotos = viewModel.resolvePhotosByIds(selectedIds)
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                    pendingLegacyPdfPhotos = selectedPhotos
+                    legacyPdfDestinationLauncher.launch("PhotoBook_" + System.currentTimeMillis() + ".pdf")
+                } else {
+                    pdfExportJob = coroutineScope.launch {
+                        try {
+                            pdfExportProgress = PdfExportProgress(
+                                totalItems = selectedPhotos.size,
+                                processedItems = 0,
+                                writtenPages = 0,
+                                skippedItems = 0,
+                            )
+                            createAndSharePdf(
+                                photos = selectedPhotos,
+                                persistToDownloads = true,
+                                clearSelectionOnSuccess = true,
+                            )
+                        } finally {
+                            pdfExportProgress = null
+                            pdfExportJob = null
+                        }
                     }
                 }
             }
@@ -1014,6 +1016,52 @@ private fun vaultAuthenticators(): Int {
             BiometricManager.Authenticators.DEVICE_CREDENTIAL
     } else {
         BiometricManager.Authenticators.BIOMETRIC_STRONG
+    }
+}
+
+private fun handlePdfExportResult(
+    context: Context,
+    result: PdfExportResult,
+    clearSelectionOnSuccess: Boolean,
+    viewModel: MainViewModel,
+) {
+    when (result) {
+        is PdfExportResult.Success -> {
+            Toast.makeText(
+                context,
+                context.getString(R.string.create_pdf_success, result.pageCount),
+                Toast.LENGTH_SHORT,
+            ).show()
+            sharePdf(context, result.uri, result.fileName)
+            if (clearSelectionOnSuccess) viewModel.clearSelection()
+        }
+        is PdfExportResult.PartialSuccess -> {
+            Toast.makeText(
+                context,
+                context.getString(
+                    R.string.create_pdf_partial_success,
+                    result.pageCount,
+                    result.skippedCount,
+                ),
+                Toast.LENGTH_LONG,
+            ).show()
+            sharePdf(context, result.uri, result.fileName)
+            if (clearSelectionOnSuccess) viewModel.clearSelection()
+        }
+        is PdfExportResult.TooManyPages -> {
+            Toast.makeText(
+                context,
+                context.getString(R.string.create_pdf_too_many_pages, result.maxAllowed),
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+        is PdfExportResult.Error -> {
+            Toast.makeText(
+                context,
+                context.getString(R.string.create_pdf_error),
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
     }
 }
 
