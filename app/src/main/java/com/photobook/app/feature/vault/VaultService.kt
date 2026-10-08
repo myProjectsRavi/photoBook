@@ -870,8 +870,16 @@ class VaultService @Inject constructor(
             ?.filter { file -> file.isFile && file.extension.equals("jpg", ignoreCase = true) }
             ?.sortedByDescending { file -> file.lastModified() }
             .orEmpty()
-        files.drop(MAX_PREVIEW_CACHE_FILES).forEach { file ->
-            runCatching { file.delete() }
+        var retainedBytes = 0L
+        files.forEachIndexed { index, file ->
+            val keepByCount = index < MAX_PREVIEW_CACHE_FILES
+            val nextBytes = retainedBytes + file.length().coerceAtLeast(0L)
+            val keepByBytes = nextBytes <= MAX_PREVIEW_CACHE_BYTES
+            if (keepByCount && keepByBytes) {
+                retainedBytes = nextBytes
+            } else {
+                runCatching { file.delete() }
+            }
         }
     }
 
@@ -1067,6 +1075,7 @@ class VaultService @Inject constructor(
         private const val MAX_BITMAP_SAMPLE_SIZE = 128
         private const val PREVIEW_JPEG_QUALITY = 82
         private const val MAX_PREVIEW_CACHE_FILES = 48
+        private const val MAX_PREVIEW_CACHE_BYTES = 12L * 1024L * 1024L
         private const val DB_QUERY_BATCH_SIZE = 200
         private const val STREAM_BUFFER_BYTES = 64 * 1024
     }
