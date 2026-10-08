@@ -77,8 +77,10 @@ fun PhotoRecord.withRetainedStateFrom(current: PhotoRecord?): PhotoRecord {
         sourceRevision > 0L && current.sourceRevision > 0L ->
             sourceRevision == current.sourceRevision
         sourceRevision <= 0L && current.sourceRevision <= 0L ->
-            fileName == current.fileName &&
-                fileSize == current.fileSize &&
+            // Legacy rows do not have a trustworthy provider revision. A rename/path change does
+            // not alter image bytes, so preserve derived state when stable media identity and
+            // geometry/size still agree. ID reuse is already rejected by dateAdded/URI identity.
+            fileSize == current.fileSize &&
                 width == current.width &&
                 height == current.height
         else -> false
