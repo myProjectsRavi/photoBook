@@ -20,7 +20,8 @@ import org.junit.runner.RunWith
 class PhotoEditServiceInstrumentedTest {
 
     @Test
-    fun asymmetricCrop_tracksSamePixelsAcrossAllQuarterTurnsAndExport() = runBlocking {
+    fun asymmetricCrop_tracksSamePixelsAcrossAllQuarterTurnsAndExport() {
+        runBlocking {
         val fixture = createAsymmetricFixture("editor_rotation")
         val service = PhotoEditService(fixture.context)
         val sourceCorner = NormalizedCropRegion(0.04f, 0.04f, 0.46f, 0.46f)
@@ -60,10 +61,12 @@ class PhotoEditServiceInstrumentedTest {
         } finally {
             fixture.close()
         }
+        }
     }
 
     @Test
-    fun exifQuarterTurn_swapsCropGeometryAndTargetsNormalizedPixels() = runBlocking {
+    fun exifQuarterTurn_swapsCropGeometryAndTargetsNormalizedPixels() {
+        runBlocking {
         val fixture = createAsymmetricFixture(
             prefix = "editor_exif",
             exifOrientation = ExifInterface.ORIENTATION_ROTATE_90,
@@ -89,6 +92,7 @@ class PhotoEditServiceInstrumentedTest {
             preview.recycle()
         } finally {
             fixture.close()
+        }
         }
     }
 
