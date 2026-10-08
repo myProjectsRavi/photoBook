@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import re
+import struct
 import zipfile
 from pathlib import Path
 
@@ -68,6 +69,34 @@ def _declared_abis(text: str) -> set[str]:
     if not match:
         return set()
     return set(re.findall(r'"([^"]+)"', match.group(1)))
+
+
+def zip_entry_data_offset(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> int:
+    """Return the byte offset where an entry's payload starts in the ZIP."""
+    archive.fp.seek(info.header_offset)
+    header = archive.fp.read(30)
+    if len(header) != 30:
+        raise ValueError(f"short local ZIP header for {info.filename}")
+    signature, *_fields, file_name_len, extra_len = struct.unpack("<IHHHHHIIIHH", header)
+    if signature != 0x04034B50:
+        raise ValueError(f"invalid local ZIP header for {info.filename}")
+    return info.header_offset + 30 + file_name_len + extra_len
+
+
+def native_zip_alignment_record(
+    archive: zipfile.ZipFile,
+    info: zipfile.ZipInfo,
+    *,
+    alignment: int = 16 * 1024,
+) -> dict[str, object]:
+    offset = zip_entry_data_offset(archive, info)
+    stored = info.compress_type == zipfile.ZIP_STORED
+    return {
+        "compression": "stored" if stored else "compressed",
+        "data_offset": offset,
+        "required_alignment": alignment if stored else None,
+        "aligned": (offset % alignment == 0) if stored else None,
+    }
 
 
 def collect(
@@ -142,12 +171,20 @@ def collect(
                 abi, soname = match.groups()
                 native_abis.add(abi)
                 payload = archive.read(name)
+                zip_alignment = native_zip_alignment_record(archive, archive.getinfo(name))
+                if zip_alignment["aligned"] is False:
+                    errors.append(
+                        f"{apk.name}:{name} stored native library is not "
+                        f"{zip_alignment['required_alignment']}-byte ZIP aligned "
+                        f"(data offset {zip_alignment['data_offset']})"
+                    )
                 native_libs.append(
                     {
                         "abi": abi,
                         "name": soname,
                         "bytes": len(payload),
                         "sha256": sha256_bytes(payload),
+                        "zip_alignment": zip_alignment,
                     }
                 )
         apk_records.append(
