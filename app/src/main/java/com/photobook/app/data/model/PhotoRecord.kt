@@ -73,10 +73,16 @@ fun PhotoRecord.withRetainedStateFrom(current: PhotoRecord?): PhotoRecord {
     if (!sameIdentity) return this
 
     val userState = copy(isFavorite = current.isFavorite)
-    val sameContent =
-        sourceRevision > 0L &&
-            current.sourceRevision > 0L &&
+    val sameContent = when {
+        sourceRevision > 0L && current.sourceRevision > 0L ->
             sourceRevision == current.sourceRevision
+        sourceRevision <= 0L && current.sourceRevision <= 0L ->
+            fileName == current.fileName &&
+                fileSize == current.fileSize &&
+                width == current.width &&
+                height == current.height
+        else -> false
+    }
     if (!sameContent) return userState
 
     return userState.copy(
