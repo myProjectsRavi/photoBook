@@ -54,6 +54,18 @@ class PdfExportService @Inject constructor(
         )
     }
 
+    suspend fun exportPhotosToDocumentUri(
+        photos: List<PhotoRecord>,
+        destinationUri: Uri,
+        onProgress: (PdfExportProgress) -> Unit = {},
+    ): PdfExportResult {
+        return exportPhotos(
+            photos = photos,
+            destination = PdfExportDestination.DocumentUri(destinationUri),
+            onProgress = onProgress,
+        )
+    }
+
     suspend fun exportPhotosForSharing(
         photos: List<PhotoRecord>,
         onProgress: (PdfExportProgress) -> Unit = {},
@@ -85,7 +97,7 @@ class PdfExportService @Inject constructor(
         return exportMutex.withLock {
             withContext(Dispatchers.IO) {
             if (
-                destination == PdfExportDestination.Downloads &&
+                destination is PdfExportDestination.Downloads &&
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
                 !reconcilePendingDownload()
             ) {
@@ -170,6 +182,10 @@ class PdfExportService @Inject constructor(
                 output = when (destination) {
                     PdfExportDestination.Downloads -> writeDocumentToDownloads(document, fileName)
                     PdfExportDestination.ShareCache -> writeDocumentToShareCache(document, fileName)
+                    is PdfExportDestination.DocumentUri -> writeDocumentToUri(
+                        document = document,
+                        destinationUri = destination.uri,
+                    )
                 }
                 currentCoroutineContext().ensureActive()
 
@@ -357,6 +373,19 @@ class PdfExportService @Inject constructor(
                 )
             } ?: ExifInterface.ORIENTATION_NORMAL
         }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+    }
+
+    private suspend fun writeDocumentToUri(
+        document: PdfDocument,
+        destinationUri: Uri,
+    ): PdfOutput {
+        currentCoroutineContext().ensureActive()
+        context.contentResolver.openOutputStream(destinationUri, "wt")?.use { stream ->
+            document.writeTo(stream)
+        } ?: error("Unable to open selected PDF destination")
+        currentCoroutineContext().ensureActive()
+        check(verifyPdf(destinationUri)) { "Selected PDF destination failed read-back verification" }
+        return PdfOutput(uri = destinationUri)
     }
 
     private suspend fun writeDocumentToDownloads(
@@ -564,9 +593,10 @@ class PdfExportService @Inject constructor(
         val file: File? = null,
     )
 
-    private enum class PdfExportDestination {
-        Downloads,
-        ShareCache,
+    private sealed interface PdfExportDestination {
+        data object Downloads : PdfExportDestination
+        data object ShareCache : PdfExportDestination
+        data class DocumentUri(val uri: Uri) : PdfExportDestination
     }
 
     companion object {
