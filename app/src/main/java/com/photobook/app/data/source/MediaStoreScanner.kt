@@ -2,6 +2,7 @@ package com.photobook.app.data.source
 
 import android.content.ContentUris
 import android.content.Context
+import android.database.Cursor
 import android.os.Build
 import android.provider.MediaStore
 import com.photobook.app.data.model.RawPhotoData
@@ -13,6 +14,23 @@ import kotlinx.coroutines.ensureActive
 class MediaStoreScanner @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
+    internal var queryOverride: ((
+        uri: Uri,
+        projection: Array<String>,
+        selection: String?,
+        selectionArgs: Array<String>?,
+        sortOrder: String?,
+    ) -> Cursor?)? = null
+
+    private fun query(
+        uri: Uri,
+        projection: Array<String>,
+        selection: String?,
+        selectionArgs: Array<String>?,
+        sortOrder: String?,
+    ): Cursor? = queryOverride?.invoke(uri, projection, selection, selectionArgs, sortOrder)
+        ?: context.contentResolver.query(uri, projection, selection, selectionArgs, sortOrder)
+
 
     @Suppress("DEPRECATION")
     suspend fun scanAll(): List<RawPhotoData> {
@@ -49,7 +67,7 @@ class MediaStoreScanner @Inject constructor(
 
     fun scanAllIds(): Set<Long> {
         val ids = linkedSetOf<Long>()
-        val cursor = context.contentResolver.query(
+        val cursor = query(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             arrayOf(MediaStore.Images.Media._ID),
             null,
@@ -90,7 +108,7 @@ class MediaStoreScanner @Inject constructor(
 
         val photos = if (onBatch == null) mutableListOf<RawPhotoData>() else null
         val pendingBatch = if (onBatch != null) ArrayList<RawPhotoData>(batchSize) else null
-        val cursor = context.contentResolver.query(
+        val cursor = query(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             projection,
             selection,
