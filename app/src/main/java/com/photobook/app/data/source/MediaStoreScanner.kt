@@ -3,6 +3,7 @@ package com.photobook.app.data.source
 import android.content.ContentUris
 import android.content.Context
 import android.database.Cursor
+import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import com.photobook.app.data.model.RawPhotoData
