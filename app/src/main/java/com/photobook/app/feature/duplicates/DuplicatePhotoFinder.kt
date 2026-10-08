@@ -21,25 +21,42 @@ class DuplicatePhotoFinder @Inject constructor(
     private val perceptualHashComputer: PerceptualHashComputer,
     private val blurScoreComputer: BlurScoreComputer,
 ) {
-    suspend fun findDuplicates(records: List<PhotoRecord>): List<DuplicatePhotoGroup> {
-        if (records.size < 2) return emptyList()
+    suspend fun findDuplicates(
+        records: List<PhotoRecord>,
+        onProgress: (Float) -> Unit = {},
+    ): List<DuplicatePhotoGroup> {
+        if (records.size < 2) {
+            onProgress(1f)
+            return emptyList()
+        }
 
         return withContext(Dispatchers.IO) {
+            onProgress(0f)
             val exactCandidates = exactDuplicateCandidates(records)
             val exactGroups = findExactDuplicates(exactCandidates)
+            currentCoroutineContext().ensureActive()
+            onProgress(0.25f)
             val exactIds = exactGroups.flatMap { group -> group.photos.map { it.id } }.toSet()
             val remainingForSimilar = records.filterNot { it.id in exactIds }
-            val similarGroups = findNearDuplicates(remainingForSimilar)
+            val similarGroups = findNearDuplicates(remainingForSimilar) { fraction ->
+                onProgress(0.25f + (fraction * 0.50f))
+            }
+            currentCoroutineContext().ensureActive()
+            onProgress(0.75f)
             val similarIds = similarGroups.flatMap { group -> group.photos.map { it.id } }.toSet()
 
             val remainingForBurst = records.filterNot { it.id in exactIds || it.id in similarIds }
             val burstGroups = findBurstGroups(remainingForBurst)
+            currentCoroutineContext().ensureActive()
+            onProgress(0.90f)
             val burstIds = burstGroups.flatMap { group -> group.photos.map { it.id } }.toSet()
 
             val remainingForBlur = records.filterNot {
                 it.id in exactIds || it.id in similarIds || it.id in burstIds
             }
             val blurryGroup = findBlurryGroup(remainingForBlur)
+            currentCoroutineContext().ensureActive()
+            onProgress(0.98f)
 
             val allGroups = buildList {
                 addAll(exactGroups)
@@ -50,12 +67,14 @@ class DuplicatePhotoFinder @Inject constructor(
                 }
             }
 
-            allGroups
+            val sorted = allGroups
                 .sortedWith(
                     compareByDescending<DuplicatePhotoGroup> { priorityOf(it.kind) }
                         .thenByDescending { it.photos.size }
                         .thenByDescending { it.totalBytes }
                 )
+            onProgress(1f)
+            sorted
         }
     }
 
@@ -120,7 +139,10 @@ class DuplicatePhotoFinder @Inject constructor(
         }.getOrNull()
     }
 
-    private suspend fun findNearDuplicates(records: List<PhotoRecord>): List<DuplicatePhotoGroup> {
+    private suspend fun findNearDuplicates(
+        records: List<PhotoRecord>,
+        onProgress: (Float) -> Unit,
+    ): List<DuplicatePhotoGroup> {
         val byId = records.associateBy { it.id }
         val unionFind = UnionFind<Long>()
         val buckets = mutableMapOf<Long, MutableList<HashRecord>>()
@@ -132,6 +154,7 @@ class DuplicatePhotoFinder @Inject constructor(
         records.forEachIndexed { photoIndex, photo ->
             if (photoIndex % CANCELLATION_CHECK_INTERVAL == 0) {
                 currentCoroutineContext().ensureActive()
+                onProgress(photoIndex.toFloat() / records.size.coerceAtLeast(1).toFloat())
             }
             val hash = photo.perceptualHash
                 ?: perceptualHashComputer.computeFromUri(photo.uriString)
@@ -177,6 +200,7 @@ class DuplicatePhotoFinder @Inject constructor(
             }
         }
 
+        onProgress(1f)
         return unionFind.groups()
             .mapNotNull { ids ->
                 val photos = ids.mapNotNull(byId::get)
