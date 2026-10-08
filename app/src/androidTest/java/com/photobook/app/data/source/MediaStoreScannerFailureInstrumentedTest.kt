@@ -56,6 +56,31 @@ class MediaStoreScannerFailureInstrumentedTest {
     }
 
     @Test
+    fun progressiveScan_emitsBoundedBatchesBeforeTerminalCompletion() = runBlocking {
+        val scanner = scannerWithProvider { _, projection, _, _, _ ->
+            val columns = requireNotNull(projection)
+            MatrixCursor(columns).apply {
+                repeat(513) { index ->
+                    addRow(rowFor(columns, id = index.toLong() + 1L))
+                }
+            }
+        }
+        val batchSizes = mutableListOf<Int>()
+        val firstIds = mutableListOf<Long>()
+
+        scanner.scanAllBatches(batchSize = 200) { batch ->
+            batchSizes += batch.size
+            if (firstIds.isEmpty()) {
+                firstIds += batch.map { it.id }
+            }
+        }
+
+        assertEquals(listOf(200, 200, 113), batchSizes)
+        assertEquals(200, firstIds.size)
+        assertEquals(1L, firstIds.first())
+    }
+
+    @Test
     fun providerSecurityFailure_propagatesInsteadOfPublishingEmptyData() = runBlocking {
         val scanner = scannerWithProvider { _, _, _, _, _ ->
             throw SecurityException("grant revoked during query")
