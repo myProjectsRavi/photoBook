@@ -337,6 +337,43 @@ object AppModule {
             // post-upgrade scan repopulates this value and intentionally reopens derived content
             // intelligence instead of attributing stale OCR/hash/ML data to changed bytes.
             db.execSQL("ALTER TABLE photos ADD COLUMN sourceRevision INTEGER NOT NULL DEFAULT -1")
+
+            // Historical databases created the FTS prefix option with single quotes. Newer Room
+            // canonicalizes the schema with a backtick-quoted prefix and rejects the otherwise
+            // equivalent legacy declaration during validation. Preserve every searchable row while
+            // normalizing the virtual-table definition to the current entity schema.
+            db.execSQL(
+                """
+                CREATE TABLE photo_fts_migration_14 (
+                    rowid INTEGER PRIMARY KEY NOT NULL,
+                    searchableText TEXT NOT NULL
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                INSERT INTO photo_fts_migration_14(rowid, searchableText)
+                SELECT rowid, searchableText FROM photo_fts
+                """.trimIndent(),
+            )
+            db.execSQL("DROP TABLE photo_fts")
+            db.execSQL(
+                """
+                CREATE VIRTUAL TABLE photo_fts
+                USING fts4(
+                    searchableText,
+                    tokenize=unicode61,
+                    prefix=`2,3,4`
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                INSERT INTO photo_fts(rowid, searchableText)
+                SELECT rowid, searchableText FROM photo_fts_migration_14
+                """.trimIndent(),
+            )
+            db.execSQL("DROP TABLE photo_fts_migration_14")
         }
     }
 
