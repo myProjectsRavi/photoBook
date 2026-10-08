@@ -116,6 +116,8 @@ fun MainScreen(
     memoryStories: List<MemoryStory>,
     duplicateGroups: List<DuplicatePhotoGroup>,
     isFindingDuplicates: Boolean,
+    duplicateScanProgress: Float?,
+    duplicateScanIncomplete: Boolean,
     showDuplicateFinder: Boolean,
     archiveCandidateCount: Int,
     archiveDueDeleteCount: Int,
@@ -601,6 +603,8 @@ fun MainScreen(
             DuplicateFinderSheet(
                 groups = duplicateGroups,
                 isLoading = isFindingDuplicates,
+                progress = duplicateScanProgress,
+                incomplete = duplicateScanIncomplete,
                 onDismiss = onDismissDuplicateFinder,
                 onRefresh = onRefreshDuplicates,
                 onPhotoClick = onDuplicatePhotoClick,
@@ -857,6 +861,8 @@ private fun RefinedTabButton(
 private fun DuplicateFinderSheet(
     groups: List<DuplicatePhotoGroup>,
     isLoading: Boolean,
+    progress: Float?,
+    incomplete: Boolean,
     onDismiss: () -> Unit,
     onRefresh: () -> Unit,
     onPhotoClick: (String, Int) -> Unit,
@@ -898,7 +904,25 @@ private fun DuplicateFinderSheet(
             }
 
             if (isLoading) {
-                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(2.dp))
+                if (progress != null) {
+                    LinearProgressIndicator(
+                        progress = { progress.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth().height(2.dp),
+                    )
+                    Text(
+                        text = "Scanning locally… ${(progress.coerceIn(0f, 1f) * 100).toInt()}%",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(2.dp))
+                }
+            } else if (incomplete) {
+                Text(
+                    text = "Previous scan was interrupted. Refresh to continue with a new bounded scan.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
 
             Box(modifier = Modifier.height(400.dp)) {
