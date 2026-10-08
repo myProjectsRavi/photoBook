@@ -151,6 +151,8 @@ class MainViewModel @Inject constructor(
         val timelineMarks: List<TimelineMark> = emptyList(),
         val duplicateGroups: List<DuplicatePhotoGroup> = emptyList(),
         val isFindingDuplicates: Boolean = false,
+        val duplicateScanProgress: Float? = null,
+        val duplicateScanIncomplete: Boolean = false,
         val showDuplicateFinder: Boolean = false,
         val isDeclutterLoading: Boolean = false,
         val declutterSession: DeclutterSession? = null,
@@ -1190,18 +1192,34 @@ class MainViewModel @Inject constructor(
             uiState.update {
                 it.copy(
                     isFindingDuplicates = true,
+                    duplicateScanProgress = 0f,
+                    duplicateScanIncomplete = false,
                     showDuplicateFinder = true,
                 )
             }
             try {
-                val groups = duplicatePhotoFinder.findDuplicates(photoIndex.snapshot())
+                val groups = duplicatePhotoFinder.findDuplicates(photoIndex.snapshot()) { progress ->
+                    uiState.update { state ->
+                        state.copy(duplicateScanProgress = progress.coerceIn(0f, 1f))
+                    }
+                }
                 currentCoroutineContext().ensureActive()
                 uiState.update {
                     it.copy(
                         duplicateGroups = groups,
                         isFindingDuplicates = false,
+                        duplicateScanProgress = 1f,
+                        duplicateScanIncomplete = false,
                     )
                 }
+            } catch (cancelled: CancellationException) {
+                uiState.update {
+                    it.copy(
+                        isFindingDuplicates = false,
+                        duplicateScanIncomplete = true,
+                    )
+                }
+                throw cancelled
             } finally {
                 uiState.update { it.copy(isFindingDuplicates = false) }
             }
@@ -1211,7 +1229,14 @@ class MainViewModel @Inject constructor(
     fun dismissDuplicateFinder() {
         cleanupScanJob?.cancel()
         cleanupScanJob = null
-        uiState.update { it.copy(showDuplicateFinder = false, isFindingDuplicates = false) }
+        uiState.update {
+            it.copy(
+                showDuplicateFinder = false,
+                isFindingDuplicates = false,
+                duplicateScanIncomplete = it.duplicateScanProgress != null &&
+                    it.duplicateScanProgress < 1f,
+            )
+        }
     }
 
     fun openDuplicatePhoto(groupId: String, index: Int) {
