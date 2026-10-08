@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - "perf/phase4-index-startup"
+      - "autopilot/epics-features-user-stories"
     paths:
       - ".github/workflows/phase4-index-measurement.yml"
       - "app/src/main/java/com/photobook/app/data/index/IndexBuilder.kt"
@@ -17,7 +18,7 @@ permissions:
 
 jobs:
   measure-index:
-    name: index-${{ matrix.library_size }}
+    name: index-${{ matrix.library_size }}-ram${{ matrix.ram_mb }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
 
@@ -28,9 +29,12 @@ jobs:
           - 10000
           - 50000
           - 100000
+        ram_mb:
+          - 2048
+          - 4096
 
     concurrency:
-      group: phase4-index-${{ github.ref }}-${{ matrix.library_size }}
+      group: phase4-index-${{ github.ref }}-${{ matrix.library_size }}-${{ matrix.ram_mb }}
       cancel-in-progress: true
 
     steps:
@@ -101,7 +105,7 @@ jobs:
             -no-snapshot \
             -no-metrics \
             -gpu swiftshader_indirect \
-            -memory 2048 \
+            -memory ${{ matrix.ram_mb }} \
             -cores 2 \
             > "$RUNNER_TEMP/phase4-emulator.log" 2>&1 &
           EMULATOR_PID=$!
@@ -148,6 +152,11 @@ jobs:
           echo "$SDK_ROOT/emulator" >> "$GITHUB_PATH"
 
           "$ADB" shell input keyevent 82 || true
+          "$ADB" shell svc wifi disable || true
+          "$ADB" shell svc data disable || true
+          "$ADB" shell settings put global airplane_mode_on 1
+          "$ADB" shell am broadcast -a android.intent.action.AIRPLANE_MODE --ez state true >/dev/null 2>&1 || true
+          echo "benchmark_ram_mb=${{ matrix.ram_mb }}"
           echo "Android release: $("$ADB" shell getprop ro.build.version.release | tr -d '\r')"
           echo "Android SDK: $("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"
           echo "Android ABI: $("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r')"
@@ -160,14 +169,14 @@ jobs:
           STRESS_ITERATIONS: "12"
           REQUIRE_PHYSICAL: "0"
           PRESERVE_LOGCAT: "1"
-          OUT_DIR: build/reports/phase4/device-${{ matrix.library_size }}
+          OUT_DIR: build/reports/phase4/device-${{ matrix.library_size }}-ram${{ matrix.ram_mb }}
         run: bash tools/benchmark/run_phase3_device.sh
 
       - name: Extract and validate Phase 4 timings
         shell: bash
         run: |
           set -euo pipefail
-          OUT="build/reports/phase4/device-${{ matrix.library_size }}"
+          OUT="build/reports/phase4/device-${{ matrix.library_size }}-ram${{ matrix.ram_mb }}"
           python3 tools/benchmark/extract_phase4_timings.py \
             --logcat "$OUT/logcat.txt" \
             --macro-log "$OUT/macrobenchmark-gradle.log" \
@@ -181,7 +190,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          OUT="build/reports/phase4/runner-${{ matrix.library_size }}"
+          OUT="build/reports/phase4/runner-${{ matrix.library_size }}-ram${{ matrix.ram_mb }}"
           mkdir -p "$OUT"
           cp "$RUNNER_TEMP/phase4-emulator.log" "$OUT/emulator.log" 2>/dev/null || true
           cp "$RUNNER_TEMP/phase4-avd-list.txt" "$OUT/avd-list.txt" 2>/dev/null || true
@@ -194,7 +203,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: phase4-index-${{ matrix.library_size }}-${{ github.run_id }}
+          name: phase4-index-${{ matrix.library_size }}-ram${{ matrix.ram_mb }}-${{ github.run_id }}
           if-no-files-found: warn
           retention-days: 14
           path: |
