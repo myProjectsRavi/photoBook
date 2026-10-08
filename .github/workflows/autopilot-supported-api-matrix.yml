@@ -1,11 +1,19 @@
 name: Supported API Offline Matrix
 
 on:
+  push:
+    branches:
+      - "autopilot/epics-features-user-stories"
+    paths:
+      - ".github/workflows/autopilot-supported-api-matrix.yml"
+      - "app/**"
+      - "baselineprofile/**"
+      - "tools/benchmark/**"
   workflow_dispatch:
     inputs:
       source_sha:
         description: Exact 40-character commit SHA to verify
-        required: true
+        required: false
         type: string
 
 permissions:
@@ -16,6 +24,10 @@ jobs:
     name: api-${{ matrix.api }}-offline
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    concurrency:
+      group: supported-api-${{ github.ref }}-${{ matrix.api }}
+      cancel-in-progress: true
+
     strategy:
       fail-fast: false
       matrix:
@@ -26,7 +38,7 @@ jobs:
         id: source
         shell: bash
         env:
-          SOURCE_SHA: ${{ inputs.source_sha }}
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
         run: |
           set -euo pipefail
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
