@@ -18,6 +18,15 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
+data class IndexBuildTiming(
+    val elapsedMs: Long,
+    val count: Int,
+    val exifElapsedMs: Long,
+    val geocodeElapsedMs: Long,
+    val geocodeCount: Int,
+    val parallelism: Int,
+)
+
 class IndexBuilder @Inject constructor(
     private val mediaStoreScanner: MediaStoreScanner,
     private val exifExtractor: ExifExtractor,
@@ -82,6 +91,7 @@ class IndexBuilder @Inject constructor(
     suspend fun buildIndexFromRaw(
         rawPhotos: List<RawPhotoData>,
         onProgress: (processed: Int, total: Int) -> Unit = { _, _ -> },
+        onTiming: (IndexBuildTiming) -> Unit = {},
     ): List<PhotoRecord> {
         return withContext(Dispatchers.IO) {
             if (rawPhotos.isEmpty()) {
@@ -123,13 +133,23 @@ class IndexBuilder @Inject constructor(
                 startIndex = endIndex
             }
 
+            val timing = IndexBuildTiming(
+                elapsedMs = SystemClock.elapsedRealtime() - buildStartMs,
+                count = records.size,
+                exifElapsedMs = exifElapsedMs,
+                geocodeElapsedMs = geocodeElapsedMs,
+                geocodeCount = geocodeCount,
+                parallelism = RECORD_BUILD_PARALLELISM,
+            )
             Log.i(
                 PHASE4_TAG,
-                "stage=record_build elapsedMs=${SystemClock.elapsedRealtime() - buildStartMs} " +
-                    "count=${rawPhotos.size} exifElapsedMs=$exifElapsedMs " +
+                "stage=record_build elapsedMs=${timing.elapsedMs} " +
+                    "count=${timing.count} exifElapsedMs=$exifElapsedMs " +
                     "geocodeElapsedMs=$geocodeElapsedMs geocodeCount=$geocodeCount " +
                     "parallelism=$RECORD_BUILD_PARALLELISM",
             )
+            currentCoroutineContext().ensureActive()
+            onTiming(timing)
             records
         }
     }

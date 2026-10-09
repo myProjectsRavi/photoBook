@@ -5,6 +5,7 @@ import android.content.Context
 import android.database.Cursor
 import android.net.Uri
 import android.os.Build
+import android.os.SystemClock
 import android.provider.MediaStore
 import com.photobook.app.data.model.RawPhotoData
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -48,6 +49,7 @@ class MediaStoreScanner @Inject constructor(
     @Suppress("DEPRECATION")
     suspend fun scanAllBatches(
         batchSize: Int = MediaScanBatchPolicy.DEFAULT_BATCH_SIZE,
+        onScanTiming: ((Long, Int) -> Unit)? = null,
         onBatch: suspend (List<RawPhotoData>) -> Unit,
     ) {
         require(batchSize > 0)
@@ -56,6 +58,7 @@ class MediaStoreScanner @Inject constructor(
             selectionArgs = null,
             batchSize = batchSize,
             onBatch = onBatch,
+            onScanTiming = onScanTiming,
         )
     }
 
@@ -108,9 +111,13 @@ class MediaStoreScanner @Inject constructor(
         selectionArgs: Array<String>?,
         batchSize: Int = MediaScanBatchPolicy.DEFAULT_BATCH_SIZE,
         onBatch: (suspend (List<RawPhotoData>) -> Unit)? = null,
+        onScanTiming: ((Long, Int) -> Unit)? = null,
     ): List<RawPhotoData> {
         val projection = mediaStoreImageProjectionForSdk(Build.VERSION.SDK_INT)
 
+        val scanStartMs = SystemClock.elapsedRealtime()
+        var callbackElapsedMs = 0L
+        var scanned = 0
         val photos = if (onBatch == null) mutableListOf<RawPhotoData>() else null
         val pendingBatch = if (onBatch != null) ArrayList<RawPhotoData>(batchSize) else null
         val cursor = query(
@@ -142,7 +149,6 @@ class MediaStoreScanner @Inject constructor(
                 -1
             }
 
-            var scanned = 0
             while (cursor.moveToNext()) {
                 if (scanned % MediaScanBatchPolicy.DEFAULT_BATCH_SIZE == 0) {
                     currentCoroutineContext().ensureActive()
@@ -203,17 +209,34 @@ class MediaStoreScanner @Inject constructor(
                 } else {
                     pendingBatch!!.add(rawPhoto)
                     if (pendingBatch.size >= batchSize) {
-                        onBatch(pendingBatch.toList())
+                        val callbackStartMs = SystemClock.elapsedRealtime()
+                        try {
+                            onBatch(pendingBatch.toList())
+                        } finally {
+                            callbackElapsedMs += SystemClock.elapsedRealtime() - callbackStartMs
+                        }
                         pendingBatch.clear()
                     }
                 }
                 scanned += 1
             }
             if (onBatch != null && pendingBatch!!.isNotEmpty()) {
-                onBatch(pendingBatch.toList())
+                val callbackStartMs = SystemClock.elapsedRealtime()
+                try {
+                    onBatch(pendingBatch.toList())
+                } finally {
+                    callbackElapsedMs += SystemClock.elapsedRealtime() - callbackStartMs
+                }
                 pendingBatch.clear()
             }
         }
+        // Query and cursor work, excluding suspended indexing and persistence callbacks.
+        // Failed or cancelled scans never report a completed measurement.
+        currentCoroutineContext().ensureActive()
+        onScanTiming?.invoke(
+            (SystemClock.elapsedRealtime() - scanStartMs - callbackElapsedMs).coerceAtLeast(0L),
+            scanned,
+        )
         return photos ?: emptyList()
     }
 

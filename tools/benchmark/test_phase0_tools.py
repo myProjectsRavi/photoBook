@@ -23,6 +23,7 @@ if str(TOOLS_DIR) not in sys.path:
 
 import generate_media_fixtures as fixtures  # noqa: E402
 import report_artifact_sizes as sizes  # noqa: E402
+import extract_phase4_timings as timings  # noqa: E402
 
 
 class FixtureGeneratorTest(unittest.TestCase):
@@ -293,6 +294,57 @@ class ArtifactSizeClassifierTest(unittest.TestCase):
             self.assertGreater(categories["models"], 0)
             self.assertGreater(categories["resources"], 0)
             self.assertEqual(artifact.stat().st_size, report["artifact_bytes"])
+
+
+class Phase4AggregateTimingTest(unittest.TestCase):
+    def run_extractor(self, *, completed=True, scan_count=10000, include_persist=True):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            flag = " completed=1" if completed else ""
+            lines = [
+                f"I/PhotoBookPhase4: stage=media_store_scan elapsedMs=120 count={scan_count}{flag}",
+                f"I/PhotoBookPhase4: stage=record_build elapsedMs=400 count=10000 exifElapsedMs=300 geocodeElapsedMs=10 geocodeCount=3 parallelism=2{flag}",
+            ]
+            if include_persist:
+                lines.append(f"I/PhotoBookPhase4: stage=room_fts_persist elapsedMs=150 count=10000{flag}")
+            lines.append("I/PhotoBookPhase4: stage=persisted_load elapsedMs=40 count=10000")
+            (root / "logcat.txt").write_text("\n".join(lines))
+            (root / "macro.txt").write_text("[phase3] indexReady librarySize=10000 elapsedMs=1000 photosPerSecond=10000.0")
+            result = subprocess.run([
+                sys.executable, str(TOOLS_DIR / "extract_phase4_timings.py"),
+                "--logcat", str(root / "logcat.txt"),
+                "--macro-log", str(root / "macro.txt"),
+                "--library-size", "10000",
+                "--output", str(root / "summary.json"),
+                "--raw-output", str(root / "raw.txt"),
+            ], text=True, capture_output=True, check=False)
+            summary = json.loads((root / "summary.json").read_text()) if (root / "summary.json").exists() else None
+            return result, summary
+
+    def test_complete_aggregate_preserves_wall_time(self):
+        result, summary = self.run_extractor()
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(670, summary["attributedMs"])
+        self.assertEqual(330, summary["residualPublicationReadinessMs"])
+        self.assertEqual(3, summary["geocodeCount"])
+
+    def test_partial_batch_markers_rejected(self):
+        result, summary = self.run_extractor(completed=False)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIsNone(summary)
+        self.assertIn("Missing media_store_scan", result.stderr)
+
+    def test_wrong_count_rejected(self):
+        result, summary = self.run_extractor(scan_count=9999)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIsNone(summary)
+        self.assertIn("Missing media_store_scan", result.stderr)
+
+    def test_missing_persistence_rejected(self):
+        result, summary = self.run_extractor(include_persist=False)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIsNone(summary)
+        self.assertIn("Missing room_fts_persist", result.stderr)
 
 
 if __name__ == "__main__":

@@ -449,3 +449,11 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - Phase4 `37955013651` FAILED all six 10k/50k/100k x 2GB/4GB configurations at `g_reelsVerticalSwipeFrameTiming` (no page advance at first swipe); downloaded 10k/2GB artifact `11628293628` confirms full-screen-coordinate 40%-height gesture and real PhotoBook process. Original `ItemSnapshotList` P0 remains UNRESOLVED until complete green scale evidence.
 - New candidate exposes the actual vertical pager's UI test ID and requires it before measuring; swipe coordinates derive from pager visible bounds and exceed half the viewport, with each of 12 page advances checked. Mandatory `FrameTimingMetric` retained. **No PASS is claimed for this untested candidate.**
 - Pending: fresh exact-source Android/targeted/API matrix/Phase4 CI, complete no-fatal/ANR/OOM evidence, S07 accessibility and later reopened stories S09-S32. No physical/OEM certification.
+
+
+## 9 October 2026 — S07 Phase-4 batch timing candidate
+
+- E03 / Design system / S07 remains IN_PROGRESS. Parent source `40c9942f338c6a94307a4add0faa5e449e66e8ef`; main untouched. No later story accepted.
+- Parent Android Verification `37982435890` PASS, offline API35 `37982435832` PASS, supported API matrix `37982435814` ALL SIX PASS. Phase4 `37982435819` terminal FAILURE: 10k/2GB and 100k/4GB seven mandatory macrobenchmarks PASS but missing aggregate scan/build/persist timing markers; other profiles fail page-five Reels or ADB disconnect. P0 ItemSnapshotList crash NOT CLEARED.
+- Dependency-safe candidate measures actual query/cursor scan excluding suspended batch callbacks, aggregates per-batch record/EXIF/geocode work and actual Room/FTS upsert wall time, emits exact-count `completed=1` markers only after successful final commit. Extractor now fails closed on incomplete/mismatched stages; four regression tests added. No timing, privacy, offline, cancellation, size or source-media gates weakened.
+- Changed files: MediaStoreScanner.kt, IndexBuilder.kt, MainViewModel.kt, extract_phase4_timings.py, test_phase0_tools.py, STATE.md, VALIDATION.md. Candidate requires fresh exact-head Android Verification, API35 offline, six-version compatibility and all six Phase4 jobs. Diagnose page-five Reels stall and 100k/2GB emulator disconnect independently. No physical/OEM/camera/battery/thermal evidence or Play upload.

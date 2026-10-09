@@ -6,6 +6,8 @@ import android.database.ContentObserver
 import android.database.sqlite.SQLiteException
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
 import android.provider.MediaStore
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -1696,9 +1698,22 @@ class MainViewModel @Inject constructor(
         // not retain simultaneous full raw + enriched collections.
         val staleIds = existing.asSequence().map { record -> record.id }.toMutableSet()
         var scannedCount = 0
+        var scanMeasuredCount = -1
+        var scanElapsedMs = 0L
+        var recordCount = 0
+        var recordElapsedMs = 0L
+        var exifElapsedMs = 0L
+        var geocodeElapsedMs = 0L
+        var geocodeCount = 0
+        var persistElapsedMs = 0L
         var firstPagePublished = existing.isNotEmpty()
 
-        mediaStoreScanner.scanAllBatches { rawBatch ->
+        mediaStoreScanner.scanAllBatches(
+            onScanTiming = { elapsedMs, count ->
+                scanElapsedMs = elapsedMs
+                scanMeasuredCount = count
+            },
+        ) { rawBatch ->
             currentCoroutineContext().ensureActive()
             if (!accessGenerationGate.isCurrent(accessGeneration)) {
                 throw CancellationException("Photo access changed during MediaStore scan")
@@ -1711,7 +1726,9 @@ class MainViewModel @Inject constructor(
                 if (!accessGenerationGate.isCurrent(accessGeneration)) {
                     throw CancellationException("Photo access changed before basic index commit")
                 }
+                val persistStartMs = SystemClock.elapsedRealtime()
                 indexPersistence.upsertAll(basicBatch)
+                persistElapsedMs += SystemClock.elapsedRealtime() - persistStartMs
                 if (!firstPagePublished && basicBatch.isNotEmpty()) {
                     // Publish browse-safe metadata before EXIF/geocoding/intelligence enrichment.
                     photoIndex.setRecords(basicBatch)
@@ -1736,13 +1753,23 @@ class MainViewModel @Inject constructor(
                 state.copy(indexProgress = (scannedCount / (scannedCount + 1_000f)).coerceAtMost(0.9f))
             }
 
-            val enrichedBatch = indexBuilder.buildIndexFromRaw(rawBatch)
-                .preservingIntelligence(existing)
+            val enrichedBatch = indexBuilder.buildIndexFromRaw(
+                rawPhotos = rawBatch,
+                onTiming = { timing ->
+                    recordCount += timing.count
+                    recordElapsedMs += timing.elapsedMs
+                    exifElapsedMs += timing.exifElapsedMs
+                    geocodeElapsedMs += timing.geocodeElapsedMs
+                    geocodeCount += timing.geocodeCount
+                },
+            ).preservingIntelligence(existing)
             indexCommitCoordinator.withCommit {
                 if (!accessGenerationGate.isCurrent(accessGeneration)) {
                     throw CancellationException("Photo access changed before enrichment commit")
                 }
+                val persistStartMs = SystemClock.elapsedRealtime()
                 indexPersistence.upsertAll(enrichedBatch)
+                persistElapsedMs += SystemClock.elapsedRealtime() - persistStartMs
                 if (photoIndex.size() > 0 && existing.isEmpty() && scannedCount == rawBatch.size) {
                     // Refresh the already-visible first page with EXIF metadata without waiting for
                     // the remainder of the library.
@@ -1764,6 +1791,21 @@ class MainViewModel @Inject constructor(
             val committed = indexPersistence.load()
             photoIndex.setRecords(committed)
             accessGenerationGate.markPublished(accessGeneration)
+        }
+
+        // Emit complete aggregates only after successful scan and final index commit.
+        currentCoroutineContext().ensureActive()
+        if (scanMeasuredCount == scannedCount && recordCount == scannedCount) {
+            Log.i("PhotoBookPhase4", "stage=media_store_scan elapsedMs=$scanElapsedMs count=$scannedCount completed=1")
+            Log.i(
+                "PhotoBookPhase4",
+                "stage=record_build elapsedMs=$recordElapsedMs count=$recordCount " +
+                    "exifElapsedMs=$exifElapsedMs geocodeElapsedMs=$geocodeElapsedMs " +
+                    "geocodeCount=$geocodeCount parallelism=2 completed=1",
+            )
+            Log.i("PhotoBookPhase4", "stage=room_fts_persist elapsedMs=$persistElapsedMs count=$recordCount completed=1")
+        } else {
+            Log.e("PhotoBookPhase4", "stage=measurement_incomplete scanned=$scannedCount scanCount=$scanMeasuredCount recordCount=$recordCount")
         }
     }
 
