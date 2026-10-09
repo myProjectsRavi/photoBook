@@ -423,3 +423,12 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - Branch repairs: `fb1e1f00b95f18ae5224faf3c510c613064cf1d3`, `93afb80fc0f53079c08dcc8a7c1ee0bb751c13d2`, `cf02548206221bde2854631d677a353579c21cb0` (three files; details in STATE.md). They have **no PASS claim** until reproducible exact-source checks complete.
 - Pending exact-source `cf02548206221bde2854631d677a353579c21cb0` runs: Android Verification 37920834608; API-35 targeted 37920834602; supported API matrix 37920834730; phase-4 scale 37920834773. Review full logs and artifacts on completion.
 - Main remains unchanged; hardware performance, OEM/camera/battery/thermal claims are explicitly unavailable.
+
+
+## 9 October 2026 — P0 app crash during large-library measurement
+
+- Original app crash proven by GitHub run 37920834773, 10k/2GB job 113788089767, artifact 11612716304: `PhotoBookDiagnostics [uncaught-main]` and `AndroidRuntime FATAL EXCEPTION main` with `IndexOutOfBoundsException: Illegal attempt to access index 0 in ItemSnapshotList of size 0`. Not a synthetic test failure. 10k/2GB `c_warmStartup` and subsequent readiness failed. Prior scale metrics are NOT accepted.
+- API matrix 37920834730: API 26,29,30,34,36 success; API 33 failed large-font navigation wait after relaunch. Targeted API35 37920834602 succeeded on `cf02548206221bde2854631d677a353579c21cb0`.
+- Android Verification run 37920985738 failed strict ABI declaration report because CI-only x86_64 appeared in raw code; corrected by ARM default + explicit opt-in and stricter parser regression tests at `4b597217159f1038ea8ae19c168eccb14b25274c`.
+- Crash fix candidate `edbd0c7899fed25bc1c4cc9cb896e5b3410c6792`: safe loaded-item lookup and guarded Paging indexing in PhotoGrid; unit coverage. Added emulator paging-churn regression at `dbec4ca868624ac985fd8a86eeba14e3c1c2c5e0`. No full end-to-end PASS claimed yet.
+- Required evidence outstanding: successful exact-tree builds/lint/no-INTERNET/release-size, API 33 200% font journey, all supported API matrix, and Phase-4 benchmarks (10k/50k/100k at 2GB/4GB) with no product crash and valid traces. No physical-device claims.
