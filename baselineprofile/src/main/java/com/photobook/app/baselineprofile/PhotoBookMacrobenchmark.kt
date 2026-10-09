@@ -264,30 +264,44 @@ class PhotoBookMacrobenchmark {
                     "Reels benchmark could not open the seeded PhotoBook viewer"
                 }
                 val (page, count) = requireViewerPageCounter(device)
-                check(count > 1 && page < count) {
-                    "Reels benchmark needs a forward-scrollable viewer, found $page / $count"
+                check(count - page >= REELS_MEASURED_SWIPES) {
+                    "Reels benchmark needs $REELS_MEASURED_SWIPES forward pages, found $page / $count"
                 }
             },
         ) {
-            val initialPage = requireViewerPageCounter(device).first
-            repeat(12) {
+            var currentPage = requireViewerPageCounter(device).first
+            repeat(REELS_MEASURED_SWIPES) { swipeIndex ->
+                // Stay above the bottom metadata/actions overlay. The previous
+                // 78%-height touch-down hit that overlay on hosted emulators.
                 device.swipe(
                     device.displayWidth / 2,
-                    (device.displayHeight * 0.78f).toInt(),
+                    (device.displayHeight * 0.62f).toInt(),
                     device.displayWidth / 2,
-                    (device.displayHeight * 0.24f).toInt(),
-                    12,
+                    (device.displayHeight * 0.22f).toInt(),
+                    28,
                 )
-                // Let the Compose pager finish settling before the next gesture.
-                // Overlapping swipes can cancel the animation and yield an empty
-                // FrameTimingMetric trace despite a visible viewer.
-                device.waitForIdle()
-            }
-            val finalPage = requireViewerPageCounter(device).first
-            check(finalPage > initialPage) {
-                "Reels viewer did not advance: initial=$initialPage final=$finalPage"
+                val nextPage = awaitViewerPageAdvance(device, currentPage)
+                check(nextPage > currentPage) {
+                    "Reels viewer did not advance after swipe ${swipeIndex + 1}: " +
+                        "page=$currentPage; foreground=${device.currentPackageName}; " +
+                        "scrollableNodes=${device.findObjects(By.scrollable(true)).size}"
+                }
+                currentPage = nextPage
+                // UIAutomator idle alone does not wait for Compose pager animations.
+                SystemClock.sleep(350)
             }
         }
+    }
+
+    private fun awaitViewerPageAdvance(device: UiDevice, previousPage: Int): Int {
+        val deadline = SystemClock.elapsedRealtime() + 3_000L
+        var lastPage = previousPage
+        do {
+            lastPage = requireViewerPageCounter(device).first
+            if (lastPage > previousPage) return lastPage
+            SystemClock.sleep(100)
+        } while (SystemClock.elapsedRealtime() < deadline)
+        return lastPage
     }
 
     private fun requireViewerPageCounter(device: UiDevice): Pair<Int, Int> {
@@ -661,6 +675,7 @@ class PhotoBookMacrobenchmark {
         private const val REELS_ACTION_TEXT = "Reel Browsing"
         private const val PHOTOS_TAB_TEXT = "Photos"
         private const val TOOLS_TAB_TEXT = "Tools"
+        private const val REELS_MEASURED_SWIPES = 12
         private const val STARTUP_ITERATIONS = 10
         private const val INTERACTION_ITERATIONS = 5
         private const val UI_TIMEOUT_MS = 8_000L

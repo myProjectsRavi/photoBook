@@ -9,8 +9,8 @@ current_epic: E03 Gallery experience
 current_feature: Independent production review remediation
 current_story: S07 Design system
 status: IN_PROGRESS
-source_commit_tested: cf02548206221bde2854631d677a353579c21cb0 (API-35 pass, API-33 failure; repair not accepted)
-latest_checkpoint_commit: dbec4ca868624ac985fd8a86eeba14e3c1c2c5e0 (crash fix + integration test candidate; CI pending)
+source_commit_tested: 46790c1ce70ee0726dde8c6d8fec94ded6c9bf53 (Phase0 PASS, API33 PASS, API26 CANCELLED, Phase4 FAIL)
+latest_checkpoint_commit: this S07 harness-repair commit (new candidate, CI pending)
 
 ## Source blueprint
 
@@ -942,3 +942,12 @@ S32 is ACCEPTED. The frozen production source is `583da1bac1525f7a2a898e7e58b651
 - This is a **candidate fix only**: exact-source Android compilation, emulator regression and Phase-4 10k/50k/100k reproducibility are still mandatory; P0 not declared resolved until the actual crash is absent from fresh supported artifacts. No physical/OEM/camera/battery/thermal data is claimed; main remains unchanged.
 - Latest code/test candidate: `dbec4ca868624ac985fd8a86eeba14e3c1c2c5e0`. A documentation-only checkpoint may supersede Android Verification run SHA, but must not be mistaken for the code/test candidate.
 - **Exact next executable step:** Use connected GitHub to inspect Android Verification, targeted API-35, supported API matrix and Phase-4 jobs for the latest code/test source (or an identical-tree checkpoint). Diagnose compilation and instrumentation failures from logs; verify macrobenchmark no longer produces the IndexOutOfBoundsException and that readiness/thumbnail/render traces are truly measured; verify release ARM-only ABI, no-INTERNET and size gates, API 33 200% reachability. Do not change `main` or release AAB. Keep hourly automation enabled.
+
+## S07 API26 and Reels test remediation — 9 October 2026
+
+- Epic E03 / Design system / S07 **IN_PROGRESS**. Prior head `46790c1ce70ee0726dde8c6d8fec94ded6c9bf53`; main unchanged. No later reopened story accepted.
+- Android Verification `37939809516` SUCCESS. Unsigned review AAB artifact `11621168363`, 20,844,294 bytes, SHA-256 `627b433ce16ba9ba62a0e8f83aa151dffc44034ea8e270bd456c8d7236af1c26`, ARM-only/no INTERNET/size PASS. NOT Play-ready.
+- Supported API `37939809408`: API29/30/33/34/36 SUCCESS (API33 200% test passed); API26 CANCELLED at 55min. Artifact `11624822073`: Android 8.0 launcher died/restarted on font_scale 2.0; `am start -W HOME` at 13:56:07 hung until cancellation. No API26 PASS.
+- Phase4 `37939809433`: all six 10k/50k/100k x 2GB/4GB jobs FAIL at g Reels viewer not advancing. Downloaded 100k/2GB artifact `11623829697`: six other benchmark tests PASS, 12 short swipes start at 78% screen height near bottom actions. No confirmed app fatal/ANR/OOM in inspected benchmark logcats; a local ML labeling runtime warning requires separate investigation. Original P0 paging crash remains UNRESOLVED without complete green scale matrix.
+- Candidate fixes (test/harness only): API<=27 uses bounded UiAutomator HOME/idle; API>=28 retains API33 synchronous HOME. All 200% assertions remain. Reels starts drag at 62% above bottom overlay, uses 28-step swipe, checks progress after EACH of 12 gestures with bounded polling, and allows Compose animation settling. Mandatory FrameTimingMetric unchanged. Changed: `MainNavigationInstrumentedTest.kt`, `PhotoBookMacrobenchmark.kt`, `STATE.md`, `VALIDATION.md`.
+- **Next step:** inspect exact new branch HEAD and Android Verification, API26/29/30/33/34/36 matrix, and Phase4 all six scale jobs; validate actual page progression/RenderThread timing, crash-free evidence and S07 accessibility. Update tested SHA/CI artifacts after terminal runs. No production release or physical/OEM/camera/battery/thermal claims.

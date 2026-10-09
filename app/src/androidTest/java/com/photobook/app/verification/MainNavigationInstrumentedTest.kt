@@ -93,15 +93,19 @@ class MainNavigationInstrumentedTest {
             )
             // Do not force-stop the target package: instrumentation is hosted in the same
             // package process and force-stop would terminate the test runner itself.
-            // Wait for HOME to finish before relaunching. pressHome() can return while
-            // Android is still starting the launcher; its delayed HOME transition then
-            // steals focus from the successfully relaunched PhotoBook activity on API 33.
-            // am start -W serializes the transition without bypassing the 200% font check.
-            val homeOutput = device.executeShellCommand(
-                "am start -W -a android.intent.action.MAIN -c android.intent.category.HOME",
-            )
-            assertFalse("Could not display HOME: $homeOutput", homeOutput.contains("Error", true))
-            device.waitForIdle()
+            // API 26/27 launcher may restart on font changes. Blocking shell HOME
+            // can hang indefinitely; use UiAutomator with a bounded idle wait.
+            // Keep the serialized HOME transition for API 28+ (API 33 race fix).
+            if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.O_MR1) {
+                device.pressHome()
+                device.waitForIdle(5_000)
+            } else {
+                val homeOutput = device.executeShellCommand(
+                    "am start -W -a android.intent.action.MAIN -c android.intent.category.HOME",
+                )
+                assertFalse("Could not display HOME: $homeOutput", homeOutput.contains("Error", true))
+                device.waitForIdle()
+            }
             val launchIntent = targetContext.packageManager
                 .getLaunchIntentForPackage(targetContext.packageName)
             assertNotNull(launchIntent)
