@@ -412,3 +412,14 @@ Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
 - Repair baseline remains `main` = `d693acd7c52f285b6ba475fdd3712a10e419d4e1`; no main mutation is authorized.
 - Repair implementation through `1b588f323c8ba6da1289b7da58a5daa691ebca4b` is UNVALIDATED as a final candidate. Passing historical runs do not certify these new changes.
 - Required before re-acceptance: focused fault/concurrency/lifecycle/revision/accessibility/crop regressions, populated Room migration, exact-head unit/lint/build/package gates, offline emulator evidence, supported API matrix, release-like performance/memory/frame evidence where hosted infrastructure can measure it, and explicit gaps for unavailable physical/OEM evidence.
+
+
+## 2026-10-09 S07 compatibility remediation results (pending)
+
+- First reopened incomplete story: S07, IN_PROGRESS. Tested base candidate `a2119461459900a0324abdf80f86f02106d66d8f`.
+- Android Verification https://github.com/myProjectsRavi/photoBook/actions/runs/37912893662: **SUCCESS** for the base candidate. Not sufficient for S07 acceptance.
+- Offline supported API matrix https://github.com/myProjectsRavi/photoBook/actions/runs/37912893689: **FAILURE**, API 34 and API 36 successful, API 26/29/30/33 failed. Connected GitHub job logs: API 26 logcat reset incompatible; API 29/33 native ABI mismatch; API 30 `MainNavigationInstrumentedTest.launchMainActivity` failed 2/28 tests (storage permission grant on pre-33 platform absent). No emulator pass inferred for failed jobs.
+- Scale performance https://github.com/myProjectsRavi/photoBook/actions/runs/37912893656: **FAILURE** across the 10k/50k/100k, 2GB/4GB matrix. Representative job logs show warm-start readiness timeout at 10k/2GB and missing thumbnail/render-thread trace at 100k/4GB. Later source performance work remains blocked pending fresh evidence, not waived.
+- Branch repairs: `fb1e1f00b95f18ae5224faf3c510c613064cf1d3`, `93afb80fc0f53079c08dcc8a7c1ee0bb751c13d2`, `cf02548206221bde2854631d677a353579c21cb0` (three files; details in STATE.md). They have **no PASS claim** until reproducible exact-source checks complete.
+- Pending exact-source `cf02548206221bde2854631d677a353579c21cb0` runs: Android Verification 37920834608; API-35 targeted 37920834602; supported API matrix 37920834730; phase-4 scale 37920834773. Review full logs and artifacts on completion.
+- Main remains unchanged; hardware performance, OEM/camera/battery/thermal claims are explicitly unavailable.
