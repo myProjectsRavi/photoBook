@@ -260,11 +260,16 @@ class PhotoBookMacrobenchmark {
                 reelsThumbnailCenter = thumbnailCenter
                 device.click(thumbnailCenter.x, thumbnailCenter.y)
                 val viewerOpened = device.wait(Until.hasObject(By.desc("Close")), THUMBNAIL_TIMEOUT_MS)
-                check(viewerOpened) {
-                    "Reels benchmark could not open the seeded photo viewer"
+                check(viewerOpened && device.hasObject(By.pkg(TARGET_PACKAGE))) {
+                    "Reels benchmark could not open the seeded PhotoBook viewer"
+                }
+                val (page, count) = requireViewerPageCounter(device)
+                check(count > 1 && page < count) {
+                    "Reels benchmark needs a forward-scrollable viewer, found $page / $count"
                 }
             },
         ) {
+            val initialPage = requireViewerPageCounter(device).first
             repeat(12) {
                 device.swipe(
                     device.displayWidth / 2,
@@ -273,9 +278,29 @@ class PhotoBookMacrobenchmark {
                     (device.displayHeight * 0.24f).toInt(),
                     12,
                 )
+                // Let the Compose pager finish settling before the next gesture.
+                // Overlapping swipes can cancel the animation and yield an empty
+                // FrameTimingMetric trace despite a visible viewer.
+                device.waitForIdle()
             }
-            device.waitForIdle()
+            val finalPage = requireViewerPageCounter(device).first
+            check(finalPage > initialPage) {
+                "Reels viewer did not advance: initial=$initialPage final=$finalPage"
+            }
         }
+    }
+
+    private fun requireViewerPageCounter(device: UiDevice): Pair<Int, Int> {
+        val counter = device.findObjects(
+            By.text(java.util.regex.Pattern.compile("^\\d+ / \\d+$")),
+        ).firstOrNull()?.text ?: error(
+            "Reels viewer has no visible page counter; cannot certify vertical paging",
+        )
+        val parts = counter.split(" / ")
+        val page = parts[0].toInt()
+        val count = parts[1].toInt()
+        check(page in 1..count) { "Invalid Reels viewer page counter: $counter" }
+        return page to count
     }
 
     /**
