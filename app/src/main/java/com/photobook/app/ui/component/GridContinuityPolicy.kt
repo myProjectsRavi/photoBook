@@ -3,6 +3,15 @@ package com.photobook.app.ui.component
 import kotlin.math.roundToInt
 
 internal object GridContinuityPolicy {
+    /**
+     * A paging generation may replace its loaded rows with zero rows while retaining
+     * an old LazyGridState index. Never dereference a stale snapshot index.
+     */
+    fun <T> loadedItemAt(index: Int, loadedItems: List<T>, placeholdersBefore: Int): T? {
+        if (index < 0 || placeholdersBefore < 0 || index < placeholdersBefore) return null
+        return loadedItems.getOrNull(index - placeholdersBefore)
+    }
+
     fun loadedAnchorIndex(
         anchorId: Long,
         loadedIds: List<Long>,

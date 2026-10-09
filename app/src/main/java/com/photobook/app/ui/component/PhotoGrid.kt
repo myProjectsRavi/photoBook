@@ -81,9 +81,17 @@ fun PhotoGrid(
 
     LaunchedEffect(gridState, photos) {
         snapshotFlow {
-            gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset
-        }.collectLatest { (index, offset) ->
-            photos.peek(index)?.id?.let { visibleId ->
+            val index = gridState.firstVisibleItemIndex
+            val offset = gridState.firstVisibleItemScrollOffset
+            val snapshot = photos.itemSnapshotList
+            val visibleId = GridContinuityPolicy.loadedItemAt(
+                index = index,
+                loadedItems = snapshot.items,
+                placeholdersBefore = snapshot.placeholdersBefore,
+            )?.id
+            visibleId to offset
+        }.collectLatest { (visibleId, offset) ->
+            if (visibleId != null) {
                 continuityAnchorId = visibleId
                 continuityAnchorOffset = offset
             }
@@ -163,9 +171,22 @@ fun PhotoGrid(
         ) {
             items(
                 count = photos.itemCount,
-                key = { index -> photos.peek(index)?.id ?: "photo-placeholder-$index" },
+                key = { index ->
+                    val snapshot = photos.itemSnapshotList
+                    GridContinuityPolicy.loadedItemAt(
+                        index = index,
+                        loadedItems = snapshot.items,
+                        placeholdersBefore = snapshot.placeholdersBefore,
+                    )?.id ?: "photo-placeholder-$index"
+                },
             ) { index ->
-                val photo = photos[index]
+                // A generation swap can invalidate an already-scheduled LazyGrid item.
+                // Still access Paging for valid placeholders to trigger the next load.
+                val photo = if (index in 0 until photos.itemSnapshotList.size) {
+                    photos[index]
+                } else {
+                    null
+                }
                 if (photo == null) {
                     PhotoGridPlaceholder()
                     return@items

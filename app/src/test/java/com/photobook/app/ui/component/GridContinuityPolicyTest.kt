@@ -5,6 +5,22 @@ import org.junit.Test
 
 class GridContinuityPolicyTest {
     @Test
+    fun loadedItemAt_ignoresStaleIndexDuringEmptySnapshotSwap() {
+        assertThat(GridContinuityPolicy.loadedItemAt(0, emptyList<Long>(), 0)).isNull()
+        assertThat(GridContinuityPolicy.loadedItemAt(2, emptyList<Long>(), 0)).isNull()
+        assertThat(GridContinuityPolicy.loadedItemAt(-1, listOf(1L), 0)).isNull()
+        assertThat(GridContinuityPolicy.loadedItemAt(0, listOf(1L), -1)).isNull()
+    }
+
+    @Test
+    fun loadedItemAt_handlesPlaceholderOffsetsWithoutAccidentalRebinding() {
+        assertThat(GridContinuityPolicy.loadedItemAt(4, listOf(17L, 18L), 5)).isNull()
+        assertThat(GridContinuityPolicy.loadedItemAt(5, listOf(17L, 18L), 5)).isEqualTo(17L)
+        assertThat(GridContinuityPolicy.loadedItemAt(6, listOf(17L, 18L), 5)).isEqualTo(18L)
+        assertThat(GridContinuityPolicy.loadedItemAt(7, listOf(17L, 18L), 5)).isNull()
+    }
+
+    @Test
     fun loadedAnchor_tracksStablePhotoAcrossStructuralInsertion() {
         val before = listOf(10L, 20L, 30L, 40L)
         val after = listOf(5L, 10L, 20L, 30L, 40L)
