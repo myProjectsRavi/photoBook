@@ -182,10 +182,11 @@ android {
         abi {
             isEnable = true
             reset()
+            include("arm64-v8a", "armeabi-v7a")
+            // Only the hosted x86_64 correctness matrix opts into this extra debug ABI.
+            // Normal AAB/release variants retain the two production ARM splits.
             if (compatibilityX86) {
-                include("arm64-v8a", "armeabi-v7a", "x86_64")
-            } else {
-                include("arm64-v8a", "armeabi-v7a")
+                include("x86_64")
             }
             // No universal APK. Preserve the production 30 MiB hard ceiling here. The user-facing
             // Google Play delivered download/install size is a separate release metric and must be

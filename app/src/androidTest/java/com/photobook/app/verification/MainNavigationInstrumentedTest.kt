@@ -107,7 +107,15 @@ class MainNavigationInstrumentedTest {
             )
             assertFalse(launchOutput.contains("Error", ignoreCase = true))
 
-            assertTrue(device.wait(Until.hasObject(By.text("Photos")), 10_000))
+            // Older API emulators can recreate the activity slowly after a 200% font
+            // configuration change. Keep the actual accessibility assertions, but wait
+            // for the target window instead of assuming a 10-second launch.
+            val photosVisible = device.wait(Until.hasObject(By.text("Photos")), 30_000)
+            assertTrue(
+                "Photos absent at 200% font; foreground=${device.currentPackageName}; " +
+                    "launch=$launchOutput",
+                photosVisible,
+            )
             assertTrue(device.wait(Until.hasObject(By.text("Albums")), 10_000))
             assertTrue(device.wait(Until.hasObject(By.text("Tools")), 10_000))
 

@@ -65,10 +65,26 @@ def _declared_abis(text: str) -> set[str]:
     abi_block = _named_block(splits_block, "abi")
     if abi_block is None:
         return set()
-    match = re.search(r"\binclude\(([^)]*)\)", abi_block)
-    if not match:
+    # The production split is unconditional. The one additional x86_64 split is
+    # permitted only behind the explicit CI opt-in with a false default.
+    opt_in = re.compile(
+        r'if\s*\(\s*compatibilityX86\s*\)\s*\{\s*'
+        r'include\(\s*"x86_64"\s*\)\s*\}'
+    )
+    conditionals = opt_in.findall(abi_block)
+    if conditionals:
+        if len(conditionals) != 1 or not re.search(
+            r'val\s+compatibilityX86\s*=\s*providers\.gradleProperty'
+            r'\("photobook\.compatibilityX86"\)'
+            r'[\s\S]{0,180}?\.getOrElse\(false\)',
+            text,
+        ):
+            return set()
+        abi_block = opt_in.sub("", abi_block)
+    includes = re.findall(r'\binclude\(([^)]*)\)', abi_block)
+    if len(includes) != 1:
         return set()
-    return set(re.findall(r'"([^"]+)"', match.group(1)))
+    return set(re.findall(r'"([^"]+)"', includes[0]))
 
 
 def zip_entry_data_offset(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> int:

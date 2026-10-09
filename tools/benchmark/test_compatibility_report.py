@@ -79,6 +79,54 @@ android {
 """
         self.assertEqual({"arm64-v8a", "armeabi-v7a"}, _declared_abis(text))
 
+    def test_opt_in_x86_debug_keeps_release_arm_only(self):
+        text = """
+val compatibilityX86 = providers.gradleProperty("photobook.compatibilityX86")
+    .map(String::toBooleanStrict)
+    .getOrElse(false)
+android {
+    splits {
+        abi {
+            include("arm64-v8a", "armeabi-v7a")
+            if (compatibilityX86) {
+                include("x86_64")
+            }
+        }
+    }
+}
+"""
+        self.assertEqual({"arm64-v8a", "armeabi-v7a"}, _declared_abis(text))
+
+    def test_unconditional_extra_abi_fails_closed(self):
+        text = """
+android {
+    splits {
+        abi {
+            include("arm64-v8a", "armeabi-v7a")
+            include("x86_64")
+        }
+    }
+}
+"""
+        self.assertEqual(set(), _declared_abis(text))
+
+    def test_opt_in_x86_requires_explicit_false_default(self):
+        text = """
+val compatibilityX86 = providers.gradleProperty("photobook.compatibilityX86")
+    .getOrElse(true)
+android {
+    splits {
+        abi {
+            include("arm64-v8a", "armeabi-v7a")
+            if (compatibilityX86) {
+                include("x86_64")
+            }
+        }
+    }
+}
+"""
+        self.assertEqual(set(), _declared_abis(text))
+
     def test_valid_matrix_and_provenance_pass(self):
         tmp, gradle, deps, perms, apk_root, bundle_root = self.fixture()
         self.addCleanup(tmp.cleanup)

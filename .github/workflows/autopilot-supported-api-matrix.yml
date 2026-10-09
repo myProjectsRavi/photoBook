@@ -181,7 +181,9 @@ jobs:
         run: |
           set +e
           adb logcat -d > build/reports/supported-api/logcat.txt 2>/dev/null || true
-          if grep -E 'FATAL EXCEPTION|Fatal signal|ANR in |OutOfMemoryError' build/reports/supported-api/logcat.txt; then
+          # System bluetooth and other framework services can ANR on emulators.
+          # Preserve global fatal/oom markers, but scope ANRs to PhotoBook.
+          if grep -E 'FATAL EXCEPTION|Fatal signal|ANR in com\\.photobook\\.app|OutOfMemoryError' build/reports/supported-api/logcat.txt; then
             echo "Runtime crash marker detected" >&2
             exit 1
           fi
