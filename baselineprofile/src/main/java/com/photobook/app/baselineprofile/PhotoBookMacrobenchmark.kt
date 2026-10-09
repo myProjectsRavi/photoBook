@@ -244,7 +244,7 @@ class PhotoBookMacrobenchmark {
                 // The home action enables vertical paging; it does not itself open
                 // a viewer. Enable it once, then open an actual visible photo card.
                 if (!reelsModeEnabled) {
-                    requireReadyLibrary(device).click()
+                    enableReelsMode(device)
                     reelsModeEnabled = true
                     device.waitForIdle()
                 }
@@ -332,29 +332,59 @@ class PhotoBookMacrobenchmark {
     private fun requireReadyLibrary(
         device: UiDevice,
         timeoutMs: Long = BenchmarkMediaSeeder.readyTimeoutMs(),
-    ): UiObject2 {
+    ) {
         val deadlineMs = SystemClock.elapsedRealtime() + timeoutMs
+        var lastObservedActions = ""
         while (SystemClock.elapsedRealtime() < deadlineMs) {
-            // Search auto-focus is intentionally enabled once the library becomes ready. On
-            // smaller emulator viewports the IME can then cover the action row (and the grid),
-            // making UiAutomator falsely report that "Reel Browsing" never became visible.
-            // Dismiss only a currently visible configured IME; never issue an unconditional
-            // Back press that could navigate out of PhotoBook while indexing is still running.
             if (dismissVisibleIme(device)) {
                 device.waitForIdle()
             }
-
+            // The redesigned Photos-first shell places Reel Browsing in Tools. The old
+            // benchmark waited for it on Photos, so all seven benchmarks timed out even
+            // after the app compiled and displayed its gallery.
             val action = clickableAncestor(device.findObject(By.text(REELS_ACTION_TEXT)))
             if (action?.isEnabled == true) {
-                return action
+                val photosTab = clickableAncestor(device.findObject(By.text(PHOTOS_TAB_TEXT)))
+                check(photosTab != null) { "Photos tab disappeared after gallery readiness" }
+                photosTab.click()
+                device.waitForIdle()
+                return
             }
+            if (action == null) {
+                clickableAncestor(device.findObject(By.text(TOOLS_TAB_TEXT)))?.let { toolsTab ->
+                    toolsTab.click()
+                    device.waitForIdle()
+                }
+            }
+            lastObservedActions = "toolsVisible=${device.hasObject(By.text(TOOLS_TAB_TEXT))} " +
+                "reelsVisible=${device.hasObject(By.text(REELS_ACTION_TEXT))} " +
+                "reelsEnabled=${action?.isEnabled}"
             device.waitForIdle()
             SystemClock.sleep(100)
         }
         error(
             "PhotoBook did not reach its ready state before benchmark measurement; " +
-                "librarySize=${BenchmarkMediaSeeder.requestedLibrarySize()} timeoutMs=$timeoutMs",
+                "librarySize=${BenchmarkMediaSeeder.requestedLibrarySize()} " +
+                "timeoutMs=$timeoutMs $lastObservedActions",
         )
+    }
+
+    private fun enableReelsMode(device: UiDevice) {
+        val toolsTab = clickableAncestor(device.findObject(By.text(TOOLS_TAB_TEXT)))
+            ?: error("Tools tab unavailable for Reel benchmark")
+        toolsTab.click()
+        device.waitForIdle()
+        val action = clickableAncestor(device.wait(
+            Until.findObject(By.text(REELS_ACTION_TEXT)),
+            UI_TIMEOUT_MS,
+        )) ?: error("Reel action unavailable on Tools tab")
+        check(action.isEnabled) { "Reel action disabled after indexing" }
+        action.click()
+        device.waitForIdle()
+        val photosTab = clickableAncestor(device.findObject(By.text(PHOTOS_TAB_TEXT)))
+            ?: error("Photos tab unavailable after enabling Reels")
+        photosTab.click()
+        device.waitForIdle()
     }
 
     /**
@@ -595,6 +625,8 @@ class PhotoBookMacrobenchmark {
         private const val TARGET_PACKAGE = "com.photobook.app"
         private const val TARGET_ACTIVITY = ".MainActivity"
         private const val REELS_ACTION_TEXT = "Reel Browsing"
+        private const val PHOTOS_TAB_TEXT = "Photos"
+        private const val TOOLS_TAB_TEXT = "Tools"
         private const val STARTUP_ITERATIONS = 10
         private const val INTERACTION_ITERATIONS = 5
         private const val UI_TIMEOUT_MS = 8_000L
