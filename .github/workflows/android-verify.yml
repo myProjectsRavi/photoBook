@@ -47,6 +47,49 @@ jobs:
       - name: Run Phase-0 verification
         run: bash tools/benchmark/run_phase0_local.sh
 
+      - name: Package release AAB for independent branch review
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/reports/review-aab
+          mapfile -t BUNDLES < <(find app/build/outputs/bundle/release -maxdepth 1 -type f -name '*.aab' | sort)
+          [[ "${#BUNDLES[@]}" -eq 1 ]] || {
+            echo "Expected exactly one release AAB, found ${#BUNDLES[@]}" >&2
+            exit 1
+          }
+          BUNDLE="${BUNDLES[0]}"
+          BYTES="$(stat -c %s "$BUNDLE")"
+          [[ "$BYTES" -gt 0 && "$BYTES" -le 20971520 ]] || {
+            echo "Release AAB violates 20 MiB size gate: $BYTES" >&2
+            exit 1
+          }
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          SHA256="$(sha256sum "$BUNDLE" | awk '{print $1}')"
+          {
+            echo "purpose=independent_feature_branch_review_only"
+            echo "source_commit=$GITHUB_SHA"
+            echo "source_branch=$GITHUB_REF_NAME"
+            echo "bundle_name=$(basename "$BUNDLE")"
+            echo "bundle_bytes=$BYTES"
+            echo "bundle_sha256=$SHA256"
+            echo "release_signing=unverified_check_signing_before_Play_submission"
+            echo "play_upload=not_authorized"
+          } | tee build/reports/review-aab/manifest.txt
+          test -s build/reports/phase0/compatibility-report.json
+          grep -q '"status": "VALID"' build/reports/phase0/compatibility-report.json
+
+      - name: Upload release AAB for independent branch review
+        uses: actions/upload-artifact@v7
+        with:
+          name: photobook-review-aab-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            app/build/outputs/bundle/release/*.aab
+            build/reports/review-aab/manifest.txt
+            build/reports/phase0/compatibility-report.json
+            build/reports/phase0/artifact-sizes.json
+
       - name: Upload Phase-0 verification evidence
         if: always()
         uses: actions/upload-artifact@v7
