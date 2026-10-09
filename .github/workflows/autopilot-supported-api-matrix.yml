@@ -73,7 +73,7 @@ jobs:
           cache: gradle
 
       - name: Build app and instrumentation
-        run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace
+        run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest -Pphotobook.compatibilityX86=true --stacktrace
 
       - name: Provision emulator
         shell: bash
@@ -132,7 +132,9 @@ jobs:
           adb shell svc data disable || true
           adb shell settings put global airplane_mode_on 1
           adb shell am broadcast -a android.intent.action.AIRPLANE_MODE --ez state true >/dev/null 2>&1 || true
-          adb logcat -c
+          if ! adb logcat -c; then
+            echo "logcat_clear=unavailable" >> build/reports/supported-api/environment.txt
+          fi
 
           ACTUAL_API="$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
           ABI="$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
@@ -152,11 +154,9 @@ jobs:
           API: ${{ matrix.api }}
         run: |
           set -euo pipefail
-          if (( API <= 29 )); then
-            APP_APK="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*armeabi-v7a*.apk' | head -n 1)"
-          else
-            APP_APK="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*arm64-v8a*.apk' | head -n 1)"
-          fi
+          EMULATOR_ABI="$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
+          test "$EMULATOR_ABI" = "x86_64"
+          APP_APK="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*x86_64*.apk' | head -n 1)"
           TEST_APK="$(find app/build/outputs/apk/androidTest/debug -type f -name '*.apk' | head -n 1)"
           test -f "$APP_APK"
           test -f "$TEST_APK"
