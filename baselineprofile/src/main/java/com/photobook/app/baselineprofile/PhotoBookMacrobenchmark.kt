@@ -20,6 +20,7 @@ import androidx.test.uiautomator.Until
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.ceil
+import org.junit.Assume
 import org.junit.Before
 import org.junit.FixMethodOrder
 import org.junit.Rule
@@ -41,6 +42,10 @@ class PhotoBookMacrobenchmark {
 
     @Before
     fun prepareScaleFixture() {
+        // Once readiness has demonstrably failed in this instrumentation process, do not
+        // spend another 4-45 minutes repeating the same failed prerequisite in six metrics.
+        // JUnit reports skipped follow-ups and the existing strict XML gate still fails.
+        Assume.assumeFalse("Index readiness failed earlier in this run", readinessFailed)
         BenchmarkMediaSeeder.ensureSeeded()
     }
 
@@ -362,6 +367,7 @@ class PhotoBookMacrobenchmark {
             device.waitForIdle()
             SystemClock.sleep(100)
         }
+        readinessFailed = true
         error(
             "PhotoBook did not reach its ready state before benchmark measurement; " +
                 "librarySize=${BenchmarkMediaSeeder.requestedLibrarySize()} " +
@@ -622,6 +628,9 @@ class PhotoBookMacrobenchmark {
     )
 
     companion object {
+        @Volatile
+        private var readinessFailed = false
+
         private const val TARGET_PACKAGE = "com.photobook.app"
         private const val TARGET_ACTIVITY = ".MainActivity"
         private const val REELS_ACTION_TEXT = "Reel Browsing"
