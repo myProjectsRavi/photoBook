@@ -234,6 +234,7 @@ class PhotoBookMacrobenchmark {
         ensureSteadyStateIndex()
         var reelsModeEnabled = false
         var reelsThumbnailCenter: TapPoint? = null
+        var reelsPagerBounds: android.graphics.Rect? = null
 
         benchmarkRule.measureRepeated(
             packageName = TARGET_PACKAGE,
@@ -263,6 +264,17 @@ class PhotoBookMacrobenchmark {
                 check(viewerOpened && device.hasObject(By.pkg(TARGET_PACKAGE))) {
                     "Reels benchmark could not open the seeded PhotoBook viewer"
                 }
+                // The page counter exists in both viewer orientations. Do not certify
+                // vertical Reels gestures against a horizontal viewer by accident.
+                val pager = device.wait(
+                    Until.findObject(By.res(REELS_PAGER_TEST_TAG)),
+                    UI_TIMEOUT_MS,
+                ) ?: error("Vertical Reels pager is absent after enabling Reel Browsing")
+                val bounds = pager.visibleBounds
+                check(bounds.width() > 0 && bounds.height() > device.displayHeight / 3) {
+                    "Vertical Reels pager has invalid visible bounds: $bounds"
+                }
+                reelsPagerBounds = android.graphics.Rect(bounds)
                 val (page, count) = requireViewerPageCounter(device)
                 check(count - page >= REELS_MEASURED_SWIPES) {
                     "Reels benchmark needs $REELS_MEASURED_SWIPES forward pages, found $page / $count"
@@ -270,15 +282,17 @@ class PhotoBookMacrobenchmark {
             },
         ) {
             var currentPage = requireViewerPageCounter(device).first
+            val bounds = reelsPagerBounds ?: error("Reels pager bounds were not captured")
             repeat(REELS_MEASURED_SWIPES) { swipeIndex ->
-                // Stay above the bottom metadata/actions overlay. The previous
-                // 78%-height touch-down hit that overlay on hosted emulators.
+                // Use the real pager viewport, not full-screen coordinates, and
+                // move beyond half its height to cross Compose's snap threshold.
+                // Stay clear of the overlaid header and bottom action controls.
                 device.swipe(
-                    device.displayWidth / 2,
-                    (device.displayHeight * 0.62f).toInt(),
-                    device.displayWidth / 2,
-                    (device.displayHeight * 0.22f).toInt(),
-                    28,
+                    bounds.centerX(),
+                    bounds.top + (bounds.height() * 0.72f).toInt(),
+                    bounds.centerX(),
+                    bounds.top + (bounds.height() * 0.12f).toInt(),
+                    16,
                 )
                 val nextPage = awaitViewerPageAdvance(device, currentPage)
                 check(nextPage > currentPage) {
@@ -673,6 +687,7 @@ class PhotoBookMacrobenchmark {
         private const val TARGET_PACKAGE = "com.photobook.app"
         private const val TARGET_ACTIVITY = ".MainActivity"
         private const val REELS_ACTION_TEXT = "Reel Browsing"
+        private const val REELS_PAGER_TEST_TAG = "photobook_reels_vertical_pager"
         private const val PHOTOS_TAB_TEXT = "Photos"
         private const val TOOLS_TAB_TEXT = "Tools"
         private const val REELS_MEASURED_SWIPES = 12

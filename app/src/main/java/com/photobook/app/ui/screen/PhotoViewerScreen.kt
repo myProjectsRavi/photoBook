@@ -745,7 +745,10 @@ fun PhotoViewerScreen(
                                 state = pagerState,
                                 key = { page -> photos.getOrNull(page)?.id ?: page.toLong() },
                                 userScrollEnabled = pagerScrollEnabled,
-                                modifier = Modifier.fillMaxSize(),
+                                // Expose the actual vertical pager to fail-closed UI/performance
+                                // verification. The enclosing viewport exports test tags as IDs.
+                                modifier = Modifier.fillMaxSize()
+                                    .testTag("photobook_reels_vertical_pager"),
                             ) { page ->
                                 photos.getOrNull(page)?.let { photo ->
                                     PhotoPage(
