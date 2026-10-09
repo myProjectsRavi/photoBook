@@ -1,5 +1,6 @@
 package com.photobook.app.verification
 
+import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
@@ -20,8 +21,20 @@ class MainNavigationInstrumentedTest {
 
     @Before
     fun launchMainActivity() {
-        device.executeShellCommand("pm grant ${targetContext.packageName} android.permission.READ_MEDIA_IMAGES")
-        device.executeShellCommand("pm grant ${targetContext.packageName} android.permission.ACCESS_MEDIA_LOCATION")
+        val readPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            "android.permission.READ_MEDIA_IMAGES"
+        } else {
+            "android.permission.READ_EXTERNAL_STORAGE"
+        }
+        val readGrant = device.executeShellCommand(
+            "pm grant ${targetContext.packageName} $readPermission",
+        )
+        assertFalse("Photo permission grant failed: $readGrant", readGrant.contains("Exception"))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            device.executeShellCommand(
+                "pm grant ${targetContext.packageName} android.permission.ACCESS_MEDIA_LOCATION",
+            )
+        }
         val launchIntent = targetContext.packageManager
             .getLaunchIntentForPackage(targetContext.packageName)
         assertNotNull(launchIntent)
