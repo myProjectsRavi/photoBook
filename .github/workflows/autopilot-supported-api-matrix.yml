@@ -136,7 +136,7 @@ jobs:
 
           ACTUAL_API="$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
           ABI="$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
-          RAM_KB="$(adb shell awk '/MemTotal/ {print $2; exit}' /proc/meminfo | tr -d '\r')"
+          RAM_KB="$(adb shell cat /proc/meminfo | tr -d '\r' | awk '/MemTotal/ {print $2; exit}')"
           [[ "$ACTUAL_API" == "$API" ]]
           [[ "$(adb shell settings get global airplane_mode_on | tr -d '\r')" == "1" ]]
           {
