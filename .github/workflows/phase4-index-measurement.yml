@@ -8,10 +8,8 @@ on:
     paths:
       - ".github/workflows/phase4-index-measurement.yml"
       - "app/**"
-      - "app/src/main/java/com/photobook/app/data/index/IndexBuilder.kt"
-      - "app/src/main/java/com/photobook/app/data/index/IndexPersistence.kt"
-      - "tools/benchmark/extract_phase4_timings.py"
-      - "tools/benchmark/phase0_device_stress.sh"
+      - "baselineprofile/**"
+      - "tools/benchmark/**"
   workflow_dispatch:
 
 permissions:
