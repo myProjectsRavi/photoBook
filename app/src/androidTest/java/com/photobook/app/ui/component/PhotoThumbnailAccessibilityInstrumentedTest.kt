@@ -1,5 +1,9 @@
 package com.photobook.app.ui.component
 
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.paging.PagingData
+import androidx.paging.compose.collectAsLazyPagingItems
+import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
@@ -59,6 +63,37 @@ class PhotoThumbnailAccessibilityInstrumentedTest {
         composeRule.onNodeWithContentDescription(photo.fileName, useUnmergedTree = false)
             .assert(SemanticsMatcher.expectValue(SemanticsProperties.Selected, false))
             .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Checkbox))
+    }
+
+    @Test
+    fun gridSurvivesEmptyAndRepopulatedPagingGenerations() {
+        val photo = samplePhoto()
+        val generations = MutableStateFlow(PagingData.from(listOf(photo)))
+        composeRule.setContent {
+            PhotoBookTheme(dynamicColor = false) {
+                PhotoGrid(
+                    photos = generations.collectAsLazyPagingItems(),
+                    columns = 3,
+                    timelineMarks = emptyList(),
+                    selectedPhotoIds = emptySet(),
+                    isSelectionMode = false,
+                    onPhotoClick = {},
+                    onPhotoLongClick = {},
+                    gridState = rememberLazyGridState(),
+                )
+            }
+        }
+        composeRule.waitForIdle()
+        repeat(4) {
+            composeRule.runOnIdle {
+                generations.value = PagingData.empty()
+            }
+            composeRule.waitForIdle()
+            composeRule.runOnIdle {
+                generations.value = PagingData.from(listOf(photo))
+            }
+            composeRule.waitForIdle()
+        }
     }
 
     private fun samplePhoto(): PhotoRecord = PhotoRecord(
