@@ -93,10 +93,15 @@ class MainNavigationInstrumentedTest {
             )
             // Do not force-stop the target package: instrumentation is hosted in the same
             // package process and force-stop would terminate the test runner itself.
-            // HOME backgrounds the activity. Relaunch through the shell so Android 15 cannot
-            // intermittently reject a background activity start from the target app context.
-            // NEW_TASK | CLEAR_TASK still recreates the activity for the new font configuration.
-            device.pressHome()
+            // Wait for HOME to finish before relaunching. pressHome() can return while
+            // Android is still starting the launcher; its delayed HOME transition then
+            // steals focus from the successfully relaunched PhotoBook activity on API 33.
+            // am start -W serializes the transition without bypassing the 200% font check.
+            val homeOutput = device.executeShellCommand(
+                "am start -W -a android.intent.action.MAIN -c android.intent.category.HOME",
+            )
+            assertFalse("Could not display HOME: $homeOutput", homeOutput.contains("Error", true))
+            device.waitForIdle()
             val launchIntent = targetContext.packageManager
                 .getLaunchIntentForPackage(targetContext.packageName)
             assertNotNull(launchIntent)
