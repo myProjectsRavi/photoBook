@@ -233,7 +233,6 @@ class PhotoBookMacrobenchmark {
     fun g_reelsVerticalSwipeFrameTiming() {
         ensureSteadyStateIndex()
         var reelsModeEnabled = false
-        var reelsThumbnailCenter: TapPoint? = null
         var reelsPagerBounds: android.graphics.Rect? = null
 
         benchmarkRule.measureRepeated(
@@ -255,10 +254,10 @@ class PhotoBookMacrobenchmark {
                     device.waitForIdle()
                 }
 
-                val thumbnailCenter = reelsThumbnailCenter
-                    ?: waitForVisiblePhotoThumbnail(device)
+                // Closing the previous Reels iteration can change the grid anchor.
+                // Reacquire a live visible card instead of reusing stale screen coordinates.
+                val thumbnailCenter = waitForVisiblePhotoThumbnail(device)
                     ?: error("Reels benchmark requires a visible photo thumbnail")
-                reelsThumbnailCenter = thumbnailCenter
                 device.click(thumbnailCenter.x, thumbnailCenter.y)
                 val viewerOpened = device.wait(Until.hasObject(By.desc("Close")), THUMBNAIL_TIMEOUT_MS)
                 check(viewerOpened && device.hasObject(By.pkg(TARGET_PACKAGE))) {
