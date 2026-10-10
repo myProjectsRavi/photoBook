@@ -301,18 +301,26 @@ class PhotoBookMacrobenchmark {
                         "scrollableNodes=${device.findObjects(By.scrollable(true)).size}"
                 }
                 currentPage = nextPage
-                // UIAutomator idle alone does not wait for Compose pager animations.
-                SystemClock.sleep(350)
+                // The page counter can advance before the Compose pager finishes
+                // settling. Keep the next gesture out of that animation.
+                SystemClock.sleep(500)
             }
         }
     }
 
     private fun awaitViewerPageAdvance(device: UiDevice, previousPage: Int): Int {
-        val deadline = SystemClock.elapsedRealtime() + 3_000L
+        val deadline = SystemClock.elapsedRealtime() + 4_000L
         var lastPage = previousPage
+        var stableForwardSamples = 0
         do {
-            lastPage = requireViewerPageCounter(device).first
-            if (lastPage > previousPage) return lastPage
+            val observedPage = requireViewerPageCounter(device).first
+            if (observedPage > previousPage && observedPage == lastPage) {
+                stableForwardSamples++
+            } else {
+                stableForwardSamples = if (observedPage > previousPage) 1 else 0
+            }
+            lastPage = observedPage
+            if (stableForwardSamples >= 3) return lastPage
             SystemClock.sleep(100)
         } while (SystemClock.elapsedRealtime() < deadline)
         return lastPage
