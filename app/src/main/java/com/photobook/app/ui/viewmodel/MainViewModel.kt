@@ -842,7 +842,13 @@ class MainViewModel @Inject constructor(
         runCatching { TaggingWorker.enqueueFocusedPhoto(context, photoId) }
         if (
             state.viewerUsesVisibleWindow &&
-            shouldRecentreViewerWindow(currentIndex, state.viewerPhotos.size)
+            shouldRecentreViewerWindow(
+                currentIndex = currentIndex,
+                windowSize = state.viewerPhotos.size,
+                atVisibleStart = state.viewerPhotos.firstOrNull()?.id == latestVisibleResultIds.firstOrNull(),
+                atVisibleEnd = state.viewerPhotos.lastOrNull()?.id == latestVisibleResultIds.lastOrNull(),
+                threshold = VIEWER_WINDOW_RECENTER_THRESHOLD,
+            )
         ) {
             val window = resolveVisiblePhotoWindow(photoId)
             if (window != null) {
@@ -1955,12 +1961,6 @@ class MainViewModel @Inject constructor(
         )
     }
 
-    private fun shouldRecentreViewerWindow(currentIndex: Int, windowSize: Int): Boolean {
-        if (windowSize <= VIEWER_WINDOW_RECENTER_THRESHOLD * 2 + 1) return false
-        return currentIndex <= VIEWER_WINDOW_RECENTER_THRESHOLD ||
-            currentIndex >= windowSize - VIEWER_WINDOW_RECENTER_THRESHOLD - 1
-    }
-
     private fun maybeRefreshMemoryStories(snapshot: AccessScopedPhotoSnapshot) {
         val structuralRevision = photoIndex.structuralRevision()
         if (
@@ -2354,6 +2354,18 @@ internal suspend fun commitLimitedAccessReconciliation(
         accessGenerationGate.markPublished(accessGeneration)
         committedVisible
     }
+}
+
+internal fun shouldRecentreViewerWindow(
+    currentIndex: Int,
+    windowSize: Int,
+    atVisibleStart: Boolean,
+    atVisibleEnd: Boolean,
+    threshold: Int,
+): Boolean {
+    if (currentIndex !in 0 until windowSize || windowSize <= threshold * 2 + 1) return false
+    return (currentIndex <= threshold && !atVisibleStart) ||
+        (currentIndex >= windowSize - threshold - 1 && !atVisibleEnd)
 }
 
 internal fun visiblePersistedRecordsForAccess(

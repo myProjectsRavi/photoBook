@@ -323,6 +323,12 @@ class PhotoBookMacrobenchmark {
             if (stableForwardSamples >= 3) return lastPage
             SystemClock.sleep(100)
         } while (SystemClock.elapsedRealtime() < deadline)
+        check(stableForwardSamples >= 3) {
+            "Reels page did not settle within 4s: previousPage=$previousPage; " +
+                "observedPage=$lastPage; stableSamples=$stableForwardSamples; " +
+                "foreground=${device.currentPackageName}; " +
+                "scrollableNodes=${device.findObjects(By.scrollable(true)).size}"
+        }
         return lastPage
     }
 

@@ -9,8 +9,8 @@ current_epic: E03 Gallery experience
 current_feature: Independent production review remediation
 current_story: S07 Design system
 status: IN_PROGRESS
-source_commit_tested: 46790c1ce70ee0726dde8c6d8fec94ded6c9bf53 (Phase0 PASS, API33 PASS, API26 CANCELLED, Phase4 FAIL)
-latest_checkpoint_commit: this S07 harness-repair commit (new candidate, CI pending)
+source_commit_tested: 4004b9c29159ef48cae69e7684720f1094c4c6a2 (Android Verification and six-API PASS; Phase4 3/6 PASS, 3/6 FAIL)
+latest_checkpoint_commit: this S07 viewer boundary + benchmark fail-closed candidate (CI pending)
 
 ## Source blueprint
 
@@ -970,3 +970,11 @@ S32 is ACCEPTED. The frozen production source is `583da1bac1525f7a2a898e7e58b651
 - Parent Android Verification `37982435890` PASS, offline API35 `37982435832` PASS, supported API matrix `37982435814` ALL SIX PASS. Phase4 `37982435819` terminal FAILURE: 10k/2GB and 100k/4GB seven mandatory macrobenchmarks PASS but missing aggregate scan/build/persist timing markers; other profiles fail page-five Reels or ADB disconnect. P0 ItemSnapshotList crash NOT CLEARED.
 - Dependency-safe candidate measures actual query/cursor scan excluding suspended batch callbacks, aggregates per-batch record/EXIF/geocode work and actual Room/FTS upsert wall time, emits exact-count `completed=1` markers only after successful final commit. Extractor now fails closed on incomplete/mismatched stages; four regression tests added. No timing, privacy, offline, cancellation, size or source-media gates weakened.
 - Changed files: MediaStoreScanner.kt, IndexBuilder.kt, MainViewModel.kt, extract_phase4_timings.py, test_phase0_tools.py, STATE.md, VALIDATION.md. Candidate requires fresh exact-head Android Verification, API35 offline, six-version compatibility and all six Phase4 jobs. Diagnose page-five Reels stall and 100k/2GB emulator disconnect independently. No physical/OEM/camera/battery/thermal evidence or Play upload.
+
+## S07 viewer boundary and fail-closed pager candidate — 10 October 2026
+
+- Prior exact source `4004b9c29159ef48cae69e7684720f1094c4c6a2`: Android Verification `38025575995` SUCCESS; six-API `38025575990` all SUCCESS; exact-head API35 targeted not yet verified. Unsigned review AAB artifact `11659239035`, 20,848,507 bytes, SHA256 `ed9050ade9f0696920fabca006596c0ed18c9e55e22cc8bb8d6ec64c06b060b7`; ARM-only/no INTERNET/size PASS, NOT Play-ready.
+- Phase4 `38025575912` TERMINAL FAILURE: 10k/2GB, 10k/4GB, 50k/2GB SUCCESS; 50k/4GB job `114135596255` FAIL at Reels swipe 8 (artifact `11660441735`); 100k/2GB job `114135596212` FAIL at swipe 4 (artifact `11661343686`); 100k/4GB job `114135596325` FAIL at Reels (artifact `11661801420`). These are real failed mandatory progress checks; no full six-profile certification. Original ItemSnapshotList P0 remains UNRESOLVED. S17 ML-labeling NPE tracked separately.
+- Confirmed test defect: `awaitViewerPageAdvance` could time out with fewer than three stable observations yet return a transient forward page. Candidate now fails closed with observed page, sample count and pager context. All 12 swipes and mandatory FrameTimingMetric remain required.
+- Production-side candidate: near the global first/last photo, `onViewerPhotoChanged` unnecessarily reconstructed the visible window on every edge swipe. Candidate guards recentering when already anchored at that global boundary while still recentering toward the opposite edge; focused unit tests cover both boundaries, middle and small windows. Do not claim this is the proven sole root cause until full exact-source CI.
+- **Next:** inspect exact new HEAD and Android Verification, targeted API35 if available, six-API and six-scale Phase4 jobs; diagnose any failure from logs/artifacts, validate no PhotoBook fatal/ANR/OOM and strict timings, then update canonical evidence. Do not alter main, publish/release, weaken privacy/size/destructive safeguards, or claim physical-device evidence. S07 remains IN_PROGRESS; production LGTM NO.
