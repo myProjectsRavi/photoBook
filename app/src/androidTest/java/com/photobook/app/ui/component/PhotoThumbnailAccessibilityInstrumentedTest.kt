@@ -1,6 +1,12 @@
 package com.photobook.app.ui.component
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import androidx.paging.PagingData
 import androidx.paging.compose.collectAsLazyPagingItems
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -8,10 +14,14 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.ui.screen.SelectionActionBar
 import com.photobook.app.ui.theme.PhotoBookTheme
 import org.junit.Rule
 import org.junit.Test
@@ -63,6 +73,47 @@ class PhotoThumbnailAccessibilityInstrumentedTest {
         composeRule.onNodeWithContentDescription(photo.fileName, useUnmergedTree = false)
             .assert(SemanticsMatcher.expectValue(SemanticsProperties.Selected, false))
             .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Checkbox))
+    }
+
+    @Test
+    fun selectionActions_remainReachableAt320dpAnd200PercentFont() {
+        val selected = setOf(11L, 12L, 13L)
+        var trashRequest: Set<Long>? = null
+        var shareRequest: Set<Long>? = null
+        var clearRequests = 0
+
+        composeRule.setContent {
+            PhotoBookTheme(dynamicColor = false) {
+                CompositionLocalProvider(LocalDensity provides Density(1f, 2f)) {
+                    Box(modifier = androidx.compose.ui.Modifier.width(320.dp)) {
+                        SelectionActionBar(
+                            selectedPhotoIds = selected,
+                            onClearSelection = { clearRequests++ },
+                            onShareSelected = { shareRequest = it },
+                            onMoveSelectedToTrash = { trashRequest = it },
+                            onCreatePdfSelected = {},
+                            onAddSelectedToVault = {},
+                            onCopyTextFromPhoto = {},
+                        )
+                    }
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("3 selected").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Clear selection").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Share selected").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Move to Trash").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("More selection actions").assertIsDisplayed()
+
+        composeRule.onNodeWithContentDescription("Move to Trash").performClick()
+        composeRule.onNodeWithContentDescription("Share selected").performClick()
+        composeRule.onNodeWithContentDescription("Clear selection").performClick()
+        composeRule.runOnIdle {
+            org.junit.Assert.assertEquals(selected, trashRequest)
+            org.junit.Assert.assertEquals(selected, shareRequest)
+            org.junit.Assert.assertEquals(1, clearRequests)
+        }
     }
 
     @Test
