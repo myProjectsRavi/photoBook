@@ -39,6 +39,7 @@
     <string name="share_prep_option_blur_faces_subtitle">Applies an offline privacy blur over faces in shared copies.</string>
     <string name="share_prep_continue">Continue to Share</string>
     <string name="clear_selection">Clear selection</string>
+    <string name="more_selection_actions">More selection actions</string>
     <string name="declutter_action">Declutter</string>
     <string name="declutter_title">Declutter swipe</string>
     <string name="declutter_progress">%1$d of %2$d</string>
