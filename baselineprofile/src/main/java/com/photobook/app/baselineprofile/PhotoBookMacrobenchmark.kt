@@ -14,6 +14,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
+import androidx.test.uiautomator.Direction
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
@@ -233,7 +234,6 @@ class PhotoBookMacrobenchmark {
     fun g_reelsVerticalSwipeFrameTiming() {
         ensureSteadyStateIndex()
         var reelsModeEnabled = false
-        var reelsPagerBounds: android.graphics.Rect? = null
 
         benchmarkRule.measureRepeated(
             packageName = TARGET_PACKAGE,
@@ -273,7 +273,6 @@ class PhotoBookMacrobenchmark {
                 check(bounds.width() > 0 && bounds.height() > device.displayHeight / 3) {
                     "Vertical Reels pager has invalid visible bounds: $bounds"
                 }
-                reelsPagerBounds = android.graphics.Rect(bounds)
                 val (page, count) = requireViewerPageCounter(device)
                 check(count - page >= REELS_MEASURED_SWIPES) {
                     "Reels benchmark needs $REELS_MEASURED_SWIPES forward pages, found $page / $count"
@@ -281,18 +280,19 @@ class PhotoBookMacrobenchmark {
             },
         ) {
             var currentPage = requireViewerPageCounter(device).first
-            val bounds = reelsPagerBounds ?: error("Reels pager bounds were not captured")
             repeat(REELS_MEASURED_SWIPES) { swipeIndex ->
-                // Use the real pager viewport, not full-screen coordinates, and
-                // move beyond half its height to cross Compose's snap threshold.
-                // Stay clear of the overlaid header and bottom action controls.
-                device.swipe(
-                    bounds.centerX(),
-                    bounds.top + (bounds.height() * 0.72f).toInt(),
-                    bounds.centerX(),
-                    bounds.top + (bounds.height() * 0.12f).toInt(),
-                    16,
-                )
+                // Re-resolve the actual pager after each navigation/recomposition.
+                // Reusing stale raw screen coordinates made a 50k/4GB iteration
+                // land on non-pager content after its first successful page change.
+                // A scoped UIAutomator gesture exercises the real accessibility
+                // viewport; all twelve forward transitions remain mandatory.
+                val pager = device.findObject(By.res(REELS_PAGER_TEST_TAG))
+                    ?: error("Vertical Reels pager absent at swipe ${swipeIndex + 1}")
+                val liveBounds = pager.visibleBounds
+                check(liveBounds.width() > 0 && liveBounds.height() > device.displayHeight / 3) {
+                    "Vertical Reels pager invalid during swipe ${swipeIndex + 1}: $liveBounds"
+                }
+                pager.swipe(Direction.UP, 0.60f, 1_200)
                 val nextPage = awaitViewerPageAdvance(device, currentPage)
                 check(nextPage > currentPage) {
                     "Reels viewer did not advance after swipe ${swipeIndex + 1}: " +
