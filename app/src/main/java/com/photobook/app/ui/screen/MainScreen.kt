@@ -35,6 +35,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -161,6 +167,12 @@ fun MainScreen(
     val isSelectionMode = selectedPhotoIds.isNotEmpty()
     var destination by rememberSaveable { mutableStateOf(MainDestination.Photos) }
     val photoGridState = rememberLazyGridState()
+    var selectionBarHeightPx by remember { mutableIntStateOf(0) }
+    val selectionGridClearance = if (isSelectionMode) {
+        maxOf(128.dp, with(LocalDensity.current) { selectionBarHeightPx.toDp() } + 48.dp)
+    } else {
+        0.dp
+    }
     val searchFeedback = SearchFeedbackPolicy.resolve(
         searchReady = searchReady,
         query = query,
@@ -502,6 +514,7 @@ fun MainScreen(
                                 onPhotoClick = onPhotoClick,
                                 onPhotoLongClick = onPhotoLongClick,
                                 gridState = photoGridState,
+                                bottomContentPadding = selectionGridClearance,
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
@@ -510,92 +523,29 @@ fun MainScreen(
             }
         }
 
-        // Selection Bar overlay
+        // Measure the actual selection bar, including scaled text, and keep the final grid
+        // rows scrollable above it instead of covering thumbnails with a fixed overlay.
         if (isSelectionMode) {
-             Surface(
+            Surface(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(horizontal = 16.dp, vertical = 24.dp)
-                    .fillMaxWidth(),
+                    .fillMaxWidth()
+                    .onSizeChanged { selectionBarHeightPx = it.height },
                 shape = RoundedCornerShape(24.dp),
                 tonalElevation = 8.dp,
                 color = GlassSurface.copy(alpha = 0.94f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorder)
+                border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorder),
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = stringResource(R.string.selection_count, selectedPhotoIds.size),
-                        fontWeight = FontWeight.Black
-                    )
-                    var selectionMenuExpanded by remember { mutableStateOf(false) }
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        IconButton(onClick = onClearSelection) {
-                            Icon(Icons.Default.Close, contentDescription = "Clear selection")
-                        }
-                        IconButton(onClick = { onShareSelected(selectedPhotoIds) }) {
-                            Icon(Icons.Default.Share, contentDescription = stringResource(R.string.share_selected))
-                        }
-                        Box {
-                            IconButton(onClick = { selectionMenuExpanded = true }) {
-                                Icon(Icons.Default.MoreVert, contentDescription = "More selection actions")
-                            }
-                            DropdownMenu(
-                                expanded = selectionMenuExpanded,
-                                onDismissRequest = { selectionMenuExpanded = false },
-                            ) {
-                                if (selectedPhotoIds.size == 1) {
-                                    DropdownMenuItem(
-                                        text = { Text("Copy text from photo") },
-                                        leadingIcon = { Icon(Icons.Default.ContentCopy, null) },
-                                        onClick = {
-                                            selectionMenuExpanded = false
-                                            onCopyTextFromPhoto(selectedPhotoIds.first())
-                                        },
-                                    )
-                                }
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.create_pdf_selected)) },
-                                    leadingIcon = { Icon(Icons.Default.PictureAsPdf, null) },
-                                    onClick = {
-                                        selectionMenuExpanded = false
-                                        onCreatePdfSelected(selectedPhotoIds)
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.vault_add_selected)) },
-                                    leadingIcon = { Icon(Icons.Default.Lock, null) },
-                                    onClick = {
-                                        selectionMenuExpanded = false
-                                        onAddSelectedToVault(selectedPhotoIds)
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            stringResource(R.string.trash_selected),
-                                            color = MaterialTheme.colorScheme.error,
-                                        )
-                                    },
-                                    leadingIcon = {
-                                        Icon(
-                                            Icons.Default.Delete,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.error,
-                                        )
-                                    },
-                                    onClick = {
-                                        selectionMenuExpanded = false
-                                        onMoveSelectedToTrash(selectedPhotoIds)
-                                    },
-                                )
-                            }
-                        }
-                    }
-                }
+                SelectionActionBar(
+                    selectedPhotoIds = selectedPhotoIds,
+                    onClearSelection = onClearSelection,
+                    onShareSelected = onShareSelected,
+                    onMoveSelectedToTrash = onMoveSelectedToTrash,
+                    onCreatePdfSelected = onCreatePdfSelected,
+                    onAddSelectedToVault = onAddSelectedToVault,
+                    onCopyTextFromPhoto = onCopyTextFromPhoto,
+                )
             }
         }
 
@@ -609,6 +559,102 @@ fun MainScreen(
                 onRefresh = onRefreshDuplicates,
                 onPhotoClick = onDuplicatePhotoClick,
             )
+        }
+    }
+}
+
+/**
+ * The destructive action remains a request for system-confirmed Trash, never a direct delete.
+ * Count/Close and Share/Trash/More have separate rows so all controls stay reachable at 320dp
+ * and 200% font scale, with at least 48dp touch targets.
+ */
+@Composable
+internal fun SelectionActionBar(
+    selectedPhotoIds: Set<Long>,
+    onClearSelection: () -> Unit,
+    onShareSelected: (Set<Long>) -> Unit,
+    onMoveSelectedToTrash: (Set<Long>) -> Unit,
+    onCreatePdfSelected: (Set<Long>) -> Unit,
+    onAddSelectedToVault: (Set<Long>) -> Unit,
+    onCopyTextFromPhoto: (Long) -> Unit,
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = stringResource(R.string.selection_count, selectedPhotoIds.size),
+                color = Color(0xFF111827),
+                fontWeight = FontWeight.Black,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = onClearSelection, modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)) {
+                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.clear_selection))
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
+            IconButton(
+                onClick = { onShareSelected(selectedPhotoIds) },
+                modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
+            ) {
+                Icon(Icons.Default.Share, contentDescription = stringResource(R.string.share_selected))
+            }
+            IconButton(
+                onClick = { onMoveSelectedToTrash(selectedPhotoIds) },
+                modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
+            ) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = stringResource(R.string.trash_selected),
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            }
+            Box {
+                IconButton(
+                    onClick = { menuExpanded = true },
+                    modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
+                ) {
+                    Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.more_selection_actions))
+                }
+                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    if (selectedPhotoIds.size == 1) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.viewer_copy_text_title)) },
+                            leadingIcon = { Icon(Icons.Default.ContentCopy, null) },
+                            onClick = {
+                                menuExpanded = false
+                                onCopyTextFromPhoto(selectedPhotoIds.first())
+                            },
+                        )
+                    }
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.create_pdf_selected)) },
+                        leadingIcon = { Icon(Icons.Default.PictureAsPdf, null) },
+                        onClick = {
+                            menuExpanded = false
+                            onCreatePdfSelected(selectedPhotoIds)
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.vault_add_selected)) },
+                        leadingIcon = { Icon(Icons.Default.Lock, null) },
+                        onClick = {
+                            menuExpanded = false
+                            onAddSelectedToVault(selectedPhotoIds)
+                        },
+                    )
+                }
+            }
         }
     }
 }
@@ -836,7 +882,10 @@ private fun RefinedTabButton(
 
     Surface(
         onClick = onClick,
-        modifier = modifier.padding(2.dp),
+        modifier = modifier.padding(2.dp).semantics {
+            this.role = Role.Tab
+            this.selected = selected
+        },
         color = backgroundColor,
         shape = RoundedCornerShape(12.dp),
         tonalElevation = if (selected) 2.dp else 0.dp
