@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -38,6 +39,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.paging.compose.LazyPagingItems
 import com.photobook.app.data.model.PhotoRecord
@@ -60,6 +62,7 @@ fun PhotoGrid(
     onPhotoLongClick: (PhotoRecord) -> Unit,
     gridState: LazyGridState,
     modifier: Modifier = Modifier,
+    bottomContentPadding: Dp = 0.dp,
 ) {
     val haptics = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
@@ -167,6 +170,7 @@ fun PhotoGrid(
         LazyVerticalGrid(
             state = gridState,
             columns = GridCells.Fixed(columns),
+            contentPadding = PaddingValues(bottom = bottomContentPadding),
             modifier = Modifier.fillMaxSize(),
         ) {
             items(
