@@ -14,7 +14,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
-import androidx.test.uiautomator.Direction
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
@@ -292,7 +291,17 @@ class PhotoBookMacrobenchmark {
                 check(liveBounds.width() > 0 && liveBounds.height() > device.displayHeight / 3) {
                     "Vertical Reels pager invalid during swipe ${swipeIndex + 1}: $liveBounds"
                 }
-                pager.swipe(Direction.UP, 0.60f, 1_200)
+                // UIAutomator's element-scoped swipe left the real pager on page one
+                // across all six scale profiles. Inject an actual physical pointer
+                // gesture using freshly resolved pager coordinates on EVERY swipe.
+                // Do not replace page advancement with an accessibility scroll action.
+                device.swipe(
+                    liveBounds.centerX(),
+                    liveBounds.top + (liveBounds.height() * 0.72f).toInt(),
+                    liveBounds.centerX(),
+                    liveBounds.top + (liveBounds.height() * 0.12f).toInt(),
+                    28,
+                )
                 val nextPage = awaitViewerPageAdvance(device, currentPage)
                 check(nextPage > currentPage) {
                     "Reels viewer did not advance after swipe ${swipeIndex + 1}: " +
