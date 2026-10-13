@@ -253,6 +253,8 @@ class PhotoThumbnailAccessibilityInstrumentedTest {
         val generations = MutableStateFlow(PagingData.from(photos))
         var pinnedAlbum: AlbumDescriptor? = null
         var selectedAlbum: AlbumDescriptor? = null
+        var pinCallbacks = 0
+        var scopeCallbacks = 0
 
         composeRule.setContent {
             PhotoBookTheme(dynamicColor = false) {
@@ -305,8 +307,14 @@ class PhotoThumbnailAccessibilityInstrumentedTest {
                             onManagePhotoAccess = {},
                             onOpenArchives = {},
                             onOpenDeclutter = {},
-                            onAlbumSelected = { selectedAlbum = it },
-                            onToggleAlbumPinned = { pinnedAlbum = it },
+                            onAlbumSelected = {
+                                selectedAlbum = it
+                                scopeCallbacks++
+                            },
+                            onToggleAlbumPinned = {
+                                pinnedAlbum = it
+                                pinCallbacks++
+                            },
                             onToggleMemoriesHidden = {},
                             onClearAlbumScope = {},
                             onOpenDuplicateFinder = {},
@@ -326,10 +334,15 @@ class PhotoThumbnailAccessibilityInstrumentedTest {
         composeRule.onNodeWithContentDescription("Pin Camera roll").assertIsDisplayed().performClick()
         composeRule.runOnIdle {
             org.junit.Assert.assertEquals(album, pinnedAlbum)
+            org.junit.Assert.assertNull("Pin action must not open the album", selectedAlbum)
+            org.junit.Assert.assertEquals(1, pinCallbacks)
+            org.junit.Assert.assertEquals(0, scopeCallbacks)
         }
         composeRule.onNodeWithText("Camera roll (1)").assertIsDisplayed().performClick()
         composeRule.runOnIdle {
             org.junit.Assert.assertEquals(album, selectedAlbum)
+            org.junit.Assert.assertEquals(1, scopeCallbacks)
+            org.junit.Assert.assertEquals("Opening an album must not toggle its pin", 1, pinCallbacks)
         }
         composeRule.onNodeWithText("Photos").assertIsDisplayed()
     }
