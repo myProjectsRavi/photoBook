@@ -26,6 +26,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.ui.screen.SelectionActionBar
 import com.photobook.app.ui.screen.MainScreen
+import com.photobook.app.ui.model.AlbumDescriptor
+import com.photobook.app.ui.model.AlbumKind
+import com.photobook.app.ui.model.AlbumScope
 import com.photobook.app.ui.theme.PhotoBookTheme
 import org.junit.Rule
 import org.junit.Test
@@ -234,6 +237,101 @@ class PhotoThumbnailAccessibilityInstrumentedTest {
         ).performScrollToIndex(photos.lastIndex)
         composeRule.onNodeWithContentDescription("item-59.jpg").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Move to Trash").assertIsDisplayed()
+    }
+
+
+    @Test
+    fun fullMainScreen_albumPinAndScopeRemainReachableAt320dpAnd200PercentFont() {
+        val album = AlbumDescriptor(
+            key = "folder:test",
+            label = "Camera roll",
+            count = 1,
+            kind = AlbumKind.Folder,
+            scope = AlbumScope.Folder("/test"),
+        )
+        val photos = listOf(samplePhoto())
+        val generations = MutableStateFlow(PagingData.from(photos))
+        var pinnedAlbum: AlbumDescriptor? = null
+        var selectedAlbum: AlbumDescriptor? = null
+
+        composeRule.setContent {
+            PhotoBookTheme(dynamicColor = false) {
+                CompositionLocalProvider(LocalDensity provides Density(1f, 2f)) {
+                    Box(modifier = androidx.compose.ui.Modifier.width(320.dp).height(640.dp)) {
+                        MainScreen(
+                            query = "",
+                            results = generations.collectAsLazyPagingItems(),
+                            resultCount = photos.size,
+                            resultQuery = "",
+                            searchReady = true,
+                            favoritesOnly = false,
+                            reelsEnabled = false,
+                            selectedPhotoIds = emptySet(),
+                            timelineMarks = emptyList(),
+                            suggestions = emptyList(),
+                            showSuggestions = false,
+                            onThisDayStory = null,
+                            memoryStories = emptyList(),
+                            duplicateGroups = emptyList(),
+                            isFindingDuplicates = false,
+                            duplicateScanProgress = null,
+                            duplicateScanIncomplete = false,
+                            showDuplicateFinder = false,
+                            archiveCandidateCount = 0,
+                            archiveDueDeleteCount = 0,
+                            limitedPhotoAccess = false,
+                            albumCatalog = listOf(album),
+                            pinnedAlbumKeys = emptyList(),
+                            memoriesHidden = false,
+                            activeAlbumLabel = null,
+                            onQueryChange = {},
+                            onSearchSubmitted = {},
+                            onSearchFocusChanged = {},
+                            onSuggestionSelected = {},
+                            onClearQuery = {},
+                            onToggleFavoritesOnly = {},
+                            onToggleReels = {},
+                            onLogoClick = {},
+                            onShareSelected = {},
+                            onMoveSelectedToTrash = {},
+                            onCreatePdfSelected = {},
+                            onAddSelectedToVault = {},
+                            onCopyTextFromPhoto = {},
+                            onClearSelection = {},
+                            onPhotoClick = {},
+                            onPhotoLongClick = {},
+                            onOpenTrash = {},
+                            onOpenVault = {},
+                            onManagePhotoAccess = {},
+                            onOpenArchives = {},
+                            onOpenDeclutter = {},
+                            onAlbumSelected = { selectedAlbum = it },
+                            onToggleAlbumPinned = { pinnedAlbum = it },
+                            onToggleMemoriesHidden = {},
+                            onClearAlbumScope = {},
+                            onOpenDuplicateFinder = {},
+                            onRefreshDuplicates = {},
+                            onDismissDuplicateFinder = {},
+                            onDuplicatePhotoClick = { _, _ -> },
+                            onOpenOnThisDayStory = {},
+                            onMemoryStorySelected = {},
+                        )
+                    }
+                }
+            }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Albums").performClick()
+        composeRule.onNodeWithText("On this device").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Pin Camera roll").assertIsDisplayed().performClick()
+        composeRule.runOnIdle {
+            org.junit.Assert.assertEquals(album, pinnedAlbum)
+        }
+        composeRule.onNodeWithText("Camera roll (1)").assertIsDisplayed().performClick()
+        composeRule.runOnIdle {
+            org.junit.Assert.assertEquals(album, selectedAlbum)
+        }
+        composeRule.onNodeWithText("Photos").assertIsDisplayed()
     }
 
     private fun samplePhoto(): PhotoRecord = PhotoRecord(
