@@ -2,6 +2,7 @@ package com.photobook.app.ui.component
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
@@ -12,16 +13,19 @@ import androidx.paging.compose.collectAsLazyPagingItems
 import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.ui.screen.SelectionActionBar
+import com.photobook.app.ui.screen.MainScreen
 import com.photobook.app.ui.theme.PhotoBookTheme
 import org.junit.Rule
 import org.junit.Test
@@ -145,6 +149,91 @@ class PhotoThumbnailAccessibilityInstrumentedTest {
             }
             composeRule.waitForIdle()
         }
+    }
+
+
+    @Test
+    fun fullMainScreen_lastSelectedGridRowReachableAt320dpAnd200PercentFont() {
+        val photos = (0 until 60).map { index ->
+            samplePhoto().copy(
+                id = 9001L + index,
+                uriString = "content://photobook.test/photo/${9001 + index}",
+                fileName = "item-$index.jpg",
+            )
+        }
+        val generations = MutableStateFlow(PagingData.from(photos))
+        composeRule.setContent {
+            PhotoBookTheme(dynamicColor = false) {
+                CompositionLocalProvider(LocalDensity provides Density(1f, 2f)) {
+                    Box(modifier = androidx.compose.ui.Modifier.width(320.dp).height(640.dp)) {
+                        MainScreen(
+                            query = "",
+                            results = generations.collectAsLazyPagingItems(),
+                            resultCount = photos.size,
+                            resultQuery = "",
+                            searchReady = true,
+                            favoritesOnly = false,
+                            reelsEnabled = false,
+                            selectedPhotoIds = setOf(photos.last().id),
+                            timelineMarks = emptyList(),
+                            suggestions = emptyList(),
+                            showSuggestions = false,
+                            onThisDayStory = null,
+                            memoryStories = emptyList(),
+                            duplicateGroups = emptyList(),
+                            isFindingDuplicates = false,
+                            duplicateScanProgress = null,
+                            duplicateScanIncomplete = false,
+                            showDuplicateFinder = false,
+                            archiveCandidateCount = 0,
+                            archiveDueDeleteCount = 0,
+                            limitedPhotoAccess = false,
+                            albumCatalog = emptyList(),
+                            pinnedAlbumKeys = emptyList(),
+                            memoriesHidden = false,
+                            activeAlbumLabel = null,
+                            onQueryChange = {},
+                            onSearchSubmitted = {},
+                            onSearchFocusChanged = {},
+                            onSuggestionSelected = {},
+                            onClearQuery = {},
+                            onToggleFavoritesOnly = {},
+                            onToggleReels = {},
+                            onLogoClick = {},
+                            onShareSelected = {},
+                            onMoveSelectedToTrash = {},
+                            onCreatePdfSelected = {},
+                            onAddSelectedToVault = {},
+                            onCopyTextFromPhoto = {},
+                            onClearSelection = {},
+                            onPhotoClick = {},
+                            onPhotoLongClick = {},
+                            onOpenTrash = {},
+                            onOpenVault = {},
+                            onManagePhotoAccess = {},
+                            onOpenArchives = {},
+                            onOpenDeclutter = {},
+                            onAlbumSelected = {},
+                            onToggleAlbumPinned = {},
+                            onToggleMemoriesHidden = {},
+                            onClearAlbumScope = {},
+                            onOpenDuplicateFinder = {},
+                            onRefreshDuplicates = {},
+                            onDismissDuplicateFinder = {},
+                            onDuplicatePhotoClick = { _, _ -> },
+                            onOpenOnThisDayStory = {},
+                            onMemoryStorySelected = {},
+                        )
+                    }
+                }
+            }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNode(
+            SemanticsMatcher.keyIsDefined(SemanticsActions.ScrollToIndex)
+        ).performScrollToIndex(photos.lastIndex)
+        composeRule.onNodeWithContentDescription("item-59.jpg").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Move to Trash").assertIsDisplayed()
     }
 
     private fun samplePhoto(): PhotoRecord = PhotoRecord(
