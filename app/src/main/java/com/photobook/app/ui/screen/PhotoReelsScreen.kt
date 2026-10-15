@@ -94,9 +94,9 @@ fun PhotoReelsScreen(
     val safeStart = startIndex.coerceIn(0, photos.lastIndex)
     val pagerState = rememberPagerState(initialPage = safeStart, pageCount = { photos.size })
 
-    LaunchedEffect(pagerState.currentPage) {
-        val active = photos.getOrNull(pagerState.currentPage) ?: return@LaunchedEffect
-        searchController.activate(active.id, active.uriString)
+    val activePhoto = photos.getOrNull(pagerState.currentPage)
+    LaunchedEffect(activePhoto?.id, activePhoto?.uriString) {
+        activePhoto?.let { searchController.activate(it.id, it.uriString) }
     }
 
     DisposableEffect(Unit) {
