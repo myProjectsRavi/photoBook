@@ -246,12 +246,16 @@ fun PhotoReelsScreen(
                                                     text = location,
                                                     color = Color.White.copy(alpha = 0.8f),
                                                     style = MaterialTheme.typography.bodySmall,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
                                                 )
                                             }
                                             Text(
                                                 text = photo.folderName,
                                                 color = Color.White.copy(alpha = 0.6f),
                                                 style = MaterialTheme.typography.labelSmall,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
                                             )
                                         }
                                     }
