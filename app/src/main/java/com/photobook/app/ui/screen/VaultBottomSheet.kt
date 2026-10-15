@@ -49,6 +49,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
@@ -136,8 +137,9 @@ fun VaultBottomSheet(
                 }
 
                 else -> {
+                    val minCardWidth = if (LocalDensity.current.fontScale >= 1.5f) 320.dp else 128.dp
                     LazyVerticalGrid(
-                        columns = GridCells.Adaptive(minSize = 128.dp),
+                        columns = GridCells.Adaptive(minSize = minCardWidth),
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = 520.dp),
