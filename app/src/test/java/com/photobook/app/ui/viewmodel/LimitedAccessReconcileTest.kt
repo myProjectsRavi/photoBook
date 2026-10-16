@@ -5,6 +5,7 @@ import com.photobook.app.data.index.PhotoIndex
 import com.photobook.app.data.model.IntelligenceStatus
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.data.model.RawPhotoData
+import com.photobook.app.data.model.withRetainedStateFrom
 import com.photobook.app.util.PermissionUtils
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
@@ -61,6 +62,50 @@ class LimitedAccessReconcileTest {
         )
 
         assertThat(result.map { it.id }).containsExactly(2L, 3L).inOrder()
+    }
+
+    @Test
+    fun revisionOnlyContentChange_isRebuiltWithoutRestoringStaleIntelligence() {
+        val previous = photo(8L).copy(
+            sourceRevision = 42L,
+            isFavorite = true,
+            ocrText = "old document text",
+            ocrStatus = IntelligenceStatus.PROCESSED,
+            isOcrProcessed = true,
+            mlStatus = IntelligenceStatus.PROCESSED,
+            isMlProcessed = true,
+        )
+        val replaced = rawFrom(previous).copy(generationModified = 43L)
+        assertThat(changedRawPhotosForReconcile(listOf(replaced), listOf(previous)))
+            .containsExactly(replaced)
+
+        // The production retained-state policy keeps explicit user favorites but
+        // invalidates derived data across content revision changes.
+        val freshRecord = previous.copy(
+            sourceRevision = 43L,
+            isFavorite = false,
+            ocrText = "",
+            isOcrProcessed = false,
+            ocrStatus = IntelligenceStatus.PENDING,
+            isMlProcessed = false,
+            mlStatus = IntelligenceStatus.PENDING,
+        )
+        val reconciled = freshRecord.withRetainedStateFrom(previous)
+        assertThat(reconciled.isFavorite).isTrue()
+        assertThat(reconciled.ocrText).isEmpty()
+        assertThat(reconciled.mlStatus).isEqualTo(IntelligenceStatus.PENDING)
+        assertThat(reconciled.ocrStatus).isEqualTo(IntelligenceStatus.PENDING)
+    }
+
+    @Test
+    fun legacyDateModifiedChange_triggersRefreshAtEqualFileSize() {
+        val previous = photo(9L).copy(sourceRevision = 1_700_000_000_000L)
+        val changed = rawFrom(previous).copy(
+            generationModified = null,
+            dateModified = 1_700_000_000_001L,
+        )
+        assertThat(changedRawPhotosForReconcile(listOf(changed), listOf(previous)))
+            .containsExactly(changed)
     }
 
     @Test
@@ -144,6 +189,7 @@ class LimitedAccessReconcileTest {
             ocrText = "",
             isOcrProcessed = false,
             ocrStatus = IntelligenceStatus.PENDING,
+            sourceRevision = 42L,
         )
     }
 }
