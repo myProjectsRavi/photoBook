@@ -401,6 +401,42 @@ fi
 
 echo "[phase3] running :baselineprofile:$CONNECTED_TASK at librarySize=$LIBRARY_SIZE"
 
+# UTP may delete device-side benchmark additional outputs during its post-test
+# cleanup. Capture as files appear, rather than waiting until Gradle returns.
+# Copies never modify original traces, run in the runner, and are verified for
+# nonzero size. The polling interval and capture log are preserved for review.
+DEVICE_BENCH_OUT="$OUT_DIR/device-benchmark-output"
+DEVICE_BENCH_STOP="$OUT_DIR/device-benchmark-collector.stop"
+DEVICE_BENCH_CAPTURE_LOG="$OUT_DIR/device-benchmark-capture.log"
+rm -f "$DEVICE_BENCH_STOP"
+mkdir -p "$DEVICE_BENCH_OUT"
+collect_benchmark_outputs() {
+  while [[ ! -f "$DEVICE_BENCH_STOP" ]]; do
+    mapfile -t candidates < <(
+      timeout 15s "${ADB[@]}" shell \
+        'find /sdcard/Android/media/com.photobook.app.baselineprofile/additional_test_output -type f \( -name "*.perfetto-trace" -o -name "*benchmarkData.json" \) -print' \
+        2>/dev/null | tr -d '\r' | sort -u
+    )
+    for remote in "${candidates[@]}"; do
+      [[ -n "$remote" ]] || continue
+      local_hash="$(printf '%s' "$remote" | sha256sum | cut -c1-12)"
+      target="$DEVICE_BENCH_OUT/${local_hash}-$(basename "$remote")"
+      [[ -s "$target" ]] && continue
+      temp="${target}.partial"
+      if timeout 45s "${ADB[@]}" pull "$remote" "$temp" >>"$DEVICE_BENCH_CAPTURE_LOG" 2>&1 \
+          && [[ -s "$temp" ]]; then
+        mv "$temp" "$target"
+        printf 'captured=%s bytes=%s\n' "$remote" "$(wc -c < "$target")" >>"$DEVICE_BENCH_CAPTURE_LOG"
+      else
+        rm -f "$temp"
+      fi
+    done
+    sleep 3
+  done
+}
+collect_benchmark_outputs &
+BENCH_CAPTURE_PID=$!
+
 set +e
 ./gradlew ":baselineprofile:$CONNECTED_TASK" \
   -Pandroid.injected.signing.store.file="$DEBUG_KEYSTORE" \
@@ -413,13 +449,15 @@ set +e
   2>&1 | tee "$OUT_DIR/macrobenchmark-gradle.log"
 MACROBENCHMARK_STATUS=${PIPESTATUS[0]}
 set -e
+touch "$DEVICE_BENCH_STOP"
+wait "$BENCH_CAPTURE_PID" || true
 
 # Connected-test UTP stores benchmark traces/JSON on the emulator under Android/media.
 # Earlier CI archives retained only host XML; collect actual device files before
 # teardown so reviewers can inspect render-thread work, GC and frame overruns.
-DEVICE_BENCH_OUT="$OUT_DIR/device-benchmark-output"
-mkdir -p "$DEVICE_BENCH_OUT"
-adb shell 'find /sdcard/Android/media -type f \( -name "*.perfetto-trace" -o -name "*benchmarkData.json" -o -name "*.trace" \) -print' \
+# A final sweep recovers files that survived UTP cleanup and records the
+# authoritative discovered paths. Do not reset results captured during tests.
+"${ADB[@]}" shell 'find /sdcard/Android/media/com.photobook.app.baselineprofile/additional_test_output -type f \( -name "*.perfetto-trace" -o -name "*benchmarkData.json" \) -print' \
   2>/dev/null | tr -d '\r' | sort -u > "$OUT_DIR/device-benchmark-result-files.txt" || true
 CAPTURED_TRACES=0
 CAPTURED_JSON=0
@@ -427,7 +465,7 @@ while IFS= read -r remote; do
   [[ -n "$remote" ]] || continue
   remote_hash="$(printf '%s' "$remote" | sha256sum | cut -c1-12)"
   target="$DEVICE_BENCH_OUT/${remote_hash}-$(basename "$remote")"
-  if timeout 90s adb pull "$remote" "$target" >/dev/null 2>&1 && [[ -s "$target" ]]; then
+  if [[ -s "$target" ]] || (timeout 90s "${ADB[@]}" pull "$remote" "$target" >>"$DEVICE_BENCH_CAPTURE_LOG" 2>&1 && [[ -s "$target" ]]); then
     case "$target" in
       *.perfetto-trace|*.trace) CAPTURED_TRACES=$((CAPTURED_TRACES + 1)) ;;
       *benchmarkData.json) CAPTURED_JSON=$((CAPTURED_JSON + 1)) ;;
@@ -437,6 +475,9 @@ while IFS= read -r remote; do
     echo "[phase3] unable to retrieve benchmark device result: $remote" >&2
   fi
 done < "$OUT_DIR/device-benchmark-result-files.txt"
+# Count files retained by both the live collector and the final sweep.
+CAPTURED_TRACES="$(find "$DEVICE_BENCH_OUT" -type f \( -name '*.perfetto-trace' -o -name '*.trace' \) | wc -l)"
+CAPTURED_JSON="$(find "$DEVICE_BENCH_OUT" -type f -name '*benchmarkData.json' | wc -l)"
 printf 'traces=%s\nbenchmarkJson=%s\n' "$CAPTURED_TRACES" "$CAPTURED_JSON" \
   | tee "$OUT_DIR/device-benchmark-capture-summary.txt"
 if (( CAPTURED_TRACES == 0 )); then
