@@ -35,6 +35,7 @@ class IndexPersistence @Inject constructor(
             val loadStartMs = SystemClock.elapsedRealtime()
             reopenLegacyOcrFailuresIfNeeded()
             reopenDerivedSemanticIntelligenceIfNeeded()
+            reopenBrokenSemanticRuntimeIfNeeded()
             val existing = photoDao.getAll().map { it.toPhotoRecord() }
             if (existing.isNotEmpty()) {
                 Log.i(
@@ -211,6 +212,20 @@ class IndexPersistence @Inject constructor(
         // are refreshed atomically as the durable maintenance worker reprocesses each affected row.
     }
 
+    private suspend fun reopenBrokenSemanticRuntimeIfNeeded() {
+        if (dataRepairPreferences.getBoolean(KEY_SEMANTIC_RUNTIME_V3_REPAIR_COMPLETE, false)) return
+        val reopened = photoDao.reopenSemanticsAfterBrokenRuntime()
+        val committed = dataRepairPreferences.edit()
+            .putBoolean(KEY_SEMANTIC_RUNTIME_V3_REPAIR_COMPLETE, true)
+            .commit()
+        Log.i(
+            PHASE4_TAG,
+            "stage=semantic_runtime_v3_repair reopened=$reopened preferenceCommitted=$committed",
+        )
+        // An interrupted preference write simply retries the idempotent SQL update.
+        // ML is reprocessed in bounded worker batches, not synchronously during startup.
+    }
+
     private suspend fun replaceAll(records: List<PhotoRecord>) {
         database.withTransaction {
             if (records.isEmpty()) {
@@ -369,5 +384,7 @@ class IndexPersistence @Inject constructor(
         private const val KEY_OCR_ENGINE_REPAIR_COMPLETE = "ocr_engine_v1_repair_complete"
         private const val KEY_SEMANTIC_INTELLIGENCE_V2_REPAIR_COMPLETE =
             "semantic_intelligence_v2_repair_complete"
+        private const val KEY_SEMANTIC_RUNTIME_V3_REPAIR_COMPLETE =
+            "semantic_runtime_v3_repair_complete"
     }
 }
