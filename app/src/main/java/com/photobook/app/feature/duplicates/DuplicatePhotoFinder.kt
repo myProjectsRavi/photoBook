@@ -90,12 +90,12 @@ class DuplicatePhotoFinder @Inject constructor(
                     databaseIds = databaseIds,
                 )
             ) {
-                return@runCatching records
+                return records
             }
 
             val candidateIds = photoDao.getExactDuplicateCandidateIds()
             if (candidateIds.isEmpty()) {
-                return@runCatching emptyList()
+                return emptyList()
             }
 
             val candidateIdSet = candidateIds.toHashSet()
