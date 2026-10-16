@@ -67,6 +67,13 @@ class PdfExportService @Inject constructor(
         freshlyCreated: Boolean = false,
         onProgress: (PdfExportProgress) -> Unit = {},
     ): PdfExportResult {
+        if (!freshlyCreated) {
+            // A caller must explicitly assert CreateDocument ownership. Never open
+            // an arbitrary existing user document in truncating "wt" mode.
+            return PdfExportResult.Error(
+                IllegalArgumentException("Selected PDF destination must be freshly created"),
+            )
+        }
         return exportPhotos(
             photos = photos,
             destination = PdfExportDestination.DocumentUri(destinationUri, freshlyCreated),
