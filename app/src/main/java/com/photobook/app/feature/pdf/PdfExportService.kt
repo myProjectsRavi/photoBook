@@ -43,6 +43,9 @@ class PdfExportService @Inject constructor(
         context.getSharedPreferences(PDF_PUBLICATION_JOURNAL, Context.MODE_PRIVATE)
     }
 
+    // Instrumentation may inject a provider write failure after partial bytes were emitted.
+    internal var documentUriWriterOverride: ((Uri, PdfDocument) -> Unit)? = null
+
     suspend fun exportPhotos(
         photos: List<PhotoRecord>,
         onProgress: (PdfExportProgress) -> Unit = {},
@@ -54,14 +57,19 @@ class PdfExportService @Inject constructor(
         )
     }
 
+    /**
+     * Only pass freshlyCreated=true for a URI just returned by CreateDocument.
+     * Existing user documents must never be deleted on failure.
+     */
     suspend fun exportPhotosToDocumentUri(
         photos: List<PhotoRecord>,
         destinationUri: Uri,
+        freshlyCreated: Boolean = false,
         onProgress: (PdfExportProgress) -> Unit = {},
     ): PdfExportResult {
         return exportPhotos(
             photos = photos,
-            destination = PdfExportDestination.DocumentUri(destinationUri),
+            destination = PdfExportDestination.DocumentUri(destinationUri, freshlyCreated),
             onProgress = onProgress,
         )
     }
@@ -96,6 +104,11 @@ class PdfExportService @Inject constructor(
 
         return exportMutex.withLock {
             withContext(Dispatchers.IO) {
+            if (!reconcilePendingCreatedDocument()) {
+                return@withContext PdfExportResult.Error(
+                    IllegalStateException("Unable to clean up an earlier selected PDF document"),
+                )
+            }
             if (
                 destination == PdfExportDestination.Downloads &&
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
@@ -185,6 +198,7 @@ class PdfExportService @Inject constructor(
                     is PdfExportDestination.DocumentUri -> writeDocumentToUri(
                         document = document,
                         destinationUri = destination.uri,
+                        freshlyCreated = destination.freshlyCreated,
                     )
                 }
                 currentCoroutineContext().ensureActive()
@@ -378,14 +392,42 @@ class PdfExportService @Inject constructor(
     private suspend fun writeDocumentToUri(
         document: PdfDocument,
         destinationUri: Uri,
+        freshlyCreated: Boolean,
     ): PdfOutput {
         currentCoroutineContext().ensureActive()
-        context.contentResolver.openOutputStream(destinationUri, "wt")?.use { stream ->
-            document.writeTo(stream)
-        } ?: error("Unable to open selected PDF destination")
-        currentCoroutineContext().ensureActive()
-        check(verifyPdf(destinationUri)) { "Selected PDF destination failed read-back verification" }
-        return PdfOutput(uri = destinationUri)
+        try {
+            if (freshlyCreated) {
+                check(recordPendingCreatedDocument(destinationUri)) {
+                    "Unable to journal newly created PDF document"
+                }
+            }
+            val writer = documentUriWriterOverride
+            if (writer != null) {
+                writer(destinationUri, document)
+            } else {
+                context.contentResolver.openOutputStream(destinationUri, "wt")?.use { stream ->
+                    document.writeTo(stream)
+                } ?: error("Unable to open selected PDF destination")
+            }
+            currentCoroutineContext().ensureActive()
+            check(verifyPdf(destinationUri)) { "Selected PDF destination failed read-back verification" }
+            if (freshlyCreated) {
+                check(clearPendingCreatedDocument()) { "Unable to complete PDF document journal" }
+            }
+            return PdfOutput(uri = destinationUri)
+        } catch (t: Throwable) {
+            if (freshlyCreated) {
+                // This URI was created by our CreateDocument request. A partial output
+                // belongs to us. For any other URI, preserve the user's existing document.
+                val removed = runCatching {
+                    context.contentResolver.delete(destinationUri, null, null) > 0
+                }.getOrDefault(false)
+                if (removed) clearPendingCreatedDocument()
+                // A failed provider deletion retains the journal for next safe recovery.
+            }
+            if (t is CancellationException) throw t
+            throw t
+        }
     }
 
     private suspend fun writeDocumentToDownloads(
@@ -520,6 +562,29 @@ class PdfExportService @Inject constructor(
         }.getOrDefault(false)
     }
 
+    private fun recordPendingCreatedDocument(uri: Uri): Boolean {
+        return publicationJournal.edit()
+            .putString(KEY_PENDING_CREATED_DOCUMENT_URI, uri.toString())
+            .commit()
+    }
+
+    private fun clearPendingCreatedDocument(): Boolean {
+        return publicationJournal.edit()
+            .remove(KEY_PENDING_CREATED_DOCUMENT_URI)
+            .commit()
+    }
+
+    private fun reconcilePendingCreatedDocument(): Boolean {
+        val stored = publicationJournal.getString(KEY_PENDING_CREATED_DOCUMENT_URI, null)
+            ?: return true
+        val uri = runCatching { Uri.parse(stored) }.getOrNull() ?: return false
+        val removed = runCatching {
+            context.contentResolver.delete(uri, null, null) > 0
+        }.getOrDefault(false)
+        // Never clear uncertain cleanup ownership; a later attempt may regain access.
+        return removed && clearPendingCreatedDocument()
+    }
+
     private fun recordPendingDownload(uri: Uri): Boolean {
         return publicationJournal.edit()
             .putString(KEY_PENDING_PDF_URI, uri.toString())
@@ -596,7 +661,7 @@ class PdfExportService @Inject constructor(
     private sealed interface PdfExportDestination {
         data object Downloads : PdfExportDestination
         data object ShareCache : PdfExportDestination
-        data class DocumentUri(val uri: Uri) : PdfExportDestination
+        data class DocumentUri(val uri: Uri, val freshlyCreated: Boolean) : PdfExportDestination
     }
 
     companion object {
@@ -606,6 +671,7 @@ class PdfExportService @Inject constructor(
         private val PDF_HEADER = "%PDF-".encodeToByteArray()
         private const val PDF_PUBLICATION_JOURNAL = "pdf_publication_journal_v1"
         private const val KEY_PENDING_PDF_URI = "pending_pdf_uri"
+        private const val KEY_PENDING_CREATED_DOCUMENT_URI = "pending_created_document_uri"
         private const val PENDING_ROW_MISSING = -1
     }
 }
