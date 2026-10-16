@@ -1703,6 +1703,9 @@ class MainViewModel @Inject constructor(
         // PhotoRecords are processed one bounded batch at a time, so a 100k-photo first launch does
         // not retain simultaneous full raw + enriched collections.
         val staleIds = existing.asSequence().map { record -> record.id }.toMutableSet()
+        // Build the retained intelligence lookup once. Reconstructing a 100k-entry
+        // map twice for every 200-row scan batch causes quadratic allocation churn.
+        val retainedById = existing.associateBy { record -> record.id }
         var scannedCount = 0
         var scanMeasuredCount = -1
         var scanElapsedMs = 0L
@@ -1726,7 +1729,7 @@ class MainViewModel @Inject constructor(
             }
 
             val basicBatch = indexBuilder.buildBasicRecords(rawBatch)
-                .preservingIntelligence(existing)
+                .preservingIntelligence(retainedById)
 
             indexCommitCoordinator.withCommit {
                 if (!accessGenerationGate.isCurrent(accessGeneration)) {
@@ -1768,7 +1771,7 @@ class MainViewModel @Inject constructor(
                     geocodeElapsedMs += timing.geocodeElapsedMs
                     geocodeCount += timing.geocodeCount
                 },
-            ).preservingIntelligence(existing)
+            ).preservingIntelligence(retainedById)
             indexCommitCoordinator.withCommit {
                 if (!accessGenerationGate.isCurrent(accessGeneration)) {
                     throw CancellationException("Photo access changed before enrichment commit")
@@ -1908,11 +1911,15 @@ class MainViewModel @Inject constructor(
         super.onCleared()
     }
 
-    private fun List<PhotoRecord>.preservingIntelligence(current: List<PhotoRecord>): List<PhotoRecord> {
-        if (isEmpty() || current.isEmpty()) return this
-        val byId = current.associateBy { it.id }
+    private fun List<PhotoRecord>.preservingIntelligence(current: List<PhotoRecord>): List<PhotoRecord> =
+        preservingIntelligence(current.associateBy { it.id })
+
+    private fun List<PhotoRecord>.preservingIntelligence(
+        retainedById: Map<Long, PhotoRecord>,
+    ): List<PhotoRecord> {
+        if (isEmpty() || retainedById.isEmpty()) return this
         return map { rebuilt ->
-            rebuilt.withRetainedStateFrom(byId[rebuilt.id])
+            rebuilt.withRetainedStateFrom(retainedById[rebuilt.id])
         }
     }
 
@@ -2402,7 +2409,12 @@ internal fun rawDiffersFromRecordForReconcile(
     raw: RawPhotoData,
     existing: PhotoRecord,
 ): Boolean {
-    return raw.uriString != existing.uriString ||
+    val freshRevision = raw.generationModified ?: raw.dateModified
+    val trustworthyRevisionChanged =
+        (freshRevision > 0L || existing.sourceRevision > 0L) &&
+            freshRevision != existing.sourceRevision
+    return trustworthyRevisionChanged ||
+        raw.uriString != existing.uriString ||
         raw.filePath != existing.filePath ||
         raw.fileName != existing.fileName ||
         raw.dateAdded != existing.dateAdded ||
