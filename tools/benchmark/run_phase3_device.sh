@@ -589,6 +589,15 @@ if grep -Eiq 'FATAL EXCEPTION|ANR in com\.photobook\.app|OutOfMemoryError' \
   exit 1
 fi
 
+if grep -Eiq 'Local semantic runtime is unavailable|Local semantic runtime failed to link|Local semantic image labeling failed' "$OUT_DIR/logcat.txt"; then
+  echo "FAIL: bundled semantic runtime/inference error found in scale-run logcat" >&2
+  exit 1
+fi
+if (( CAPTURED_TRACES == 0 || CAPTURED_JSON == 0 )); then
+  echo "FAIL: missing connected benchmark trace/JSON; frame smoothness cannot be reviewed" >&2
+  exit 1
+fi
+
 if ! cleanup_benchmark_media; then
   echo "FAIL: unable to remove isolated benchmark MediaStore corpus" >&2
   exit 1
