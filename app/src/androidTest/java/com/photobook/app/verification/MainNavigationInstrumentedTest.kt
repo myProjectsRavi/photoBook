@@ -44,7 +44,17 @@ class MainNavigationInstrumentedTest {
             "am start -W -f 0x10008000 -n ${component!!.flattenToShortString()}",
         )
         assertFalse(launchOutput.contains("Error", ignoreCase = true))
-        assertTrue(device.wait(Until.hasObject(By.text("Photos")), 15_000))
+        // API-35 x86 emulator process launch can lag after earlier heavy
+        // inference tests. Retain the actual Photos UI assertion rather than
+        // treating a successful shell am-start response as readiness.
+        val photosVisible = device.wait(Until.hasObject(By.text("Photos")), 30_000)
+        assertTrue(
+            "PhotoBook did not render Photos after launch; " +
+                "foreground=${device.currentPackageName}; " +
+                "component=${component.flattenToShortString()}; " +
+                "amStart=${launchOutput.take(300)}",
+            photosVisible && device.currentPackageName == targetContext.packageName,
+        )
     }
 
 
