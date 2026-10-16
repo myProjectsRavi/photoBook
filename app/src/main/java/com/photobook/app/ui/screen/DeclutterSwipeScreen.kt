@@ -64,7 +64,7 @@ fun DeclutterSwipeScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onDismiss) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
