@@ -253,7 +253,7 @@ class VaultOperationJournalInstrumentedTest {
         val cancellingDao = object : VaultDao by originalDao {
             override suspend fun insertVaultItem(item: VaultEntity): Long {
                 val committedId = originalDao.insertVaultItem(item)
-                currentCoroutineContext().cancel("Inject cancellation after committed Room insert")
+                currentCoroutineContext().cancel(CancellationException("Inject cancellation after committed Room insert"))
                 return committedId
             }
         }
