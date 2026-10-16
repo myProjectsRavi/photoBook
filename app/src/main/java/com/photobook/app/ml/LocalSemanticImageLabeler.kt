@@ -126,7 +126,11 @@ class LocalSemanticImageLabeler @Inject constructor(
                     modelBuffer,
                     InterpreterApi.Options()
                         .setRuntime(TfLiteRuntime.FROM_APPLICATION_ONLY)
-                        .setNumThreads(1),
+                        .setNumThreads(1)
+                        // Native x86 inference in the 2 GiB offline matrix was killed
+                        // near 1.4 GiB RSS with the default XNNPACK delegate.
+                        // Bound the model to the one-thread reference CPU kernels.
+                        .setUseXNNPACK(false),
                 )
                 initializationFailure = null
             } catch (error: Exception) {
