@@ -2,6 +2,7 @@ package com.photobook.app.feature.duplicates
 
 import com.google.common.truth.Truth.assertThat
 import java.io.ByteArrayInputStream
+import kotlinx.coroutines.CancellationException
 import org.junit.Test
 
 class DuplicateHashTest {
@@ -49,6 +50,54 @@ class DuplicateHashTest {
             val changedKeys = DuplicateHash.guaranteedCandidateBandKeys(changed, maxDistance = 8).toSet()
             assertThat(baselineKeys.intersect(changedKeys)).isNotEmpty()
         }
+    }
+
+    @Test
+    fun fullSha256_stopsImmediatelyAfterCancellationDuringStreamRead() {
+        val bytes = ByteArray(512 * 1024) { 0x42 }
+        var reads = 0
+        var cancelled = false
+        val source = object : ByteArrayInputStream(bytes) {
+            override fun read(target: ByteArray, offset: Int, length: Int): Int {
+                reads++
+                val count = super.read(target, offset, length)
+                cancelled = true
+                return count
+            }
+        }
+        var observedCancellation = false
+        try {
+            DuplicateHash.sha256Hex(source) {
+                if (cancelled) throw CancellationException("scan dismissed")
+            }
+        } catch (_: CancellationException) {
+            observedCancellation = true
+        }
+        assertThat(observedCancellation).isTrue()
+        assertThat(reads).isEqualTo(1)
+    }
+
+    @Test
+    fun partialHash_stopsImmediatelyAfterCancellationDuringStreamRead() {
+        val source = object : ByteArrayInputStream(ByteArray(128 * 1024)) {
+            var reads = 0
+            override fun read(target: ByteArray, offset: Int, length: Int): Int {
+                reads++
+                return super.read(target, offset, length)
+            }
+        }
+        var checkpoints = 0
+        var cancelled = false
+        try {
+            DuplicateHash.partialMd5Hex(source, 64 * 1024) {
+                checkpoints++
+                if (checkpoints == 2) throw CancellationException("cancelled")
+            }
+        } catch (_: CancellationException) {
+            cancelled = true
+        }
+        assertThat(cancelled).isTrue()
+        assertThat(source.reads).isEqualTo(1)
     }
 
     @Test
