@@ -9,6 +9,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.photobook.app.data.model.PhotoRecord
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -103,6 +104,65 @@ class PdfExportServiceInstrumentedTest {
             deletePublished(secondResult)
             firstFixture.close()
             secondFixture.close()
+        }
+    }
+
+    @Test
+    fun freshlyCreatedDocument_writeFailureDeletesOnlyOwnedPartialFile() = runBlocking {
+        val fixture = createFixture("pdf_new_document_failure")
+        val destination = File(fixture.source.parentFile, "created_" + System.nanoTime() + ".pdf")
+        destination.writeBytes(byteArrayOf())
+        val uri = FileProvider.getUriForFile(
+            fixture.context,
+            fixture.context.packageName + ".fileprovider",
+            destination,
+        )
+        val service = PdfExportService(fixture.context)
+        service.documentUriWriterOverride = { target, _ ->
+            fixture.context.contentResolver.openOutputStream(target, "wt")!!.use { stream ->
+                stream.write("%PDF-partial".encodeToByteArray())
+            }
+            throw IOException("Simulated provider write failure after partial bytes")
+        }
+        try {
+            val result = service.exportPhotosToDocumentUri(
+                photos = listOf(fixture.photo),
+                destinationUri = uri,
+                freshlyCreated = true,
+            )
+            assertTrue("Partial selected document must not be published", result is PdfExportResult.Error)
+            assertFalse("Created partial PDF survived an I/O failure", destination.exists())
+            val journal = fixture.context.getSharedPreferences(
+                "pdf_publication_journal_v1", android.content.Context.MODE_PRIVATE,
+            )
+            assertFalse("Owned document cleanup journal was not cleared", journal.contains("pending_created_document_uri"))
+        } finally {
+            destination.delete()
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun preexistingSelectedDocument_isNotTruncatedOrDeleted() = runBlocking {
+        val fixture = createFixture("pdf_existing_document")
+        val destination = File(fixture.source.parentFile, "existing_" + System.nanoTime() + ".pdf")
+        val originalBytes = "User's existing document".encodeToByteArray()
+        destination.writeBytes(originalBytes)
+        val uri = FileProvider.getUriForFile(
+            fixture.context,
+            fixture.context.packageName + ".fileprovider",
+            destination,
+        )
+        try {
+            val result = PdfExportService(fixture.context).exportPhotosToDocumentUri(
+                photos = listOf(fixture.photo),
+                destinationUri = uri,
+            )
+            assertTrue("Unowned destination must fail closed", result is PdfExportResult.Error)
+            assertTrue("Existing user's bytes were overwritten", destination.readBytes().contentEquals(originalBytes))
+        } finally {
+            destination.delete()
+            fixture.close()
         }
     }
 
