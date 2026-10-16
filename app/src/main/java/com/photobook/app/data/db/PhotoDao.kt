@@ -62,6 +62,23 @@ interface PhotoDao {
     )
     suspend fun reopenDerivedSemanticIntelligence(): Int
 
+    /**
+     * v3: earlier builds marked photos PROCESSED despite a broken FlatBuffers
+     * semantic union. Requeue only those stale derived ML rows; never touch
+     * user favorites, originals, OCR, private notes or vault state.
+     */
+    @Query(
+        """
+        UPDATE photos
+        SET mlTagsPayload = '[]',
+            isMlProcessed = 0,
+            mlStatus = 'PENDING',
+            isArchiveFoodCandidate = 0
+        WHERE mlStatus = 'PROCESSED'
+        """,
+    )
+    suspend fun reopenSemanticsAfterBrokenRuntime(): Int
+
     @Query(
         """
         SELECT * FROM photos
