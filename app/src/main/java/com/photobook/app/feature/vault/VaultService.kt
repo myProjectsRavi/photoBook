@@ -36,6 +36,8 @@ import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.Cipher
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -313,8 +315,29 @@ class VaultService @Inject constructor(
             photos.forEach { photo ->
                 currentCoroutineContext().ensureActive()
                 if (photo.id in existingByPhotoId) {
-                    itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.ALREADY_PROTECTED)
-                    return@forEach
+                    val existing = vaultDao.getVaultItemBySourcePhotoId(photo.id)
+                    if (existing != null) {
+                        val encrypted = File(vaultDir, existing.encryptedFileName)
+                        if (!encrypted.isFile) {
+                            // Old cancelled adds could strand a row with no ciphertext.
+                            // Remove that stale row only after confirming the file is absent.
+                            vaultDao.deleteVaultItemById(existing.id)
+                            if (vaultDao.getVaultItemBySourcePhotoId(photo.id) != null) {
+                                itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.FAILED)
+                                return@forEach
+                            }
+                            existingByPhotoId.remove(photo.id)
+                        } else {
+                            val readable = verifyCommittedCiphertext(existing, session)
+                            itemResults += VaultSaveItemResult(
+                                photo.id,
+                                if (readable) VaultSaveOutcome.ALREADY_PROTECTED else VaultSaveOutcome.FAILED,
+                            )
+                            return@forEach
+                        }
+                    } else {
+                        existingByPhotoId.remove(photo.id)
+                    }
                 }
 
                 val sourceUri = runCatching { Uri.parse(photo.uriString) }.getOrNull()
@@ -407,12 +430,12 @@ class VaultService @Inject constructor(
                     currentCoroutineContext().ensureActive()
                     vaultDao.insertVaultItem(entity)
                 } catch (error: CancellationException) {
-                    runCatching { targetFile.delete() }
-                    runCatching { vaultOperationDao.deleteById(operationId) }
+                    // The insert may already be durable when cancellation is thrown.
+                    // Preserve ciphertext and journal so recovery can reconcile the row.
                     throw error
                 } catch (_: Throwable) {
-                    runCatching { targetFile.delete() }
-                    runCatching { vaultOperationDao.deleteById(operationId) }
+                    // An ambiguous insert outcome must not delete the last ciphertext.
+                    // Recovery owns orphan cleanup after checking the durable row.
                     itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.FAILED)
                     return@forEach
                 }
@@ -422,13 +445,12 @@ class VaultService @Inject constructor(
                     runCatching { vaultOperationDao.deleteById(operationId) }
                     itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.ALREADY_PROTECTED)
                 } else {
-                    val ciphertextReadable = runCatching {
-                        verifyCommittedCiphertext(entity, session)
-                    }.getOrDefault(false)
+                    // verifyCommittedCiphertext propagates CancellationException. Never
+                    // flatten cancellation to an invalid-ciphertext result: otherwise
+                    // cancellable DAO rollback can fail while file deletion still runs.
+                    val ciphertextReadable = verifyCommittedCiphertext(entity, session)
                     if (!ciphertextReadable || !targetFile.exists()) {
-                        runCatching { vaultDao.deleteVaultItemById(itemId) }
-                        runCatching { targetFile.delete() }
-                        runCatching { vaultOperationDao.deleteById(operationId) }
+                        compensateUnverifiedAdd(entity, operationId, targetFile)
                         itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.FAILED)
                     } else {
                         existingByPhotoId += photo.id
@@ -693,6 +715,38 @@ class VaultService @Inject constructor(
                 runCatching { tempPreview.delete() }
             }
         }.getOrNull()
+    }
+
+    /**
+     * Roll back an invalid new Vault entry without breaking row/file integrity.
+     * Compensation is bounded and non-cancellable; on ambiguous database outcome
+     * retain both the ciphertext and journal for a later recovery attempt.
+     */
+    private suspend fun compensateUnverifiedAdd(
+        entity: VaultEntity,
+        operationId: String,
+        encrypted: File,
+    ): Boolean = withContext(NonCancellable + Dispatchers.IO) {
+        try {
+            withTimeout(5_000L) {
+                if (vaultDao.getVaultItemById(entity.id) != null) {
+                    vaultDao.deleteVaultItemById(entity.id)
+                }
+                if (vaultDao.getVaultItemById(entity.id) != null) {
+                    return@withTimeout false
+                }
+                if (encrypted.exists() && !encrypted.delete()) {
+                    return@withTimeout false
+                }
+                vaultOperationDao.deleteById(operationId)
+                true
+            }
+        } catch (error: Exception) {
+            com.photobook.app.util.LocalDiagnostics.record(
+                context, "vault", "Could not finish Vault add compensation; journal retained", error,
+            )
+            false
+        }
     }
 
     private suspend fun verifyCommittedCiphertext(
@@ -963,7 +1017,18 @@ class VaultService @Inject constructor(
                     val row = vaultDao.getVaultItemById(itemId)
                     val file = File(vaultDir, fileName)
                     when {
-                        row != null -> vaultOperationDao.deleteById(operation.id)
+                        row != null -> {
+                            if (row.encryptedFileName == fileName && !file.isFile) {
+                                // Repair a stranded post-insert cancellation from older builds.
+                                // Never claim protection when no ciphertext exists.
+                                vaultDao.deleteVaultItemById(itemId)
+                                if (vaultDao.getVaultItemById(itemId) == null) {
+                                    vaultOperationDao.deleteById(operation.id)
+                                }
+                            } else {
+                                vaultOperationDao.deleteById(operation.id)
+                            }
+                        }
                         operation.state == VaultOperationStates.PREPARED -> {
                             runCatching { file.delete() }
                             vaultOperationDao.deleteById(operation.id)
