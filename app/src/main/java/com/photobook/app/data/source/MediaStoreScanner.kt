@@ -31,10 +31,14 @@ class MediaStoreScanner @Inject constructor(
         selectionArgs: Array<String>?,
         sortOrder: String?,
     ): Cursor? {
-        queryOverride?.let { override ->
-            return override(uri, projection, selection, selectionArgs, sortOrder)
+        return try {
+            queryOverride?.let { override ->
+                return override(uri, projection, selection, selectionArgs, sortOrder)
+            }
+            context.contentResolver.query(uri, projection, selection, selectionArgs, sortOrder)
+        } catch (failure: IllegalStateException) {
+            throw MediaStoreScanException("MediaStore query failed before completion", failure)
         }
-        return context.contentResolver.query(uri, projection, selection, selectionArgs, sortOrder)
     }
 
 
@@ -84,11 +88,32 @@ class MediaStoreScanner @Inject constructor(
         ) ?: throw MediaStoreScanException("MediaStore ID query returned null")
         cursor.use {
             val idIndex = it.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-            while (it.moveToNext()) {
+            while (verifiedMoveToNext(it)) {
                 ids += it.getLong(idIndex)
             }
         }
         return ids
+    }
+
+    /**
+     * A false moveToNext is not necessarily EOF. A remote BulkCursor window failure
+     * can reset position to -1, whereas successful EOF moves to count. Never use a
+     * prematurely terminated scan to delete retained records or advance a checkpoint.
+     */
+    private fun verifiedMoveToNext(cursor: Cursor): Boolean {
+        try {
+            if (cursor.moveToNext()) return true
+            if (cursor.position != cursor.count) {
+                throw MediaStoreScanException(
+                    "MediaStore cursor terminated before EOF: position=${cursor.position}, count=${cursor.count}",
+                )
+            }
+            return false
+        } catch (failure: MediaStoreScanException) {
+            throw failure
+        } catch (failure: IllegalStateException) {
+            throw MediaStoreScanException("MediaStore cursor failed before EOF", failure)
+        }
     }
 
     fun currentMediaStoreVersion(): String {
@@ -149,7 +174,7 @@ class MediaStoreScanner @Inject constructor(
                 -1
             }
 
-            while (cursor.moveToNext()) {
+            while (verifiedMoveToNext(cursor)) {
                 if (scanned % MediaScanBatchPolicy.DEFAULT_BATCH_SIZE == 0) {
                     currentCoroutineContext().ensureActive()
                 }
@@ -242,7 +267,7 @@ class MediaStoreScanner @Inject constructor(
 
 }
 
-class MediaStoreScanException(message: String) : IllegalStateException(message)
+class MediaStoreScanException(message: String, cause: Throwable? = null) : IllegalStateException(message, cause)
 
 @Suppress("DEPRECATION")
 internal fun mediaStoreImageProjectionForSdk(sdkInt: Int): Array<String> {
