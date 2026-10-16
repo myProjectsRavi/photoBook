@@ -13,6 +13,9 @@ interface VaultDao {
     @Query("SELECT * FROM vault_items WHERE id = :id LIMIT 1")
     suspend fun getVaultItemById(id: String): VaultEntity?
 
+    @Query("SELECT * FROM vault_items WHERE sourcePhotoId = :photoId LIMIT 1")
+    suspend fun getVaultItemBySourcePhotoId(photoId: Long): VaultEntity?
+
     @Query("SELECT sourcePhotoId FROM vault_items WHERE sourcePhotoId IN (:photoIds)")
     suspend fun getProtectedPhotoIds(photoIds: List<Long>): List<Long>
 
