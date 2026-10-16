@@ -414,7 +414,7 @@ class PdfExportService @Inject constructor(
             if (freshlyCreated) {
                 check(clearPendingCreatedDocument()) { "Unable to complete PDF document journal" }
             }
-            return PdfOutput(uri = destinationUri)
+            return PdfOutput(uri = destinationUri, deleteOnFailure = freshlyCreated)
         } catch (t: Throwable) {
             if (freshlyCreated) {
                 // This URI was created by our CreateDocument request. A partial output
@@ -629,7 +629,7 @@ class PdfExportService @Inject constructor(
 
     private fun deleteOutput(output: PdfOutput) {
         output.file?.let { file -> runCatching { file.delete() } }
-        if (output.file == null && output.uri.scheme == "content") {
+        if (output.deleteOnFailure && output.file == null && output.uri.scheme == "content") {
             runCatching { context.contentResolver.delete(output.uri, null, null) }
         }
     }
@@ -656,6 +656,7 @@ class PdfExportService @Inject constructor(
     private data class PdfOutput(
         val uri: Uri,
         val file: File? = null,
+        val deleteOnFailure: Boolean = true,
     )
 
     private sealed interface PdfExportDestination {
