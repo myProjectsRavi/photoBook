@@ -414,6 +414,35 @@ set +e
 MACROBENCHMARK_STATUS=${PIPESTATUS[0]}
 set -e
 
+# Connected-test UTP stores benchmark traces/JSON on the emulator under Android/media.
+# Earlier CI archives retained only host XML; collect actual device files before
+# teardown so reviewers can inspect render-thread work, GC and frame overruns.
+DEVICE_BENCH_OUT="$OUT_DIR/device-benchmark-output"
+mkdir -p "$DEVICE_BENCH_OUT"
+adb shell 'find /sdcard/Android/media -type f \( -name "*.perfetto-trace" -o -name "*benchmarkData.json" -o -name "*.trace" \) -print' \
+  2>/dev/null | tr -d '\r' | sort -u > "$OUT_DIR/device-benchmark-result-files.txt" || true
+CAPTURED_TRACES=0
+CAPTURED_JSON=0
+while IFS= read -r remote; do
+  [[ -n "$remote" ]] || continue
+  remote_hash="$(printf '%s' "$remote" | sha256sum | cut -c1-12)"
+  target="$DEVICE_BENCH_OUT/${remote_hash}-$(basename "$remote")"
+  if timeout 90s adb pull "$remote" "$target" >/dev/null 2>&1 && [[ -s "$target" ]]; then
+    case "$target" in
+      *.perfetto-trace|*.trace) CAPTURED_TRACES=$((CAPTURED_TRACES + 1)) ;;
+      *benchmarkData.json) CAPTURED_JSON=$((CAPTURED_JSON + 1)) ;;
+    esac
+  else
+    rm -f "$target"
+    echo "[phase3] unable to retrieve benchmark device result: $remote" >&2
+  fi
+done < "$OUT_DIR/device-benchmark-result-files.txt"
+printf 'traces=%s\nbenchmarkJson=%s\n' "$CAPTURED_TRACES" "$CAPTURED_JSON" \
+  | tee "$OUT_DIR/device-benchmark-capture-summary.txt"
+if (( CAPTURED_TRACES == 0 )); then
+  echo "[phase3] no raw Perfetto traces captured; smoothness certification is incomplete" >&2
+fi
+
 # Preserve benchmark JSON / Perfetto result locations for later forensic review.
 find baselineprofile/build \
   -type f \
