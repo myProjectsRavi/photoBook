@@ -19,6 +19,12 @@ import com.google.crypto.tink.streamingaead.PredefinedStreamingAeadParameters
 import com.google.crypto.tink.streamingaead.StreamingAeadConfig
 import java.io.File
 import java.io.FileOutputStream
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -191,6 +197,96 @@ class VaultOperationJournalInstrumentedTest {
             assertEquals(photo.id, recoveringService.listItems(session).single().sourcePhotoId)
         } finally {
             releaseInsert.complete(Unit)
+            source.delete()
+            database.close()
+        }
+    }
+
+    @Test
+    fun cancellationAfterDurableInsert_preservesCiphertextAndRetryReportsProtected() = runBlocking {
+        val database = AppModule.providePhotoBookDatabase(context)
+        val source = File(
+            File(context.cacheDir, "safe_share").apply { mkdirs() },
+            "vault-cancel-" + System.nanoTime() + ".jpg",
+        )
+        val bitmap = Bitmap.createBitmap(24, 24, Bitmap.Config.ARGB_8888)
+        FileOutputStream(source).use { output ->
+            assertTrue(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output))
+        }
+        bitmap.recycle()
+
+        val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", source)
+        val photo = PhotoRecord(
+            id = 77_002L,
+            uriString = uri.toString(),
+            filePath = source.absolutePath,
+            fileName = source.name,
+            dateAdded = 1_786_000_000_000L,
+            year = 2026,
+            month = 10,
+            dayOfMonth = 7,
+            dayOfWeek = 3,
+            hourOfDay = 12,
+            latitude = null,
+            longitude = null,
+            city = null,
+            state = null,
+            country = null,
+            fileSize = source.length(),
+            width = 24,
+            height = 24,
+            mimeType = "image/jpeg",
+            folderName = "Test",
+            folderPath = source.parent.orEmpty(),
+            cameraModel = null,
+            isFrontCamera = false,
+            isHdr = false,
+        )
+        StreamingAeadConfig.register()
+        val handle = KeysetHandle.generateNew(
+            PredefinedStreamingAeadParameters.AES256_GCM_HKDF_4KB,
+        )
+        val session = VaultCryptoSession(
+            handle.getPrimitive(RegistryConfiguration.get(), StreamingAead::class.java),
+        )
+        val originalDao = database.vaultDao()
+        val cancellingDao = object : VaultDao by originalDao {
+            override suspend fun insertVaultItem(item: VaultEntity): Long {
+                val committedId = originalDao.insertVaultItem(item)
+                currentCoroutineContext().cancel("Inject cancellation after committed Room insert")
+                return committedId
+            }
+        }
+        val isolatedScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            val job = isolatedScope.async {
+                VaultService(context, cancellingDao, database.vaultOperationDao())
+                    .addPhotos(listOf(photo), session)
+            }
+            val cancelled = try {
+                job.await()
+                false
+            } catch (_: CancellationException) {
+                true
+            }
+            assertTrue("Insertion must be interrupted after its Room commit", cancelled)
+            val entity = originalDao.getVaultItemBySourcePhotoId(photo.id)
+            assertNotNull("Durable Vault row disappeared on cancellation", entity)
+            val ciphertext = File(context.filesDir, "$VAULT_DIR/${entity!!.encryptedFileName}")
+            assertTrue("Post-insert cancellation deleted committed ciphertext", ciphertext.isFile)
+            assertTrue("Source original must remain available", source.isFile)
+
+            val recovered = VaultService(context, originalDao, database.vaultOperationDao())
+            val listed = recovered.listItems(session)
+            assertEquals(1, listed.size)
+            assertEquals(photo.id, listed.single().sourcePhotoId)
+            val retry = recovered.addPhotos(listOf(photo), session)
+            assertTrue(retry is VaultSaveResult.Success)
+            assertEquals(1, (retry as VaultSaveResult.Success).skippedCount)
+            assertTrue("Recovery must preserve readable ciphertext", ciphertext.isFile)
+            assertTrue(database.vaultOperationDao().getAll().isEmpty())
+        } finally {
+            isolatedScope.cancel()
             source.delete()
             database.close()
         }
