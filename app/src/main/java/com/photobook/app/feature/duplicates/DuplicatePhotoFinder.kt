@@ -9,6 +9,7 @@ import com.photobook.app.data.model.PhotoRecord
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -81,7 +82,8 @@ class DuplicatePhotoFinder @Inject constructor(
     private suspend fun exactDuplicateCandidates(records: List<PhotoRecord>): List<PhotoRecord> {
         if (records.size < DB_PREFILTER_MIN_RECORDS) return records
 
-        return runCatching {
+        return try {
+            currentCoroutineContext().ensureActive()
             val databaseIds = photoDao.getAllIds()
             if (!DuplicateCandidatePolicy.matchesSnapshot(
                     recordIds = records.map { photo -> photo.id },
@@ -98,45 +100,62 @@ class DuplicatePhotoFinder @Inject constructor(
 
             val candidateIdSet = candidateIds.toHashSet()
             records.filter { photo -> photo.id in candidateIdSet }
-        }.getOrDefault(records)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            records
+        }
     }
 
-    private fun findExactDuplicates(records: List<PhotoRecord>): List<DuplicatePhotoGroup> {
-        return records
-            .asSequence()
-            .filter { it.fileSize > 0L }
-            .groupBy { it.fileSize }
-            .values
-            .filter { it.size > 1 }
-            .flatMap { candidates ->
-                candidates
-                    .mapNotNull { photo -> partialHash(photo.uriString)?.let { hash -> hash to photo } }
-                    .groupBy(keySelector = { it.first }, valueTransform = { it.second })
-                    .values
-                    .filter { it.size > 1 }
-                    .flatMap { partialMatchCandidates ->
-                        partialMatchCandidates
-                            .mapNotNull { photo -> sha256(photo.uriString)?.let { hash -> hash to photo } }
-                            .groupBy(keySelector = { it.first }, valueTransform = { it.second })
-                            .values
-                            .filter { it.size > 1 }
-                    }
-                    .map { photos ->
-                        DuplicatePhotoGroup(
-                            id = "exact-${photos.minOf { it.id }}",
-                            kind = DuplicateMatchKind.Exact,
-                            photos = photos.sortedByDescending { it.dateAdded },
-                        )
-                    }
+    private suspend fun findExactDuplicates(records: List<PhotoRecord>): List<DuplicatePhotoGroup> {
+        val groups = mutableListOf<DuplicatePhotoGroup>()
+        val bySize = records.filter { it.fileSize > 0L }.groupBy { it.fileSize }
+        for (sameSize in bySize.values) {
+            currentCoroutineContext().ensureActive()
+            if (sameSize.size < 2) continue
+
+            val byPartial = mutableMapOf<String, MutableList<PhotoRecord>>()
+            for (photo in sameSize) {
+                currentCoroutineContext().ensureActive()
+                val hash = partialHash(photo.uriString) ?: continue
+                byPartial.getOrPut(hash) { mutableListOf() } += photo
             }
+            for (partialMatches in byPartial.values) {
+                currentCoroutineContext().ensureActive()
+                if (partialMatches.size < 2) continue
+
+                val byFullDigest = mutableMapOf<String, MutableList<PhotoRecord>>()
+                for (photo in partialMatches) {
+                    currentCoroutineContext().ensureActive()
+                    val digest = sha256(photo.uriString) ?: continue
+                    byFullDigest.getOrPut(digest) { mutableListOf() } += photo
+                }
+                for (matches in byFullDigest.values) {
+                    currentCoroutineContext().ensureActive()
+                    if (matches.size < 2) continue
+                    groups += DuplicatePhotoGroup(
+                        id = "exact-${matches.minOf { it.id }}",
+                        kind = DuplicateMatchKind.Exact,
+                        photos = matches.sortedByDescending { it.dateAdded },
+                    )
+                }
+            }
+        }
+        return groups
     }
 
-    private fun partialHash(uriString: String): String? {
-        return runCatching {
+    private suspend fun partialHash(uriString: String): String? {
+        val jobContext = currentCoroutineContext()
+        return try {
+            jobContext.ensureActive()
             context.contentResolver.openInputStream(Uri.parse(uriString))?.use { input ->
-                DuplicateHash.partialMd5Hex(input, PARTIAL_HASH_LIMIT)
+                DuplicateHash.partialMd5Hex(input, PARTIAL_HASH_LIMIT) { jobContext.ensureActive() }
             }
-        }.getOrNull()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private suspend fun findNearDuplicates(
@@ -213,9 +232,10 @@ class DuplicatePhotoFinder @Inject constructor(
             }
     }
 
-    private fun findBurstGroups(records: List<PhotoRecord>): List<DuplicatePhotoGroup> {
+    private suspend fun findBurstGroups(records: List<PhotoRecord>): List<DuplicatePhotoGroup> {
         if (records.size < BURST_MIN_COUNT) return emptyList()
 
+        currentCoroutineContext().ensureActive()
         val sorted = records
             .asSequence()
             .filter { it.dateAdded > 0L && it.width > 0 && it.height > 0 }
@@ -227,6 +247,7 @@ class DuplicatePhotoFinder @Inject constructor(
         val groups = mutableListOf<DuplicatePhotoGroup>()
         var current = mutableListOf<PhotoRecord>()
         sorted.forEach { photo ->
+            currentCoroutineContext().ensureActive()
             if (current.isEmpty()) {
                 current += photo
                 return@forEach
@@ -250,10 +271,12 @@ class DuplicatePhotoFinder @Inject constructor(
         return groups
     }
 
-    private fun buildBurstGroup(photos: List<PhotoRecord>): DuplicatePhotoGroup {
-        val candidates = photos.map { photo ->
+    private suspend fun buildBurstGroup(photos: List<PhotoRecord>): DuplicatePhotoGroup {
+        val candidates = mutableListOf<HeroCandidate>()
+        for (photo in photos) {
+            currentCoroutineContext().ensureActive()
             val analysis = analyzeHeroFeatures(photo.uriString)
-            HeroCandidate(
+            candidates += HeroCandidate(
                 photo = photo,
                 sharpness = analysis?.sharpnessVariance ?: 0.0,
                 exposureBalance = analysis?.exposureBalance ?: 0.35,
@@ -300,14 +323,15 @@ class DuplicatePhotoFinder @Inject constructor(
         return widthDelta <= BURST_DIMENSION_DELTA && heightDelta <= BURST_DIMENSION_DELTA
     }
 
-    private fun findBlurryGroup(records: List<PhotoRecord>): DuplicatePhotoGroup? {
+    private suspend fun findBlurryGroup(records: List<PhotoRecord>): DuplicatePhotoGroup? {
         if (records.size < 2) return null
 
         val blurryCandidates = mutableListOf<Pair<PhotoRecord, Double>>()
-        records.forEach { photo ->
+        for (photo in records) {
+            currentCoroutineContext().ensureActive()
             val score = photo.blurScore
                 ?: blurScoreComputer.computeFromUri(photo.uriString)
-                ?: return@forEach
+                ?: continue
             if (score <= BLUR_VARIANCE_THRESHOLD) {
                 blurryCandidates += photo to score
             }
@@ -331,7 +355,8 @@ class DuplicatePhotoFinder @Inject constructor(
         )
     }
 
-    private fun analyzeHeroFeatures(uriString: String): HeroFeatureAnalysis? {
+    private suspend fun analyzeHeroFeatures(uriString: String): HeroFeatureAnalysis? {
+        currentCoroutineContext().ensureActive()
         val bitmap = decodeSampledBitmap(Uri.parse(uriString), HERO_SAMPLE_MAX_DIMENSION) ?: return null
         if (bitmap.width < 3 || bitmap.height < 3) {
             bitmap.recycleSafely()
@@ -359,6 +384,7 @@ class DuplicatePhotoFinder @Inject constructor(
             var laplacianCount = 0
 
             for (y in 1 until height - 1) {
+                if (y % 16 == 0) currentCoroutineContext().ensureActive()
                 for (x in 1 until width - 1) {
                     val center = rowCenter[x]
                     val up = rowAbove[x]
@@ -433,12 +459,18 @@ class DuplicatePhotoFinder @Inject constructor(
         }
     }
 
-    private fun sha256(uriString: String): String? {
-        return runCatching {
+    private suspend fun sha256(uriString: String): String? {
+        val jobContext = currentCoroutineContext()
+        return try {
+            jobContext.ensureActive()
             context.contentResolver.openInputStream(Uri.parse(uriString))?.use { input ->
-                DuplicateHash.sha256Hex(input)
+                DuplicateHash.sha256Hex(input) { jobContext.ensureActive() }
             }
-        }.getOrNull()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun decodeSampledBitmap(uri: Uri, maxDimensionPx: Int): Bitmap? {
