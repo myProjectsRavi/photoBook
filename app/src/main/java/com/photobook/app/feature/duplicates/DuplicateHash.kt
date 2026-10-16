@@ -54,25 +54,28 @@ object DuplicateHash {
     fun partialMd5Hex(
         input: InputStream,
         maxBytes: Int,
+        checkCancelled: () -> Unit = {},
     ): String {
         require(maxBytes > 0)
-        return digestHex(input, algorithm = "MD5", maxBytes = maxBytes)
+        return digestHex(input, algorithm = "MD5", maxBytes = maxBytes, checkCancelled = checkCancelled)
     }
 
-    fun sha256Hex(input: InputStream): String {
-        return digestHex(input, algorithm = "SHA-256", maxBytes = null)
+    fun sha256Hex(input: InputStream, checkCancelled: () -> Unit = {}): String {
+        return digestHex(input, algorithm = "SHA-256", maxBytes = null, checkCancelled = checkCancelled)
     }
 
     private fun digestHex(
         input: InputStream,
         algorithm: String,
         maxBytes: Int?,
+        checkCancelled: () -> Unit,
     ): String {
         val digest = MessageDigest.getInstance(algorithm)
         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
         var totalRead = 0
 
         while (maxBytes == null || totalRead < maxBytes) {
+            checkCancelled()
             val toRead = if (maxBytes == null) {
                 buffer.size
             } else {
@@ -80,11 +83,15 @@ object DuplicateHash {
             }
             if (toRead <= 0) break
             val read = input.read(buffer, 0, toRead)
+            // A blocking provider read may finish after dismissal. Abort immediately
+            // afterward instead of hashing the rest of a large cancelled stream.
+            checkCancelled()
             if (read <= 0) break
             digest.update(buffer, 0, read)
             totalRead += read
         }
 
+        checkCancelled()
         return digest.digest().joinToString(separator = "") { byte -> "%02x".format(byte) }
     }
 
