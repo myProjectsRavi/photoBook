@@ -199,6 +199,7 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                 val result = pdfExportService.exportPhotosToDocumentUri(
                     photos = photos,
                     destinationUri = destinationUri,
+                    freshlyCreated = true, // returned by CreateDocument, never an existing picked file
                 ) { progress ->
                     coroutineScope.launch { pdfExportProgress = progress }
                 }
