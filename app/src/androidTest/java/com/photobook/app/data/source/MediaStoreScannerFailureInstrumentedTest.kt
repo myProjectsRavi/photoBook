@@ -81,6 +81,55 @@ class MediaStoreScannerFailureInstrumentedTest {
     }
 
     @Test
+    fun prematureFalseCursorMovement_failsPhotoScanRatherThanDeletingRetainedState() = runBlocking {
+        val scanner = scannerWithProvider { _, projection, _, _, _ ->
+            object : MatrixCursor(requireNotNull(projection)) {
+                init {
+                    addRow(rowFor(requireNotNull(projection), id = 11L))
+                    addRow(rowFor(requireNotNull(projection), id = 12L))
+                }
+                override fun onMove(oldPosition: Int, newPosition: Int): Boolean {
+                    if (newPosition == 1) return false
+                    return super.onMove(oldPosition, newPosition)
+                }
+            }
+        }
+        val failure = runCatching { scanner.scanAll() }.exceptionOrNull()
+        assertTrue("A half-complete provider result may not succeed: $failure", failure is MediaStoreScanException)
+    }
+
+    @Test
+    fun prematureFalseCursorMovement_failsIdReconciliationToo() {
+        val scanner = scannerWithProvider { _, projection, _, _, _ ->
+            object : MatrixCursor(requireNotNull(projection)) {
+                init {
+                    addRow(rowFor(requireNotNull(projection), id = 11L))
+                    addRow(rowFor(requireNotNull(projection), id = 12L))
+                }
+                override fun onMove(oldPosition: Int, newPosition: Int): Boolean {
+                    if (newPosition == 1) return false
+                    return super.onMove(oldPosition, newPosition)
+                }
+            }
+        }
+        val failure = runCatching { scanner.scanAllIds() }.exceptionOrNull()
+        assertTrue("Partial ID set must not be deletion authority: $failure", failure is MediaStoreScanException)
+    }
+
+    @Test
+    fun providerIllegalState_isClassifiedRecoverablyAtCursorBoundary() = runBlocking {
+        val scanner = scannerWithProvider { _, projection, _, _, _ ->
+            object : MatrixCursor(requireNotNull(projection)) {
+                init { addRow(rowFor(requireNotNull(projection), id = 1L)) }
+                override fun onMove(oldPosition: Int, newPosition: Int): Boolean {
+                    throw IllegalStateException("remote provider disappeared")
+                }
+            }
+        }
+        assertTrue(runCatching { scanner.scanAll() }.exceptionOrNull() is MediaStoreScanException)
+    }
+
+    @Test
     fun providerSecurityFailure_propagatesInsteadOfPublishingEmptyData() = runBlocking {
         val scanner = scannerWithProvider { _, _, _, _, _ ->
             throw SecurityException("grant revoked during query")
@@ -110,7 +159,7 @@ class MediaStoreScannerFailureInstrumentedTest {
 
         val failure = runCatching { scanner.scanAll() }.exceptionOrNull()
 
-        assertTrue(failure is IllegalStateException)
+        assertTrue(failure is MediaStoreScanException)
     }
 
     private fun scannerWithProvider(
