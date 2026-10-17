@@ -620,6 +620,23 @@ OUT_DIR="$OUT_DIR/lifecycle-stress" \
 "${ADB[@]}" shell dumpsys cpuinfo > "$OUT_DIR/cpuinfo-after-stress.txt" || true
 "${ADB[@]}" logcat -d -b crash > "$OUT_DIR/crash-buffer.txt" || true
 "${ADB[@]}" logcat -d > "$OUT_DIR/logcat.txt" || true
+
+# Android's ring-buffer logcat can rotate away the 100k initial-index markers
+# before the final 12-iteration lifecycle stress finishes. UTP retains a
+# per-test device log for a_initialIndexReadyLatency; reuse only real captured
+# PhotoBookPhase4 lines from that exact test, never synthesize timing values.
+INDEX_LOGCAT="$(find baselineprofile/build/outputs/androidTest-results -type f \
+  -name 'logcat-*a_initialIndexReadyLatency.txt' -print 2>/dev/null | sort | tail -n 1)"
+if [[ -n "$INDEX_LOGCAT" && -s "$INDEX_LOGCAT" ]]; then
+  grep -F 'PhotoBookPhase4:' "$INDEX_LOGCAT" \
+    > "$OUT_DIR/initial-index-phase4-markers.txt" || true
+  if [[ -s "$OUT_DIR/initial-index-phase4-markers.txt" ]]; then
+    cat "$OUT_DIR/initial-index-phase4-markers.txt" >> "$OUT_DIR/logcat.txt"
+    echo "[phase3] restored exact-test PhotoBookPhase4 markers from $INDEX_LOGCAT"
+  fi
+fi
+# The timing extractor still requires completed=1 for all three exact-count
+# initial-index stages and will fail if the authentic entries are missing.
 if (( SDK >= 30 )); then
   "${ADB[@]}" shell dumpsys activity exit-info "$PACKAGE" > "$OUT_DIR/exit-info.txt" || true
 fi
