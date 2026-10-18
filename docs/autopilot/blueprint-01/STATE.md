@@ -9,8 +9,9 @@ current_epic: E03 Gallery experience
 current_feature: Independent production review remediation
 current_story: S07 Design system
 status: IN_PROGRESS
-source_commit_tested: 4004b9c29159ef48cae69e7684720f1094c4c6a2 (Android Verification and six-API PASS; Phase4 3/6 PASS, 3/6 FAIL)
-latest_checkpoint_commit: this S07 viewer boundary + benchmark fail-closed candidate (CI pending)
+source_commit_tested: 4f3017309a58d1471c37b58724991d65aba4a05f (Android Verification PASS; API35 targeted PASS; six-API PASS; Phase4 5/6 PASS and 100k/2GB FAIL in two attempts)
+latest_checkpoint_commit: 4f3017309a58d1471c37b58724991d65aba4a05f (CI verified 18 October 2026; no production LGTM)
+
 
 ## Source blueprint
 
@@ -978,3 +979,12 @@ S32 is ACCEPTED. The frozen production source is `583da1bac1525f7a2a898e7e58b651
 - Confirmed test defect: `awaitViewerPageAdvance` could time out with fewer than three stable observations yet return a transient forward page. Candidate now fails closed with observed page, sample count and pager context. All 12 swipes and mandatory FrameTimingMetric remain required.
 - Production-side candidate: near the global first/last photo, `onViewerPhotoChanged` unnecessarily reconstructed the visible window on every edge swipe. Candidate guards recentering when already anchored at that global boundary while still recentering toward the opposite edge; focused unit tests cover both boundaries, middle and small windows. Do not claim this is the proven sole root cause until full exact-source CI.
 - **Next:** inspect exact new HEAD and Android Verification, targeted API35 if available, six-API and six-scale Phase4 jobs; diagnose any failure from logs/artifacts, validate no PhotoBook fatal/ANR/OOM and strict timings, then update canonical evidence. Do not alter main, publish/release, weaken privacy/size/destructive safeguards, or claim physical-device evidence. S07 remains IN_PROGRESS; production LGTM NO.
+
+## 18 October 2026 — latest exact-head release blocker
+
+- Authorized feature-branch source SHA: `4f3017309a58d1471c37b58724991d65aba4a05f`; do not modify or merge `main`.
+- Exact-head Android Verification [39045644107](https://github.com/myProjectsRavi/photoBook/actions/runs/39045644107) **SUCCESS**; targeted API35 offline [39045644080](https://github.com/myProjectsRavi/photoBook/actions/runs/39045644080) **SUCCESS**; supported API 26/29/30/33/34/36 [39045644053](https://github.com/myProjectsRavi/photoBook/actions/runs/39045644053) **SUCCESS**.
+- Phase4 [39045644125](https://github.com/myProjectsRavi/photoBook/actions/runs/39045644125), attempt 1: **5/6 PASS** (10k 2GB/4GB; 50k 2GB/4GB; 100k 4GB). **100k/2GB FAIL**, original job `117433701378` failed required `f_searchTypingAndResultsFrameTiming` (36 trace files, benchmark JSON retained, not an evidence-collection failure).
+- The failed 100k/2GB job was individually rerun. Workflow attempt 2: **5/6 PASS**, 100k/2GB replacement job `117486216305` **FAIL** at required `g_reelsVerticalSwipeFrameTiming`, with 41 retained Perfetto traces and benchmark JSON. Artifact `12114010822`. These are two different real failure points on the same constrained scale; do not label the profile flaky without root-cause evidence or waive it.
+- **Current approval**: NO final LGTM; S07 IN_PROGRESS. Independent N01–N08 review and physical/OEM release evidence remain unaccepted. The review AAB is unsigned and not Play-upload ready.
+- **Next executable step**: inspect 100k/2GB attempt-2 per-test Reels XML, logcat, and Perfetto traces; correlate with attempt-1 search failure, memory/GC, pager settlement and UI access, then fix only a proven code or harness defect. Keep seven required macrobenchmarks, 12 forward Reels swipes, raw trace+JSON, all six profiles, zero INTERNET, and crash/ANR/OOM fail-closed gates intact. Run the exact-head suites after a minimal justified patch. Do not touch `main`.
