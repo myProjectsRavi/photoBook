@@ -17,23 +17,35 @@ permissions:
 
 jobs:
   measure-index:
-    name: index-${{ matrix.library_size }}-ram${{ matrix.ram_mb }}
+    name: index-${{ matrix.library_size }}-ram${{ matrix.ram_mb }}-api${{ matrix.api_level }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
 
     strategy:
       fail-fast: false
       matrix:
-        library_size:
-          - 10000
-          - 50000
-          - 100000
-        ram_mb:
-          - 2048
-          - 4096
+        include:
+          - library_size: 10000
+            ram_mb: 2048
+            api_level: 30
+          - library_size: 10000
+            ram_mb: 4096
+            api_level: 35
+          - library_size: 50000
+            ram_mb: 2048
+            api_level: 30
+          - library_size: 50000
+            ram_mb: 4096
+            api_level: 35
+          - library_size: 100000
+            ram_mb: 2048
+            api_level: 30
+          - library_size: 100000
+            ram_mb: 4096
+            api_level: 35
 
     concurrency:
-      group: phase4-index-${{ github.ref }}-${{ matrix.library_size }}-${{ matrix.ram_mb }}
+      group: phase4-index-${{ github.ref }}-${{ matrix.library_size }}-${{ matrix.ram_mb }}-api${{ matrix.api_level }}
       cancel-in-progress: true
 
     steps:
@@ -47,7 +59,7 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - name: Provision 2 GB Android 15 emulator
+      - name: Provision certified Android emulator
         shell: bash
         run: |
           set -euo pipefail
@@ -59,8 +71,8 @@ jobs:
           AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager 2>/dev/null | sort | tail -n 1)"
           ADB="$SDK_ROOT/platform-tools/adb"
           EMULATOR="$SDK_ROOT/emulator/emulator"
-          SYSTEM_IMAGE="system-images;android-35;google_apis;x86_64"
-          AVD_NAME="photobook-phase4-api35"
+          SYSTEM_IMAGE="system-images;android-${{ matrix.api_level }};google_apis;x86_64"
+          AVD_NAME="photobook-phase4-api${{ matrix.api_level }}-ram${{ matrix.ram_mb }}"
 
           export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
           export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
@@ -156,11 +168,26 @@ jobs:
           "$ADB" shell settings put global airplane_mode_on 1
           "$ADB" shell am broadcast -a android.intent.action.AIRPLANE_MODE --ez state true >/dev/null 2>&1 || true
           echo "benchmark_ram_mb=${{ matrix.ram_mb }}"
+          echo "benchmark_api_level=${{ matrix.api_level }}"
           echo "Android release: $("$ADB" shell getprop ro.build.version.release | tr -d '\r')"
-          echo "Android SDK: $("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"
+          ACTUAL_SDK="$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"
+          echo "Android SDK: $ACTUAL_SDK"
           echo "Android ABI: $("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r')"
-          RAM="$("$ADB" shell cat /proc/meminfo | tr -d '\r' | awk '/MemTotal/ {print $2 " kB"; exit}')"
-          echo "RAM: $RAM"
+          RAM_KB="$("$ADB" shell cat /proc/meminfo | tr -d '\r' | awk '/MemTotal/ {print $2; exit}')"
+          echo "RAM: ${RAM_KB} kB"
+
+          if [[ "$ACTUAL_SDK" != "${{ matrix.api_level }}" ]]; then
+            echo "Expected API ${{ matrix.api_level }} but emulator reports API $ACTUAL_SDK" >&2
+            exit 1
+          fi
+          EXPECTED_RAM_KB=$(( ${{ matrix.ram_mb }} * 1024 ))
+          MIN_RAM_KB=$(( EXPECTED_RAM_KB * 80 / 100 ))
+          MAX_RAM_KB=$(( EXPECTED_RAM_KB * 110 / 100 ))
+          if (( RAM_KB < MIN_RAM_KB || RAM_KB > MAX_RAM_KB )); then
+            echo "Requested ${{ matrix.ram_mb }} MB but guest MemTotal=${RAM_KB} kB; refusing mislabeled performance evidence." >&2
+            cat "$RUNNER_TEMP/phase4-emulator.log" || true
+            exit 1
+          fi
 
       - name: Run certified scale harness with Phase 4 timing retention
         env:
