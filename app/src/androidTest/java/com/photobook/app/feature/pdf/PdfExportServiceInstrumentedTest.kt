@@ -167,6 +167,50 @@ class PdfExportServiceInstrumentedTest {
     }
 
     @Test
+    fun missingOwnedDocumentJournal_isClearedAndDoesNotBlockNextExport() = runBlocking {
+        val fixture = createFixture("pdf_missing_owned_journal")
+        val missing = File(fixture.source.parentFile, "already_gone_" + System.nanoTime() + ".pdf")
+        val missingUri = FileProvider.getUriForFile(
+            fixture.context,
+            fixture.context.packageName + ".fileprovider",
+            missing,
+        )
+        val destination = File(fixture.source.parentFile, "created_" + System.nanoTime() + ".pdf")
+        destination.writeBytes(byteArrayOf())
+        val destinationUri = FileProvider.getUriForFile(
+            fixture.context,
+            fixture.context.packageName + ".fileprovider",
+            destination,
+        )
+        val journal = fixture.context.getSharedPreferences(
+            "pdf_publication_journal_v1", android.content.Context.MODE_PRIVATE,
+        )
+        assertTrue(
+            journal.edit()
+                .putString("pending_created_document_uri", missingUri.toString())
+                .commit(),
+        )
+
+        var result: PdfExportResult? = null
+        try {
+            result = PdfExportService(fixture.context).exportPhotosToDocumentUri(
+                photos = listOf(fixture.photo),
+                destinationUri = destinationUri,
+                freshlyCreated = true,
+            )
+            assertTrue("Missing stale owned document blocked export: $result", result is PdfExportResult.Success)
+            assertFalse(
+                "Missing owned-document recovery journal was not cleared",
+                journal.contains("pending_created_document_uri"),
+            )
+            assertPdfHeader(destinationUri)
+        } finally {
+            destination.delete()
+            fixture.close()
+        }
+    }
+
+    @Test
     fun shareExport_cancellationDoesNotPublishOrLeavePartialOutput() = runBlocking {
         val fixture = createFixture("pdf_cancel")
         val service = PdfExportService(fixture.context)
