@@ -839,7 +839,13 @@ class MainViewModel @Inject constructor(
         val state = uiState.value
         val currentIndex = state.viewerPhotos.indexOfFirst { photo -> photo.id == photoId }
         if (currentIndex < 0) return
-        runCatching { TaggingWorker.enqueueFocusedPhoto(context, photoId) }
+        // Reels swipes can advance many photos in seconds. Per-page expedited
+        // OCR/ML work competes with the active pager for memory and CPU,
+        // especially on 2 GB devices. Let durable library maintenance handle
+        // those photos instead of scheduling one worker per swipe.
+        if (!state.reelsEnabled) {
+            runCatching { TaggingWorker.enqueueFocusedPhoto(context, photoId) }
+        }
         if (
             state.viewerUsesVisibleWindow &&
             shouldRecentreViewerWindow(
