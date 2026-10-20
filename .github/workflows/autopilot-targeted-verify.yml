@@ -147,7 +147,16 @@ jobs:
           test -x "$ADB"
           sudo rm -rf "$SDK_ROOT/ndk" "$SDK_ROOT/cmake"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" --channel=0 "emulator" "$SYSTEM_IMAGE"
+          install_emulator_packages() {
+            "$SDKMANAGER" --channel=0 "emulator" "$SYSTEM_IMAGE"
+          }
+          if ! install_emulator_packages; then
+            echo "Initial Android SDK package install failed; clearing partial archives and retrying once." >&2
+            rm -rf "$SDK_ROOT/.temp" "$HOME/.android/cache" "$ANDROID_USER_HOME/cache"
+            rm -rf "$SDK_ROOT/emulator" "$SDK_ROOT/system-images/android-35/google_apis/x86_64"
+            sleep 5
+            install_emulator_packages
+          fi
           test -x "$EMULATOR"
 
           echo "no" | "$AVDMANAGER" create avd             --force             --name "$AVD_NAME"             --package "$SYSTEM_IMAGE"             --device "pixel_2"             --path "$ANDROID_AVD_HOME/$AVD_NAME.avd"
