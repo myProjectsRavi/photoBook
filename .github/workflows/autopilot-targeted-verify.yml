@@ -29,7 +29,7 @@ concurrency:
 
 jobs:
   api35-offline:
-    name: exact-ref-api35-offline-2gb
+    name: exact-ref-api35-offline
     runs-on: ubuntu-24.04
     timeout-minutes: 55
 
@@ -164,7 +164,7 @@ jobs:
           sudo chmod 666 /dev/kvm
           "$EMULATOR" -accel-check
 
-          nohup "$EMULATOR"             -avd "$AVD_NAME"             -no-window             -no-audio             -no-boot-anim             -no-snapshot             -no-metrics             -gpu swiftshader_indirect             -memory 2048             -cores 2             > "$RUNNER_TEMP/autopilot-emulator.log" 2>&1 &
+          nohup "$EMULATOR"             -avd "$AVD_NAME"             -no-window             -no-audio             -no-boot-anim             -no-snapshot             -no-metrics             -gpu swiftshader_indirect             -memory 2560             -cores 2             > "$RUNNER_TEMP/autopilot-emulator.log" 2>&1 &
           EMULATOR_PID=$!
 
           ready=false
@@ -227,6 +227,13 @@ jobs:
           [[ "$AIRPLANE" == "1" ]]
           test -n "$ABI"
           test -n "$RAM_KB"
+          EXPECTED_RAM_KB=$((2560 * 1024))
+          MIN_RAM_KB=$((EXPECTED_RAM_KB * 80 / 100))
+          MAX_RAM_KB=$((EXPECTED_RAM_KB * 110 / 100))
+          if (( RAM_KB < MIN_RAM_KB || RAM_KB > MAX_RAM_KB )); then
+            echo "API35 correctness emulator RAM does not match its declared 2560 MB profile: ${RAM_KB} kB" >&2
+            exit 1
+          fi
           {
             echo "api=$API"
             echo "abi=$ABI"
@@ -318,7 +325,7 @@ jobs:
           EMULATOR_ABI: ${{ steps.emulator.outputs.abi }}
         run: |
           set -euo pipefail
-          python3 tools/benchmark/build_ci_evidence_manifest.py             --checkout-sha "$CHECKOUT_SHA"             --workflow-revision "$WORKFLOW_BLOB"             --workflow-ref "$GITHUB_WORKFLOW_REF"             --api "$EMULATOR_API"             --abi "$EMULATOR_ABI"             --avd-ram-mb 2048             --fixture build/phase0-fixtures/manifest-303.jsonl             --instrumentation-output build/reports/autopilot-targeted/instrumentation.txt             --apk-root app/build/outputs/apk/debug             --output build/reports/autopilot-targeted/evidence-manifest.json
+          python3 tools/benchmark/build_ci_evidence_manifest.py             --checkout-sha "$CHECKOUT_SHA"             --workflow-revision "$WORKFLOW_BLOB"             --workflow-ref "$GITHUB_WORKFLOW_REF"             --api "$EMULATOR_API"             --abi "$EMULATOR_ABI"             --avd-ram-mb 2560             --fixture build/phase0-fixtures/manifest-303.jsonl             --instrumentation-output build/reports/autopilot-targeted/instrumentation.txt             --apk-root app/build/outputs/apk/debug             --output build/reports/autopilot-targeted/evidence-manifest.json
 
       - name: Capture emulator diagnostics
         if: always()
