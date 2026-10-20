@@ -23,6 +23,7 @@ import com.photobook.app.util.PerformanceProfiler
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.FileOutputStream
+import java.io.FileNotFoundException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -585,11 +586,36 @@ class PdfExportService @Inject constructor(
         val stored = publicationJournal.getString(KEY_PENDING_CREATED_DOCUMENT_URI, null)
             ?: return true
         val uri = runCatching { Uri.parse(stored) }.getOrNull() ?: return false
-        val removed = runCatching {
-            context.contentResolver.delete(uri, null, null) > 0
-        }.getOrDefault(false)
-        // Never clear uncertain cleanup ownership; a later attempt may regain access.
-        return removed && clearPendingCreatedDocument()
+
+        val deleteCount = try {
+            context.contentResolver.delete(uri, null, null)
+        } catch (_: FileNotFoundException) {
+            return clearPendingCreatedDocument()
+        } catch (_: SecurityException) {
+            return false
+        } catch (_: Exception) {
+            return false
+        }
+        if (deleteCount > 0) {
+            return clearPendingCreatedDocument()
+        }
+
+        // delete()==0 is ambiguous: the document may already be gone, or the
+        // provider may have refused deletion. Clear the journal only when a
+        // read probe proves the owned document no longer exists. Permission or
+        // provider failures remain fail-closed so we never forget uncertain
+        // cleanup ownership.
+        val definitelyMissing = try {
+            context.contentResolver.openFileDescriptor(uri, "r")?.use { }
+            false
+        } catch (_: FileNotFoundException) {
+            true
+        } catch (_: SecurityException) {
+            false
+        } catch (_: Exception) {
+            false
+        }
+        return definitelyMissing && clearPendingCreatedDocument()
     }
 
     private fun recordPendingDownload(uri: Uri): Boolean {
