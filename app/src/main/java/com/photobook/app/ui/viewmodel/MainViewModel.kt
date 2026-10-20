@@ -693,7 +693,7 @@ class MainViewModel @Inject constructor(
                 }
             }
 
-            if (openedViewer) {
+            if (openedViewer && shouldEnqueueFocusedTagging(uiState.value.reelsEnabled)) {
                 runCatching { TaggingWorker.enqueueFocusedPhoto(context, photo.id) }
             }
         }
