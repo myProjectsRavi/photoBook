@@ -843,7 +843,7 @@ class MainViewModel @Inject constructor(
         // OCR/ML work competes with the active pager for memory and CPU,
         // especially on 2 GB devices. Let durable library maintenance handle
         // those photos instead of scheduling one worker per swipe.
-        if (!state.reelsEnabled) {
+        if (shouldEnqueueFocusedTagging(state.reelsEnabled)) {
             runCatching { TaggingWorker.enqueueFocusedPhoto(context, photoId) }
         }
         if (
@@ -2368,6 +2368,8 @@ internal suspend fun commitLimitedAccessReconciliation(
         committedVisible
     }
 }
+
+internal fun shouldEnqueueFocusedTagging(reelsEnabled: Boolean): Boolean = !reelsEnabled
 
 internal fun shouldRecentreViewerWindow(
     currentIndex: Int,
