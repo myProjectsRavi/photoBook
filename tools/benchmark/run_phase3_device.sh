@@ -376,13 +376,34 @@ fi
 # boundaries without adding a second emulator job or contaminating MediaStore.
 if [[ "$LIBRARY_SIZE" == "10000" ]]; then
   echo "[phase3] running focused Room persistence regression"
+  run_room_regression() {
+    local log_file="$1"
+    ./gradlew :app:connectedDebugAndroidTest \
+      -Pandroid.testInstrumentationRunnerArguments.class="$ROOM_TEST_CLASS" \
+      --stacktrace \
+      2>&1 | tee "$log_file"
+  }
+
+  ROOM_LOG="$OUT_DIR/room-regression-gradle.log"
   set +e
-  ./gradlew :app:connectedDebugAndroidTest \
-    -Pandroid.testInstrumentationRunnerArguments.class="$ROOM_TEST_CLASS" \
-    --stacktrace \
-    | tee "$OUT_DIR/room-regression-gradle.log"
-  ROOM_TEST_STATUS=${PIPESTATUS[0]}
+  run_room_regression "$ROOM_LOG"
+  ROOM_TEST_STATUS=$?
   set -e
+
+  # Hosted runners can occasionally be throttled by Maven Central while AGP
+  # resolves UTP/runtime artifacts. Retry only proven transport/resolution
+  # failures; a real test assertion or process crash must never be retried away.
+  if (( ROOM_TEST_STATUS != 0 )) && grep -Eiq \
+      'Received status code (429|5[0-9][0-9])|Too Many Requests|Read timed out|Connection reset|Temporary failure in name resolution' \
+      "$ROOM_LOG"; then
+    echo "[phase3] transient dependency resolution failure; retrying focused Room regression once" >&2
+    sleep 8
+    RETRY_LOG="$OUT_DIR/room-regression-gradle-retry.log"
+    set +e
+    run_room_regression "$RETRY_LOG"
+    ROOM_TEST_STATUS=$?
+    set -e
+  fi
 
   mkdir -p "$OUT_DIR/room-regression"
   cp -R app/build/outputs/androidTest-results "$OUT_DIR/room-regression/" 2>/dev/null || true
