@@ -1,4 +1,5 @@
 name: Supported API Offline Matrix
+# Exact-head review candidate: SDK provisioning retry hardened.
 
 on:
   push:

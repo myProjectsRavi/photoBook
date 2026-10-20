@@ -1,4 +1,5 @@
 name: Autopilot Targeted Emulator Verification
+# Exact-head review candidate: SDK provisioning retry hardened.
 # S05 navigation evidence retrigger after instrumentation-harness fix.
 
 on:
