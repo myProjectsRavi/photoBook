@@ -26,6 +26,7 @@ python3 -m py_compile \
   tools/benchmark/build_ci_evidence_manifest.py \
   tools/benchmark/build_compatibility_report.py \
   tools/benchmark/verify_blueprint_completion.py \
+  tools/benchmark/validate_frame_metrics.py \
   tools/benchmark/test_phase0_tools.py \
   tools/benchmark/test_validate_frame_metrics.py \
   tools/benchmark/test_ci_evidence_manifest.py \
