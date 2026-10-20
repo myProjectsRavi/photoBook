@@ -421,8 +421,24 @@ collect_benchmark_outputs() {
       [[ -n "$remote" ]] || continue
       local_hash="$(printf '%s' "$remote" | sha256sum | cut -c1-12)"
       target="$DEVICE_BENCH_OUT/${local_hash}-$(basename "$remote")"
-      [[ -s "$target" ]] && continue
       temp="${target}.partial"
+
+      if [[ "$remote" == *benchmarkData.json ]]; then
+        # benchmarkData.json is rewritten as Macrobenchmark tests finish. Refresh
+        # the same local target on every poll, but only publish a syntactically
+        # complete JSON snapshot so readers never observe a partial write.
+        if timeout 45s "${ADB[@]}" pull "$remote" "$temp" >>"$DEVICE_BENCH_CAPTURE_LOG" 2>&1 \
+            && [[ -s "$temp" ]] \
+            && python3 -c 'import json,sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$temp"; then
+          mv "$temp" "$target"
+          printf 'refreshed=%s bytes=%s\n' "$remote" "$(wc -c < "$target")" >>"$DEVICE_BENCH_CAPTURE_LOG"
+        else
+          rm -f "$temp"
+        fi
+        continue
+      fi
+
+      [[ -s "$target" ]] && continue
       if timeout 45s "${ADB[@]}" pull "$remote" "$temp" >>"$DEVICE_BENCH_CAPTURE_LOG" 2>&1 \
           && [[ -s "$temp" ]]; then
         mv "$temp" "$target"
@@ -465,10 +481,24 @@ while IFS= read -r remote; do
   [[ -n "$remote" ]] || continue
   remote_hash="$(printf '%s' "$remote" | sha256sum | cut -c1-12)"
   target="$DEVICE_BENCH_OUT/${remote_hash}-$(basename "$remote")"
-  if [[ -s "$target" ]] || (timeout 90s "${ADB[@]}" pull "$remote" "$target" >>"$DEVICE_BENCH_CAPTURE_LOG" 2>&1 && [[ -s "$target" ]]); then
+  temp="${target}.partial"
+  if [[ "$remote" == *benchmarkData.json ]]; then
+    if timeout 90s "${ADB[@]}" pull "$remote" "$temp" >>"$DEVICE_BENCH_CAPTURE_LOG" 2>&1 \
+        && [[ -s "$temp" ]] \
+        && python3 -c 'import json,sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$temp"; then
+      mv "$temp" "$target"
+      CAPTURED_JSON=$((CAPTURED_JSON + 1))
+    elif [[ -s "$target" ]]; then
+      # Keep the last known-valid live snapshot if UTP removed the final file.
+      CAPTURED_JSON=$((CAPTURED_JSON + 1))
+      rm -f "$temp"
+    else
+      rm -f "$temp"
+      echo "[phase3] unable to retrieve valid benchmark JSON: $remote" >&2
+    fi
+  elif [[ -s "$target" ]] || (timeout 90s "${ADB[@]}" pull "$remote" "$target" >>"$DEVICE_BENCH_CAPTURE_LOG" 2>&1 && [[ -s "$target" ]]); then
     case "$target" in
       *.perfetto-trace|*.trace) CAPTURED_TRACES=$((CAPTURED_TRACES + 1)) ;;
-      *benchmarkData.json) CAPTURED_JSON=$((CAPTURED_JSON + 1)) ;;
     esac
   else
     rm -f "$target"
@@ -482,6 +512,17 @@ printf 'traces=%s\nbenchmarkJson=%s\n' "$CAPTURED_TRACES" "$CAPTURED_JSON" \
   | tee "$OUT_DIR/device-benchmark-capture-summary.txt"
 if (( CAPTURED_TRACES == 0 )); then
   echo "[phase3] no raw Perfetto traces captured; smoothness certification is incomplete" >&2
+fi
+if (( CAPTURED_JSON == 0 )); then
+  echo "[phase3] no valid benchmark JSON captured; numerical smoothness certification is incomplete" >&2
+fi
+
+FRAME_METRIC_SUMMARY="$OUT_DIR/frame-metric-summary.json"
+if (( CAPTURED_JSON > 0 )); then
+  python3 tools/benchmark/validate_frame_metrics.py \
+    --benchmark-dir "$DEVICE_BENCH_OUT" \
+    --api-level "$SDK" \
+    --output "$FRAME_METRIC_SUMMARY"
 fi
 
 # Preserve benchmark JSON / Perfetto result locations for later forensic review.
