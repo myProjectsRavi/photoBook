@@ -484,10 +484,13 @@ class PdfExportService @Inject constructor(
             clearPendingDownload()
             return PdfOutput(uri = outputUri)
         } catch (t: Throwable) {
-            outputUri?.let { uri ->
-                runCatching { context.contentResolver.delete(uri, null, null) }
-            }
-            clearPendingDownload()
+            val deleted = outputUri?.let { uri ->
+                runCatching { context.contentResolver.delete(uri, null, null) > 0 }
+                    .getOrDefault(false)
+            } ?: false
+            // If deletion fails or returns zero, preserve the durable journal.
+            // The next export must reconcile the row instead of forgetting it.
+            if (deleted) clearPendingDownload()
             if (t is CancellationException) throw t
             throw t
         }
@@ -647,17 +650,22 @@ class PdfExportService @Inject constructor(
     }
 
     private fun queryPendingState(uri: Uri): Int? {
-        return runCatching {
-            context.contentResolver.query(
+        return try {
+            // A null cursor means the provider could not answer, NOT that its row
+            // is absent. Losing the journal here could strand a partial download.
+            val cursor = context.contentResolver.query(
                 uri,
                 arrayOf(MediaStore.MediaColumns.IS_PENDING),
                 null,
                 null,
                 null,
-            )?.use { cursor ->
-                if (!cursor.moveToFirst()) PENDING_ROW_MISSING else cursor.getInt(0)
-            } ?: PENDING_ROW_MISSING
-        }.getOrNull()
+            ) ?: return null
+            cursor.use {
+                if (!it.moveToFirst()) PENDING_ROW_MISSING else it.getInt(0)
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun deleteOutput(output: PdfOutput) {

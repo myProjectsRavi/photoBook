@@ -211,6 +211,33 @@ class PdfExportServiceInstrumentedTest {
     }
 
     @Test
+    fun unavailableDownloadProvider_keepsPendingCleanupJournalAndBlocksNewExport() = runBlocking {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return@runBlocking
+        val fixture = createFixture("pdf_unknown_download")
+        val journal = fixture.context.getSharedPreferences(
+            "pdf_publication_journal_v1", android.content.Context.MODE_PRIVATE,
+        )
+        val previous = journal.getString("pending_pdf_uri", null)
+        val unavailableUri = Uri.parse("content://com.photobook.nonexistent.pdf.provider/12345")
+        try {
+            assertTrue(journal.edit().putString("pending_pdf_uri", unavailableUri.toString()).commit())
+            val result = PdfExportService(fixture.context).exportPhotos(listOf(fixture.photo))
+            assertTrue("Unknown provider must prevent publication: $result", result is PdfExportResult.Error)
+            assertEquals(
+                "Pending partial document must remain recoverable",
+                unavailableUri.toString(),
+                journal.getString("pending_pdf_uri", null),
+            )
+        } finally {
+            val editor = journal.edit()
+            if (previous == null) editor.remove("pending_pdf_uri")
+            else editor.putString("pending_pdf_uri", previous)
+            assertTrue(editor.commit())
+            fixture.close()
+        }
+    }
+
+    @Test
     fun shareExport_cancellationDoesNotPublishOrLeavePartialOutput() = runBlocking {
         val fixture = createFixture("pdf_cancel")
         val service = PdfExportService(fixture.context)
