@@ -2,6 +2,7 @@ package com.photobook.app.baselineprofile
 
 import android.os.Build
 import android.os.SystemClock
+import android.util.Log
 import android.view.KeyEvent
 import androidx.benchmark.macro.ExperimentalMetricApi
 import androidx.benchmark.macro.FrameTimingMetric
@@ -73,15 +74,18 @@ class PhotoBookMacrobenchmark {
 
         check(elapsedMs > 0L) { "Initial index-ready latency was not captured" }
         val photosPerSecond = librarySize * 1_000.0 / elapsedMs.toDouble()
-        println(
-            String.format(
-                Locale.US,
-                "[phase3] indexReady librarySize=%d elapsedMs=%d photosPerSecond=%.2f",
-                librarySize,
-                elapsedMs,
-                photosPerSecond,
-            ),
+        val indexReadyMeasurement = String.format(
+            Locale.US,
+            "[phase3] indexReady librarySize=%d elapsedMs=%d photosPerSecond=%.2f",
+            librarySize,
+            elapsedMs,
+            photosPerSecond,
         )
+        println(indexReadyMeasurement)
+        // API 30 UTP can omit instrumentation stdout from the host Gradle log.
+        // Persist the same measured value to device logcat so Phase 4 timing
+        // extraction remains exact and reviewable across API levels.
+        Log.i("PhotoBookPhase4", indexReadyMeasurement)
     }
 
     @Test
