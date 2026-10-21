@@ -3,6 +3,9 @@ package com.photobook.app.data.index
 import com.photobook.app.data.model.IntelligenceStatus
 import com.photobook.app.data.model.MLTag
 import com.photobook.app.data.model.PhotoRecord
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotSame
@@ -167,6 +170,23 @@ class PhotoIndexV2ParityTest {
 
         index.removeRecords(setOf(record.id))
         assertEquals(2L, index.revisions().value.structural)
+    }
+
+    @Test
+    fun typedRevisions_countEveryConcurrentFavoriteMutation() = runBlocking {
+        val index = PhotoIndex(PhotoIndexStrategy.V2)
+        index.setRecords(deterministicRecords(1))
+        val operations = 256
+        coroutineScope {
+            repeat(operations) {
+                launch(Dispatchers.Default) {
+                    index.toggleFavorite(1L)
+                }
+            }
+        }
+        assertEquals(operations.toLong(), index.revisions().value.favorite)
+        assertEquals(operations.toLong() + 1L, index.version())
+        assertEquals(1L, index.revisions().value.structural)
     }
 
     private fun assertParity(legacy: PhotoIndex, v2: PhotoIndex, label: String) {

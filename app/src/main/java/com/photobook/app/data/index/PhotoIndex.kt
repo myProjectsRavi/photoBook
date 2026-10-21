@@ -10,6 +10,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -70,9 +71,9 @@ class PhotoIndex internal constructor(
 
     suspend fun setRecords(records: List<PhotoRecord>) {
         backend.setRecords(records)
-        revisionFlow.value = revisionFlow.value.copy(
-            structural = revisionFlow.value.structural + 1L,
-        )
+        revisionFlow.update { revisions ->
+            revisions.copy(structural = revisions.structural + 1L)
+        }
     }
 
     suspend fun updatePhotoIntelligence(
@@ -106,41 +107,41 @@ class PhotoIndex internal constructor(
     suspend fun updatePhotosIntelligence(updates: List<PhotoIntelligenceUpdate>): List<PhotoRecord> {
         val committed = backend.updatePhotosIntelligence(updates)
         if (committed.isNotEmpty()) {
-            revisionFlow.value = revisionFlow.value.copy(
-                intelligence = revisionFlow.value.intelligence + 1L,
-            )
+            revisionFlow.update { revisions ->
+                revisions.copy(intelligence = revisions.intelligence + 1L)
+            }
         }
         return committed
     }
 
     suspend fun setFavorite(id: Long, isFavorite: Boolean) {
         backend.setFavorite(id, isFavorite)
-        revisionFlow.value = revisionFlow.value.copy(
-            favorite = revisionFlow.value.favorite + 1L,
-        )
+        revisionFlow.update { revisions ->
+            revisions.copy(favorite = revisions.favorite + 1L)
+        }
     }
 
     suspend fun toggleFavorite(id: Long): Boolean {
         val value = backend.toggleFavorite(id)
-        revisionFlow.value = revisionFlow.value.copy(
-            favorite = revisionFlow.value.favorite + 1L,
-        )
+        revisionFlow.update { revisions ->
+            revisions.copy(favorite = revisions.favorite + 1L)
+        }
         return value
     }
 
     suspend fun upsertRecord(record: PhotoRecord) {
         backend.upsertRecord(record)
-        revisionFlow.value = revisionFlow.value.copy(
-            structural = revisionFlow.value.structural + 1L,
-        )
+        revisionFlow.update { revisions ->
+            revisions.copy(structural = revisions.structural + 1L)
+        }
     }
 
     suspend fun removeRecords(ids: Set<Long>) {
         backend.removeRecords(ids)
         if (ids.isNotEmpty()) {
-            revisionFlow.value = revisionFlow.value.copy(
-                structural = revisionFlow.value.structural + 1L,
-            )
+            revisionFlow.update { revisions ->
+                revisions.copy(structural = revisions.structural + 1L)
+            }
         }
     }
 
