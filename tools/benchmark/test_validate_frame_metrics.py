@@ -69,6 +69,19 @@ class FrameMetricValidationTest(unittest.TestCase):
             result = validate(root, api_level=30)
             self.assertTrue(result["passed"])
 
+    def test_observational_emulator_mode_reports_budget_violations_without_certifying(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cpu = [120.0] * 40
+            overrun = [80.0] * 40
+            self.write_data(root, self.all_interactions(cpu=cpu, overrun=overrun))
+            result = validate(root, api_level=35, enforce_budgets=False)
+            self.assertTrue(result["passed"])
+            self.assertFalse(result["budgetEnforced"])
+            self.assertEqual("OBSERVATIONAL_ONLY", result["certificationStatus"])
+            self.assertTrue(result["budgetViolations"])
+            self.assertEqual([], result["failures"])
+
     def test_missing_interaction_benchmark_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
