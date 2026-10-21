@@ -126,6 +126,7 @@ def validate(
         "budgetEnforced": enforce_budgets,
         "certificationStatus": "ENFORCED" if enforce_budgets else "OBSERVATIONAL_ONLY",
         "passed": True,
+        "withinBudget": False,
         "failures": [],
         "budgetViolations": [],
     }
@@ -174,6 +175,9 @@ def validate(
         summary["benchmarks"][name] = result
 
     summary["budgetViolations"] = failures
+    # Execution success and measured frame-budget compliance are independent.
+    # Hosted emulators may complete successfully without satisfying physical-device budgets.
+    summary["withinBudget"] = not failures
     if enforce_budgets:
         summary["failures"] = failures
         summary["passed"] = not failures
