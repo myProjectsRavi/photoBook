@@ -60,7 +60,7 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - name: Provision certified Android emulator
+      - name: Provision hosted Android emulator
         shell: bash
         run: |
           set -euo pipefail
@@ -199,7 +199,7 @@ jobs:
             exit 1
           fi
 
-      - name: Run certified scale harness with Phase 4 timing retention
+      - name: Run hosted scale stress harness with Phase 4 timing retention
         env:
           LIBRARY_SIZE: ${{ matrix.library_size }}
           STRESS_ITERATIONS: "12"
