@@ -92,6 +92,27 @@ class FrameMetricValidationTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "missing interaction benchmark"):
                 validate(root, api_level=35)
 
+    def test_required_interactions_beat_larger_unrelated_stale_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stale = root / "stale-benchmarkData.json"
+            unrelated = [
+                benchmark(f"unrelated_{i}", [8.0] * 40)
+                for i in range(10)
+            ]
+            stale.write_text(
+                json.dumps({"benchmarks": unrelated}),
+                encoding="utf-8",
+            )
+            complete = root / "complete-benchmarkData.json"
+            complete.write_text(
+                json.dumps({"benchmarks": self.all_interactions()}),
+                encoding="utf-8",
+            )
+            result = validate(root, api_level=35)
+            self.assertTrue(result["passed"])
+            self.assertTrue(result["source"].endswith("complete-benchmarkData.json"))
+
     def test_most_complete_json_wins_over_stale_early_snapshot(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
