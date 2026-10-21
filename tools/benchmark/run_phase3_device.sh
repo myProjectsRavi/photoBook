@@ -733,6 +733,10 @@ if ! cleanup_benchmark_media; then
   exit 1
 fi
 
-echo "[phase3] PASS device certification harness"
+if [[ "$REQUIRE_PHYSICAL" == "1" ]]; then
+  echo "[phase3] PASS physical-device certification harness"
+else
+  echo "[phase3] PASS hosted-emulator stress/correctness harness; frame budgets are observational only and do NOT certify physical-device smoothness"
+fi
 echo "[phase3] library_size=$LIBRARY_SIZE model=$MODEL sdk=$SDK ram_kb=$RAM_KB emulator=$IS_EMULATOR"
 echo "[phase3] reports=$OUT_DIR"
