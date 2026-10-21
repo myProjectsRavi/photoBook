@@ -75,7 +75,7 @@ def flatten_runs(metric: Any, metric_name: str, benchmark_name: str) -> list[flo
 
 
 def load_most_complete_json(root: Path) -> tuple[Path, dict[str, Any]]:
-    candidates: list[tuple[int, Path, dict[str, Any]]] = []
+    candidates: list[tuple[int, int, Path, dict[str, Any]]] = []
     for path in sorted(root.glob("**/*benchmarkData.json")):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -83,10 +83,14 @@ def load_most_complete_json(root: Path) -> tuple[Path, dict[str, Any]]:
             continue
         benchmarks = payload.get("benchmarks") if isinstance(payload, dict) else None
         if isinstance(benchmarks, list):
-            candidates.append((len(benchmarks), path, payload))
+            required_present = sum(
+                isinstance(item, dict) and item.get("name") in REQUIRED_INTERACTIONS
+                for item in benchmarks
+            )
+            candidates.append((required_present, len(benchmarks), path, payload))
     if not candidates:
         raise ValueError(f"No valid benchmarkData.json found under {root}")
-    _, path, payload = max(candidates, key=lambda item: (item[0], item[1].stat().st_mtime_ns))
+    _, _, path, payload = max(candidates, key=lambda item: (item[0], item[1], item[2].stat().st_mtime_ns))
     return path, payload
 
 
