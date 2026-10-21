@@ -46,6 +46,7 @@ class FrameMetricValidationTest(unittest.TestCase):
             result = validate(root, api_level=35)
             self.assertTrue(result["passed"])
             self.assertEqual(3, len(result["benchmarks"]))
+            self.assertTrue(result["withinBudget"])
 
     def test_api35_positive_p95_overrun_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -55,6 +56,7 @@ class FrameMetricValidationTest(unittest.TestCase):
             result = validate(root, api_level=35)
             self.assertFalse(result["passed"])
             self.assertTrue(any("frameOverrunMs P95" in item for item in result["failures"]))
+            self.assertFalse(result["withinBudget"])
 
     def test_api30_uses_cpu_metric_without_overrun(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -79,6 +81,7 @@ class FrameMetricValidationTest(unittest.TestCase):
             self.assertTrue(result["passed"])
             self.assertFalse(result["budgetEnforced"])
             self.assertEqual("OBSERVATIONAL_ONLY", result["certificationStatus"])
+            self.assertFalse(result["withinBudget"])
             self.assertTrue(result["budgetViolations"])
             self.assertEqual([], result["failures"])
 
