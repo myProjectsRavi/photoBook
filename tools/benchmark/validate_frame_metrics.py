@@ -30,6 +30,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-cpu-p99-ms", type=float, default=DEFAULT_CPU_P99_MS)
     parser.add_argument("--max-overrun-p95-ms", type=float, default=DEFAULT_OVERRUN_P95_MS)
     parser.add_argument("--max-overrun-p99-ms", type=float, default=DEFAULT_OVERRUN_P99_MS)
+    parser.add_argument(
+        "--observe-only",
+        action="store_true",
+        help=(
+            "Compute and retain frame-budget violations without treating hosted-emulator "
+            "timings as physical-device smoothness certification."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -89,6 +97,7 @@ def validate(
     cpu_p99_limit: float = DEFAULT_CPU_P99_MS,
     overrun_p95_limit: float = DEFAULT_OVERRUN_P95_MS,
     overrun_p99_limit: float = DEFAULT_OVERRUN_P99_MS,
+    enforce_budgets: bool = True,
 ) -> dict[str, Any]:
     source, payload = load_most_complete_json(benchmark_dir)
     benchmarks = {
@@ -114,8 +123,11 @@ def validate(
             "frameOverrunMsP99Max": overrun_p99_limit if api_level >= 31 else None,
         },
         "benchmarks": {},
+        "budgetEnforced": enforce_budgets,
+        "certificationStatus": "ENFORCED" if enforce_budgets else "OBSERVATIONAL_ONLY",
         "passed": True,
         "failures": [],
+        "budgetViolations": [],
     }
 
     failures: list[str] = []
@@ -161,8 +173,13 @@ def validate(
 
         summary["benchmarks"][name] = result
 
-    summary["failures"] = failures
-    summary["passed"] = not failures
+    summary["budgetViolations"] = failures
+    if enforce_budgets:
+        summary["failures"] = failures
+        summary["passed"] = not failures
+    else:
+        summary["failures"] = []
+        summary["passed"] = True
     return summary
 
 
@@ -177,6 +194,7 @@ def main() -> None:
             cpu_p99_limit=args.max_cpu_p99_ms,
             overrun_p95_limit=args.max_overrun_p95_ms,
             overrun_p99_limit=args.max_overrun_p99_ms,
+            enforce_budgets=not args.observe_only,
         )
     except ValueError as exc:
         summary = {
