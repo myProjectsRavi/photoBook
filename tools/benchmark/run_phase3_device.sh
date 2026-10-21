@@ -540,10 +540,20 @@ fi
 
 FRAME_METRIC_SUMMARY="$OUT_DIR/frame-metric-summary.json"
 if (( CAPTURED_JSON > 0 )); then
+  FRAME_METRIC_MODE=()
+  if [[ "$REQUIRE_PHYSICAL" != "1" ]]; then
+    # Hosted emulators provide repeatable stress/correctness evidence and raw
+    # frame metrics, but virtualized rendering is not a release-grade 60 Hz
+    # smoothness certification surface. Preserve budget violations in the JSON
+    # as observational evidence; enforce the absolute budgets only when this
+    # harness is explicitly running against a required physical device.
+    FRAME_METRIC_MODE+=(--observe-only)
+  fi
   python3 tools/benchmark/validate_frame_metrics.py \
     --benchmark-dir "$DEVICE_BENCH_OUT" \
     --api-level "$SDK" \
-    --output "$FRAME_METRIC_SUMMARY"
+    --output "$FRAME_METRIC_SUMMARY" \
+    "${FRAME_METRIC_MODE[@]}"
 fi
 
 # Preserve benchmark JSON / Perfetto result locations for later forensic review.
