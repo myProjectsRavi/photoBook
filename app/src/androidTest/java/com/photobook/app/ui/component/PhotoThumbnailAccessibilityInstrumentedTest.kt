@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -17,6 +19,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.onNodeWithText
@@ -39,6 +42,41 @@ class PhotoThumbnailAccessibilityInstrumentedTest {
 
     @get:Rule
     val composeRule = createComposeRule()
+
+    @Test
+    fun searchClearAction_hasAccessibleNameAndWorksAt200PercentFont() {
+        var clearCalls = 0
+        composeRule.setContent {
+            PhotoBookTheme(dynamicColor = false) {
+                CompositionLocalProvider(LocalDensity provides Density(1f, 2f)) {
+                    var query by androidx.compose.runtime.remember {
+                        androidx.compose.runtime.mutableStateOf("sunset")
+                    }
+                    Box(modifier = androidx.compose.ui.Modifier.width(320.dp)) {
+                        SearchBar(
+                            query = query,
+                            onQueryChange = { query = it },
+                            onSearch = {},
+                            onClear = {
+                                clearCalls++
+                                query = ""
+                            },
+                            onFocusChanged = {},
+                            autoFocus = false,
+                        )
+                    }
+                }
+            }
+        }
+
+        composeRule.onNodeWithContentDescription("Clear search")
+            .assertIsDisplayed()
+            .performClick()
+        composeRule.runOnIdle {
+            org.junit.Assert.assertEquals(1, clearCalls)
+        }
+        composeRule.onNodeWithContentDescription("Clear search").assertDoesNotExist()
+    }
 
     @Test
     fun selectableThumbnail_exposesSelectedStateAndCheckboxRole() {

@@ -67,7 +67,7 @@ fun SearchBar(
                 IconButton(onClick = onClear) {
                     Icon(
                         imageVector = Icons.Default.Clear,
-                        contentDescription = null,
+                        contentDescription = androidx.compose.ui.res.stringResource(com.photobook.app.R.string.clear_search),
                         tint = Color(0xFF4B5563)
                     )
                 }
