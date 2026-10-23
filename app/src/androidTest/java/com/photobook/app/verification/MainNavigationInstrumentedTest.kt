@@ -139,7 +139,18 @@ class MainNavigationInstrumentedTest {
             assertTrue(device.wait(Until.hasObject(By.text("Tools")), 10_000))
 
             device.findObject(By.text("Albums")).click()
-            assertTrue(device.wait(Until.hasObject(By.text("No albums in current access")), 5_000))
+            // Album catalogs are asynchronous and may be populated by earlier
+            // instrumentation. Assert the Albums destination's stable controls,
+            // not an empty-state message that appears only with zero albums.
+            assertTrue(
+                "Albums destination did not render Memories at 200% font",
+                device.wait(Until.hasObject(By.text("Memories")), 10_000),
+            )
+            assertTrue(
+                "Albums memory controls missing at 200% font",
+                device.hasObject(By.text("Shown on this device")) ||
+                    device.hasObject(By.text("Hidden on this device")),
+            )
             device.findObject(By.text("Tools")).click()
             assertTrue(device.wait(Until.hasObject(By.text("Vault")), 5_000))
 
