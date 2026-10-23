@@ -36,6 +36,64 @@ class GridContinuityPolicyTest {
     }
 
     @Test
+    fun scrubIndicator_tracksOrdinaryScrollAndAccountsForVisibleViewport() {
+        assertThat(
+            GridContinuityPolicy.scrubIndicatorY(
+                firstVisibleIndex = 450,
+                visibleItemCount = 100,
+                itemCount = 1000,
+                trackHeightPx = 600f,
+                canScrollBackward = true,
+                canScrollForward = true,
+            ),
+        ).isWithin(0.001f).of(300f)
+    }
+
+    @Test
+    fun scrubIndicator_staysAtTopWhenGalleryCannotScrollBackward() {
+        assertThat(
+            GridContinuityPolicy.scrubIndicatorY(
+                firstVisibleIndex = 0,
+                visibleItemCount = 30,
+                itemCount = 100,
+                trackHeightPx = 400f,
+                canScrollBackward = false,
+                canScrollForward = true,
+            ),
+        ).isEqualTo(0f)
+    }
+
+    @Test
+    fun scrubIndicator_reachesBottomWhenLastViewportIsVisible() {
+        assertThat(
+            GridContinuityPolicy.scrubIndicatorY(
+                firstVisibleIndex = 90,
+                visibleItemCount = 10,
+                itemCount = 100,
+                trackHeightPx = 400f,
+                canScrollBackward = true,
+                canScrollForward = false,
+            ),
+        ).isEqualTo(400f)
+    }
+
+    @Test
+    fun scrubIndicator_clampsStalePagingIndexAndFailsClosedOnInvalidTrack() {
+        assertThat(
+            GridContinuityPolicy.scrubIndicatorY(9999, 10, 100, 400f, true, true),
+        ).isEqualTo(400f)
+        assertThat(
+            GridContinuityPolicy.scrubIndicatorY(50, 10, 100, Float.NaN, true, true),
+        ).isEqualTo(0f)
+        assertThat(
+            GridContinuityPolicy.scrubIndicatorY(0, 0, 0, 400f, false, false),
+        ).isEqualTo(0f)
+        assertThat(
+            GridContinuityPolicy.scrubIndicatorY(0, 10, 10, 400f, false, false),
+        ).isEqualTo(0f)
+    }
+
+    @Test
     fun scrubTarget_mapsTrackEdgesAndMidpointDeterministically() {
         assertThat(GridContinuityPolicy.scrubTargetIndex(0f, 1000f, 101)).isEqualTo(0)
         assertThat(GridContinuityPolicy.scrubTargetIndex(500f, 1000f, 101)).isEqualTo(50)
