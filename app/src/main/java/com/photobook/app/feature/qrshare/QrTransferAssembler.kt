@@ -100,6 +100,13 @@ class QrTransferAssembler(
                     QrReplayGuard.block(transferId, nowMs)
                     return QrAssemblyResult.Error(transferId, "Transfer metadata changed.")
                 }
+                // Data can arrive before metadata. Reject any previously received chunk
+                // outside the newly declared range rather than reporting impossible progress.
+                if (session.chunks.keys.any { it >= frame.totalChunks }) {
+                    sessions.remove(transferId)
+                    QrReplayGuard.block(transferId, nowMs)
+                    return QrAssemblyResult.Error(transferId, "Transfer chunk index is invalid.")
+                }
                 session.metadata = frame
                 session.lastTouchedMs = nowMs
                 if (session.encodedPayloadLength > QrTransferProtocol.maxEncodedPayloadLength(frame.byteSize)) {
