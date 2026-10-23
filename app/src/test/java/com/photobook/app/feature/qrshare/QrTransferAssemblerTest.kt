@@ -98,6 +98,64 @@ class QrTransferAssemblerTest {
     }
 
     @Test
+    fun metadata_rejectsOutOfRangeChunkReceivedBeforeMetadata() {
+        QrReplayGuard.clearForTests()
+        try {
+            val assembler = QrTransferAssembler(clock = { 1_000L })
+            val data = QrTransferProtocol.encodeData(
+                QrTransferFrame.Data("lateMeta1", 3, "AAAA"),
+            )
+            assertThat(assembler.consume(data)).isInstanceOf(QrAssemblyResult.Progress::class.java)
+
+            val metadata = QrTransferProtocol.encodeMetadata(
+                QrTransferFrame.Metadata(
+                    transferId = "lateMeta1",
+                    totalChunks = 1,
+                    fileName = "demo.webp",
+                    mimeType = "image/webp",
+                    sha256 = "0".repeat(64),
+                    byteSize = 3,
+                ),
+            )
+            val failure = assembler.consume(metadata)
+            assertThat(failure).isInstanceOf(QrAssemblyResult.Error::class.java)
+            assertThat((failure as QrAssemblyResult.Error).reason).contains("index")
+            assertThat(assembler.consume(data)).isInstanceOf(QrAssemblyResult.Error::class.java)
+        } finally {
+            QrReplayGuard.clearForTests()
+        }
+    }
+
+    @Test
+    fun metadata_acceptsInRangeChunkReceivedBeforeMetadata() {
+        QrReplayGuard.clearForTests()
+        try {
+            val assembler = QrTransferAssembler(clock = { 2_000L })
+            val bytes = "valid".toByteArray()
+            val payload = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+            val data = QrTransferProtocol.encodeData(
+                QrTransferFrame.Data("lateMeta2", 0, payload),
+            )
+            assertThat(assembler.consume(data)).isInstanceOf(QrAssemblyResult.Progress::class.java)
+
+            val metadata = QrTransferProtocol.encodeMetadata(
+                QrTransferFrame.Metadata(
+                    transferId = "lateMeta2",
+                    totalChunks = 1,
+                    fileName = "demo.webp",
+                    mimeType = "image/webp",
+                    sha256 = QrPayloadHash.sha256(bytes),
+                    byteSize = bytes.size,
+                ),
+            )
+            val completed = assembler.consume(metadata) as QrAssemblyResult.Completed
+            assertThat(completed.bytes).isEqualTo(bytes)
+        } finally {
+            QrReplayGuard.clearForTests()
+        }
+    }
+
+    @Test
     fun consume_reassemblesPayload_whenAllChunksArrive() {
         val assembler = QrTransferAssembler()
         val bytes = "hello photobook".toByteArray()
