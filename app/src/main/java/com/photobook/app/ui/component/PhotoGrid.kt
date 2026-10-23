@@ -23,6 +23,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -206,6 +207,22 @@ fun PhotoGrid(
             }
         }
 
+        // Derive the passive thumb position from the visible grid. During a drag,
+        // keep the pointer-driven position to avoid fighting asynchronous scrollToItem.
+        val passiveScrubY by remember(gridState, photos.itemCount) {
+            derivedStateOf {
+                GridContinuityPolicy.scrubIndicatorY(
+                    firstVisibleIndex = gridState.firstVisibleItemIndex,
+                    visibleItemCount = gridState.layoutInfo.visibleItemsInfo.size,
+                    itemCount = photos.itemCount,
+                    trackHeightPx = scrubTrackHeightPx,
+                    canScrollBackward = gridState.canScrollBackward,
+                    canScrollForward = gridState.canScrollForward,
+                )
+            }
+        }
+        val displayedScrubY = if (isScrubbing) scrubY else passiveScrubY
+
         if (photos.itemCount > 1 && sortedMarks.isNotEmpty()) {
             Box(
                 modifier = Modifier
@@ -252,7 +269,7 @@ fun PhotoGrid(
                         .align(Alignment.TopCenter)
                         .offset(
                             y = with(density) {
-                                (scrubY - if (isScrubbing) 10.dp.toPx() else 7.dp.toPx()).toDp()
+                                (displayedScrubY - if (isScrubbing) 10.dp.toPx() else 7.dp.toPx()).toDp()
                             },
                         )
                         .size(if (isScrubbing) 20.dp else 14.dp)
