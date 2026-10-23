@@ -41,6 +41,10 @@ import coil.compose.AsyncImage
 import com.photobook.app.feature.trash.TrashListUiState
 import com.photobook.app.feature.trash.TrashedPhoto
 
+/** A filtered empty page is not an empty Trash while more MediaStore pages remain. */
+internal fun shouldShowTrashEmptyState(visiblePhotoCount: Int, hasMore: Boolean): Boolean =
+    visiblePhotoCount == 0 && !hasMore
+
 @Composable
 fun TrashScreen(
     photos: List<TrashedPhoto>,
@@ -112,7 +116,7 @@ fun TrashScreen(
                             )
                         }
                     }
-                    photos.isEmpty() -> {
+                    shouldShowTrashEmptyState(photos.size, hasMore) -> {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text(
                                 text = "Trash is empty.",
