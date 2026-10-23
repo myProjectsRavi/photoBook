@@ -22,6 +22,28 @@ internal object GridContinuityPolicy {
         return loadedIndex.takeIf { it >= 0 }?.plus(placeholdersBefore)
     }
 
+    /**
+     * Keep the scrubber thumb aligned with ordinary grid scrolling, not only drags.
+     * The visible viewport cannot start at the final item; account for visible rows
+     * and snap to the true ends of the scroll range.
+     */
+    fun scrubIndicatorY(
+        firstVisibleIndex: Int,
+        visibleItemCount: Int,
+        itemCount: Int,
+        trackHeightPx: Float,
+        canScrollBackward: Boolean,
+        canScrollForward: Boolean,
+    ): Float {
+        if (itemCount <= 1 || !trackHeightPx.isFinite() || trackHeightPx <= 0f) return 0f
+        if (!canScrollBackward) return 0f
+        if (!canScrollForward) return trackHeightPx
+
+        val maxFirstVisibleIndex = (itemCount - visibleItemCount.coerceAtLeast(1)).coerceAtLeast(1)
+        val fraction = firstVisibleIndex.coerceIn(0, maxFirstVisibleIndex).toFloat() / maxFirstVisibleIndex
+        return (fraction * trackHeightPx).coerceIn(0f, trackHeightPx)
+    }
+
     fun scrubTargetIndex(
         rawY: Float,
         trackHeightPx: Float,
