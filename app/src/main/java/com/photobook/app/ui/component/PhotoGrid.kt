@@ -133,12 +133,14 @@ fun PhotoGrid(
         val itemCount = photos.itemCount
         if (itemCount <= 0) return
 
-        val clampedY = rawY.coerceIn(0f, scrubTrackHeightPx)
+        // Validate the unmodified pointer value before clamping: infinity must not
+        // silently become a valid top/bottom scrub request.
         val targetIndex = GridContinuityPolicy.scrubTargetIndex(
-            rawY = clampedY,
+            rawY = rawY,
             trackHeightPx = scrubTrackHeightPx,
             itemCount = itemCount,
         ) ?: return
+        val clampedY = rawY.coerceIn(0f, scrubTrackHeightPx)
         scrubY = clampedY
 
         if (targetIndex != lastScrubTargetIndex) {

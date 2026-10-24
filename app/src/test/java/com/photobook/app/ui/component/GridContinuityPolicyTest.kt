@@ -107,6 +107,14 @@ class GridContinuityPolicyTest {
     }
 
     @Test
+    fun scrubTarget_nonFinitePointerAndTrackFailClosedWithoutRounding() {
+        listOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY).forEach { invalid ->
+            assertThat(GridContinuityPolicy.scrubTargetIndex(invalid, 500f, 10)).isNull()
+            assertThat(GridContinuityPolicy.scrubTargetIndex(250f, invalid, 10)).isNull()
+        }
+    }
+
+    @Test
     fun scrubTarget_emptyOrInvalidTrackFailsClosed() {
         assertThat(GridContinuityPolicy.scrubTargetIndex(10f, 100f, 0)).isNull()
         assertThat(GridContinuityPolicy.scrubTargetIndex(10f, 0f, 10)).isNull()

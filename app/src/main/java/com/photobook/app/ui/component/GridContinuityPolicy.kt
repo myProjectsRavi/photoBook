@@ -49,7 +49,8 @@ internal object GridContinuityPolicy {
         trackHeightPx: Float,
         itemCount: Int,
     ): Int? {
-        if (itemCount <= 0 || trackHeightPx <= 0f) return null
+        // NaN can reach roundToInt() and throw; non-finite drag input is never a valid target.
+        if (itemCount <= 0 || !rawY.isFinite() || !trackHeightPx.isFinite() || trackHeightPx <= 0f) return null
         val clampedY = rawY.coerceIn(0f, trackHeightPx)
         val fraction = (clampedY / trackHeightPx).coerceIn(0f, 1f)
         return ((itemCount - 1) * fraction)
