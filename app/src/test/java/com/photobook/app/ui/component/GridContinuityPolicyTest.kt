@@ -107,6 +107,30 @@ class GridContinuityPolicyTest {
     }
 
     @Test
+    fun scrubGestureTargetTracker_repeatsTargetOnNewGestureAfterOrdinaryScroll() {
+        val tracker = ScrubGestureTargetTracker()
+        tracker.reset() // First thumb gesture.
+        assertThat(tracker.shouldDispatch(57)).isTrue()
+        assertThat(tracker.shouldDispatch(57)).isFalse() // Same gesture, same request.
+        assertThat(tracker.shouldDispatch(58)).isTrue()
+        assertThat(tracker.shouldDispatch(58)).isFalse()
+
+        // Grid is scrolled normally between gestures; photo count stays constant.
+        tracker.reset() // The next onDragStart must request target 58 again.
+        assertThat(tracker.shouldDispatch(58)).isTrue()
+        assertThat(tracker.shouldDispatch(58)).isFalse()
+    }
+
+    @Test
+    fun scrubGestureTargetTracker_resetAlsoHandlesPagingCountChange() {
+        val tracker = ScrubGestureTargetTracker()
+        assertThat(tracker.shouldDispatch(10)).isTrue()
+        assertThat(tracker.shouldDispatch(10)).isFalse()
+        tracker.reset() // Called when a new paging item count arrives.
+        assertThat(tracker.shouldDispatch(10)).isTrue()
+    }
+
+    @Test
     fun scrubTarget_nonFinitePointerAndTrackFailClosedWithoutRounding() {
         listOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY).forEach { invalid ->
             assertThat(GridContinuityPolicy.scrubTargetIndex(invalid, 500f, 10)).isNull()

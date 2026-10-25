@@ -58,3 +58,19 @@ internal object GridContinuityPolicy {
             .coerceIn(0, itemCount - 1)
     }
 }
+
+/** Deduplicates queued scroll requests only within one active thumb gesture. */
+internal class ScrubGestureTargetTracker {
+    private var lastIndex: Int? = null
+
+    /** New touches and paging-count swaps cannot inherit a stale target. */
+    fun reset() {
+        lastIndex = null
+    }
+
+    fun shouldDispatch(targetIndex: Int): Boolean {
+        if (lastIndex == targetIndex) return false
+        lastIndex = targetIndex
+        return true
+    }
+}

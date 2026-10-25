@@ -77,7 +77,7 @@ fun PhotoGrid(
     var scrubY by remember { mutableFloatStateOf(0f) }
     var isScrubbing by remember { mutableStateOf(false) }
     var activeTimelineLabel by remember { mutableStateOf<String?>(null) }
-    var lastScrubTargetIndex by remember(photos.itemCount) { mutableIntStateOf(-1) }
+    val scrubTargets = remember { ScrubGestureTargetTracker() }
     var scrubScrollJob by remember { mutableStateOf<Job?>(null) }
     var continuityAnchorId by remember { mutableStateOf<Long?>(null) }
     var continuityAnchorOffset by remember { mutableIntStateOf(0) }
@@ -124,7 +124,7 @@ fun PhotoGrid(
     LaunchedEffect(photos.itemCount) {
         scrubScrollJob?.cancel()
         scrubScrollJob = null
-        lastScrubTargetIndex = -1
+        scrubTargets.reset()
     }
 
     val sortedMarks = remember(timelineMarks) { timelineMarks.sortedBy { mark -> mark.index } }
@@ -143,8 +143,7 @@ fun PhotoGrid(
         val clampedY = rawY.coerceIn(0f, scrubTrackHeightPx)
         scrubY = clampedY
 
-        if (targetIndex != lastScrubTargetIndex) {
-            lastScrubTargetIndex = targetIndex
+        if (scrubTargets.shouldDispatch(targetIndex)) {
             scrubScrollJob?.cancel()
             scrubScrollJob = coroutineScope.launch {
                 gridState.scrollToItem(targetIndex)
@@ -238,6 +237,9 @@ fun PhotoGrid(
                     .pointerInput(photos.itemCount, sortedMarks) {
                         detectVerticalDragGestures(
                             onDragStart = { offset ->
+                                // Ordinary scrolling between touches may move away from the
+                                // previous target without changing the photo count.
+                                scrubTargets.reset()
                                 isScrubbing = true
                                 updateScrubPosition(offset.y)
                             },
