@@ -227,6 +227,7 @@
     <string name="welcome_subtitle">Private on-device photo search. Your photos never leave this device.</string>
     <string name="welcome_search_prompt">Type a word, place, date, or moment.</string>
     <string name="feed_mode_timeline">Timeline</string>
+    <string name="gallery_timeline_scrubber">Gallery timeline scrubber</string>
     <string name="feed_mode_utilities">Utilities</string>
     <string name="feed_mode_result_count">%1$s • %2$d photos</string>
     <string name="feed_mode_empty">No photos in this feed yet.</string>

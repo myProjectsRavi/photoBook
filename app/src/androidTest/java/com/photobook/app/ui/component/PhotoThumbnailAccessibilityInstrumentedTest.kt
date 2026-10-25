@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -21,6 +22,7 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -31,6 +33,7 @@ import com.photobook.app.ui.screen.MainScreen
 import com.photobook.app.ui.model.AlbumDescriptor
 import com.photobook.app.ui.model.AlbumKind
 import com.photobook.app.ui.model.AlbumScope
+import com.photobook.app.ui.model.TimelineMark
 import com.photobook.app.ui.theme.PhotoBookTheme
 import org.junit.Rule
 import org.junit.Test
@@ -41,6 +44,53 @@ class PhotoThumbnailAccessibilityInstrumentedTest {
 
     @get:Rule
     val composeRule = createComposeRule()
+
+    @Test
+    fun galleryTimelineScrubber_exposesProgressActionAndMovesGridAt200PercentFont() {
+        val photos = (0 until 150).map { index ->
+            samplePhoto().copy(
+                id = 10000L + index,
+                uriString = "content://photobook.test/photo/${10000 + index}",
+                fileName = "gallery-$index.jpg",
+            )
+        }
+        val paging = MutableStateFlow(PagingData.from(photos))
+        lateinit var state: LazyGridState
+        composeRule.setContent {
+            PhotoBookTheme(dynamicColor = false) {
+                CompositionLocalProvider(LocalDensity provides Density(1f, 2f)) {
+                    state = rememberLazyGridState()
+                    Box(modifier = androidx.compose.ui.Modifier.width(320.dp).height(640.dp)) {
+                        PhotoGrid(
+                            photos = paging.collectAsLazyPagingItems(),
+                            columns = 3,
+                            timelineMarks = listOf(TimelineMark(0, "October"), TimelineMark(75, "September")),
+                            selectedPhotoIds = emptySet(),
+                            isSelectionMode = false,
+                            onPhotoClick = {},
+                            onPhotoLongClick = {},
+                            gridState = state,
+                        )
+                    }
+                }
+            }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithContentDescription("Gallery timeline scrubber")
+            .assertIsDisplayed()
+            .assert(SemanticsMatcher.keyIsDefined(SemanticsActions.SetProgress))
+            .performSemanticsAction(SemanticsActions.SetProgress) { action ->
+                org.junit.Assert.assertFalse("Invalid progress must fail closed", action(Float.NaN))
+                org.junit.Assert.assertTrue("Accessible progress adjustment rejected", action(0.5f))
+            }
+        composeRule.waitForIdle()
+        composeRule.runOnIdle {
+            org.junit.Assert.assertTrue(
+                "Accessible scrubber did not move the gallery",
+                state.firstVisibleItemIndex >= 50,
+            )
+        }
+    }
 
     @Test
     fun searchClearAction_hasAccessibleNameAndWorksAt200PercentFont() {

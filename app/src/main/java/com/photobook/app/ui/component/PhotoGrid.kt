@@ -40,6 +40,11 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.paging.compose.LazyPagingItems
@@ -229,10 +234,34 @@ fun PhotoGrid(
                 modifier = Modifier
                     .fillMaxHeight()
                     .align(Alignment.CenterEnd)
-                    .width(38.dp)
+                    // 54dp including the trailing 6dp inset gives a 48dp drag target.
+                    .width(54.dp)
                     .padding(end = 6.dp, top = 12.dp, bottom = 12.dp)
                     .onSizeChanged { size ->
                         scrubTrackHeightPx = size.height.toFloat().coerceAtLeast(1f)
+                    }
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = context.getString(com.photobook.app.R.string.gallery_timeline_scrubber)
+                        progressBarRangeInfo = ProgressBarRangeInfo(
+                            current = (displayedScrubY / scrubTrackHeightPx).coerceIn(0f, 1f),
+                            range = 0f..1f,
+                        )
+                        setProgress { position ->
+                            val target = GridContinuityPolicy.scrubTargetIndex(
+                                rawY = position,
+                                trackHeightPx = 1f,
+                                itemCount = photos.itemCount,
+                            )
+                            if (target == null) {
+                                false
+                            } else {
+                                // Accessibility actions must work even after ordinary scrolling
+                                // to the same target; touch-only dedup is not reused here.
+                                scrubScrollJob?.cancel()
+                                scrubScrollJob = coroutineScope.launch { gridState.scrollToItem(target) }
+                                true
+                            }
+                        }
                     }
                     .pointerInput(photos.itemCount, sortedMarks) {
                         detectVerticalDragGestures(
