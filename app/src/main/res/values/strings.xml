@@ -100,6 +100,8 @@
     <string name="archives_delete_due">Delete due items</string>
     <string name="archives_candidate_meta">Confidence %1$d%% - %2$s</string>
     <string name="archives_tile_selected">Selected for archive action</string>
+    <string name="archives_select_photo">Select %1$s</string>
+    <string name="archives_deselect_photo">Deselect %1$s</string>
     <string name="archives_review_title">Review archive photo</string>
     <string name="archives_review_keep">Keep in Photos</string>
     <string name="archives_review_archive">Archive for %1$d days</string>
