@@ -44,10 +44,10 @@ class MainNavigationInstrumentedTest {
             "am start -W -f 0x10008000 -n ${component!!.flattenToShortString()}",
         )
         assertFalse(launchOutput.contains("Error", ignoreCase = true))
-        // API-35 x86 emulator process launch can lag after earlier heavy
-        // inference tests. Retain the actual Photos UI assertion rather than
-        // treating a successful shell am-start response as readiness.
-        val photosVisible = device.wait(Until.hasObject(By.text("Photos")), 30_000)
+        // A launcher or system UI can also display a Photos label. Require the
+        // PhotoBook-owned node, not just a matching string in another package.
+        // Keep the foreground-package assertion and bounded 30-second wait.
+        val photosVisible = device.wait(Until.hasObject(By.pkg(targetContext.packageName).text("Photos")), 30_000)
         assertTrue(
             "PhotoBook did not render Photos after launch; " +
                 "foreground=${device.currentPackageName}; " +
@@ -129,7 +129,8 @@ class MainNavigationInstrumentedTest {
             // Older API emulators can recreate the activity slowly after a 200% font
             // configuration change. Keep the actual accessibility assertions, but wait
             // for the target window instead of assuming a 10-second launch.
-            val photosVisible = device.wait(Until.hasObject(By.text("Photos")), 30_000)
+            // After HOME, only an app-owned Photos node proves the relaunch succeeded.
+            val photosVisible = device.wait(Until.hasObject(By.pkg(targetContext.packageName).text("Photos")), 30_000)
             assertTrue(
                 "Photos absent at 200% font; foreground=${device.currentPackageName}; " +
                     "launch=$launchOutput",
