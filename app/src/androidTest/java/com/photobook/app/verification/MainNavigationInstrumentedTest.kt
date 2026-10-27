@@ -48,12 +48,14 @@ class MainNavigationInstrumentedTest {
         // PhotoBook-owned node, not just a matching string in another package.
         // Keep the foreground-package assertion and bounded 30-second wait.
         val photosVisible = device.wait(Until.hasObject(By.pkg(targetContext.packageName).text("Photos")), 30_000)
+        val correctForeground = device.currentPackageName == targetContext.packageName
         assertTrue(
             "PhotoBook did not render Photos after launch; " +
                 "foreground=${device.currentPackageName}; " +
                 "component=${component.flattenToShortString()}; " +
-                "amStart=${launchOutput.take(300)}",
-            photosVisible && device.currentPackageName == targetContext.packageName,
+                "amStart=${launchOutput.take(300)}" +
+                if (!photosVisible || !correctForeground) "; ${failureOnlyWindowEvidence()}" else "",
+            photosVisible && correctForeground,
         )
     }
 
@@ -133,7 +135,8 @@ class MainNavigationInstrumentedTest {
             val photosVisible = device.wait(Until.hasObject(By.pkg(targetContext.packageName).text("Photos")), 30_000)
             assertTrue(
                 "Photos absent at 200% font; foreground=${device.currentPackageName}; " +
-                    "launch=$launchOutput",
+                    "launch=$launchOutput" +
+                    if (!photosVisible) "; ${failureOnlyWindowEvidence()}" else "",
                 photosVisible,
             )
             assertTrue(device.wait(Until.hasObject(By.text("Albums")), 10_000))
@@ -163,4 +166,40 @@ class MainNavigationInstrumentedTest {
         }
     }
 
+
+    /**
+     * Capture only categorical OS/window readiness evidence when a navigation assertion
+     * is already failing. Never print raw dumpsys data or accessibility text: those can
+     * contain filenames, media text, and third-party app/window titles.
+     */
+    private fun failureOnlyWindowEvidence(): String {
+        val ownPackage = targetContext.packageName
+        val window = device.executeShellCommand("dumpsys window windows")
+        val activity = device.executeShellCommand("dumpsys activity activities")
+        fun focusOwner(marker: String): String {
+            val line = window.lineSequence().firstOrNull { it.contains(marker) } ?: return "not-reported"
+            return when {
+                line.contains(ownPackage) -> "photobook"
+                line.contains("null", ignoreCase = true) -> "null"
+                line.contains("android", ignoreCase = true) -> "system"
+                else -> "other"
+            }
+        }
+        val activityLines = activity.lineSequence()
+            .filter { line ->
+                line.contains("mResumedActivity") ||
+                    line.contains("topResumedActivity") ||
+                    line.contains("ResumedActivity")
+            }
+            .toList()
+        return "focusEvidence(" +
+            "currentFocus=${focusOwner("mCurrentFocus")}, " +
+            "focusedApp=${focusOwner("mFocusedApp")}, " +
+            "resumedPhotoBook=${activityLines.any { it.contains(ownPackage) }}, " +
+            "resumedEntryCount=${activityLines.size}, " +
+            "accessibilityHasPhotoBookNode=${device.hasObject(By.pkg(ownPackage))}, " +
+            "accessibilityHasSystemNode=${device.hasObject(By.pkg("android"))}, " +
+            "fontScale=${device.executeShellCommand("settings get system font_scale").trim().toFloatOrNull() ?: -1f}" +
+            ")"
+    }
 }
