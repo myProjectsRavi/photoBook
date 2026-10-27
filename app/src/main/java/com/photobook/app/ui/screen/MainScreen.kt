@@ -871,7 +871,7 @@ private fun LimitedPhotoAccessBanner(
 }
 
 @Composable
-private fun RefinedTabButton(
+internal fun RefinedTabButton(
     label: String,
     selected: Boolean,
     onClick: () -> Unit,
@@ -882,10 +882,14 @@ private fun RefinedTabButton(
 
     Surface(
         onClick = onClick,
-        modifier = modifier.padding(2.dp).semantics {
-            this.role = Role.Tab
-            this.selected = selected
-        },
+        modifier = modifier
+            .padding(2.dp)
+            // Touch/semantics target is >= 48dp even at the default font scale.
+            .heightIn(min = 48.dp)
+            .semantics {
+                this.role = Role.Tab
+                this.selected = selected
+            },
         color = backgroundColor,
         shape = RoundedCornerShape(12.dp),
         tonalElevation = if (selected) 2.dp else 0.dp
