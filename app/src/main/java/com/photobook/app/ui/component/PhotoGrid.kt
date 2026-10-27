@@ -144,6 +144,7 @@ fun PhotoGrid(
             rawY = rawY,
             trackHeightPx = scrubTrackHeightPx,
             itemCount = itemCount,
+            visibleItemCount = gridState.layoutInfo.visibleItemsInfo.size,
         ) ?: return
         val clampedY = rawY.coerceIn(0f, scrubTrackHeightPx)
         scrubY = clampedY
@@ -251,6 +252,7 @@ fun PhotoGrid(
                                 rawY = position,
                                 trackHeightPx = 1f,
                                 itemCount = photos.itemCount,
+                                visibleItemCount = gridState.layoutInfo.visibleItemsInfo.size,
                             )
                             if (target == null) {
                                 false
