@@ -94,6 +94,33 @@ class GridContinuityPolicyTest {
     }
 
     @Test
+    fun scrubTarget_invertsPassiveViewportThumbWithoutJump() {
+        val thumbY = GridContinuityPolicy.scrubIndicatorY(
+            firstVisibleIndex = 450,
+            visibleItemCount = 100,
+            itemCount = 1000,
+            trackHeightPx = 600f,
+            canScrollBackward = true,
+            canScrollForward = true,
+        )
+        assertThat(thumbY).isWithin(0.001f).of(300f)
+        assertThat(
+            GridContinuityPolicy.scrubTargetIndex(
+                rawY = thumbY,
+                trackHeightPx = 600f,
+                itemCount = 1000,
+                visibleItemCount = 100,
+            ),
+        ).isEqualTo(450)
+    }
+
+    @Test
+    fun scrubTarget_viewportAwareMappingStillReachesTrueEnds() {
+        assertThat(GridContinuityPolicy.scrubTargetIndex(0f, 600f, 1000, 100)).isEqualTo(0)
+        assertThat(GridContinuityPolicy.scrubTargetIndex(600f, 600f, 1000, 100)).isEqualTo(999)
+    }
+
+    @Test
     fun scrubTarget_mapsTrackEdgesAndMidpointDeterministically() {
         assertThat(GridContinuityPolicy.scrubTargetIndex(0f, 1000f, 101)).isEqualTo(0)
         assertThat(GridContinuityPolicy.scrubTargetIndex(500f, 1000f, 101)).isEqualTo(50)
