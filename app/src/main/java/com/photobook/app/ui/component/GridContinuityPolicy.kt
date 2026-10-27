@@ -48,12 +48,19 @@ internal object GridContinuityPolicy {
         rawY: Float,
         trackHeightPx: Float,
         itemCount: Int,
+        visibleItemCount: Int = 1,
     ): Int? {
         // NaN can reach roundToInt() and throw; non-finite drag input is never a valid target.
         if (itemCount <= 0 || !rawY.isFinite() || !trackHeightPx.isFinite() || trackHeightPx <= 0f) return null
         val clampedY = rawY.coerceIn(0f, trackHeightPx)
         val fraction = (clampedY / trackHeightPx).coerceIn(0f, 1f)
-        return ((itemCount - 1) * fraction)
+        // The passive thumb divides by the last possible first-visible index.
+        // Invert that same scale so touching the thumb does not jump forward by
+        // the size of the visible viewport. A full-range gesture still reaches
+        // the true final item, even when the last row is only partly visible.
+        if (fraction == 1f) return itemCount - 1
+        val maxFirstVisibleIndex = (itemCount - visibleItemCount.coerceAtLeast(1)).coerceAtLeast(1)
+        return (maxFirstVisibleIndex * fraction)
             .roundToInt()
             .coerceIn(0, itemCount - 1)
     }
