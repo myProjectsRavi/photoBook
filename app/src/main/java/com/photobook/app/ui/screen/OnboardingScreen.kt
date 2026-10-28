@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -22,10 +24,13 @@ fun OnboardingScreen(
     isIndexing: Boolean,
     progress: Float,
     onGrantPermission: () -> Unit,
+    errorMessage: String? = null,
+    onRetry: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
@@ -56,17 +61,24 @@ fun OnboardingScreen(
                     .padding(top = 20.dp),
             )
         } else {
+            val hasRecoverableError = !errorMessage.isNullOrBlank()
             Text(
-                text = stringResource(R.string.permission_message),
+                text = errorMessage ?: stringResource(R.string.permission_message),
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(top = 20.dp),
             )
             Button(
-                onClick = onGrantPermission,
+                onClick = if (hasRecoverableError) onRetry else onGrantPermission,
                 modifier = Modifier.padding(top = 24.dp),
             ) {
-                Text(text = stringResource(R.string.allow_photo_access))
+                Text(
+                    text = if (hasRecoverableError) {
+                        stringResource(R.string.retry)
+                    } else {
+                        stringResource(R.string.allow_photo_access)
+                    },
+                )
             }
         }
     }

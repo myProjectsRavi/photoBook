@@ -94,9 +94,9 @@ fun PhotoReelsScreen(
     val safeStart = startIndex.coerceIn(0, photos.lastIndex)
     val pagerState = rememberPagerState(initialPage = safeStart, pageCount = { photos.size })
 
-    LaunchedEffect(pagerState.currentPage) {
-        val active = photos.getOrNull(pagerState.currentPage) ?: return@LaunchedEffect
-        searchController.activate(active.id, active.uriString)
+    val activePhoto = photos.getOrNull(pagerState.currentPage)
+    LaunchedEffect(activePhoto?.id, activePhoto?.uriString) {
+        activePhoto?.let { searchController.activate(it.id, it.uriString) }
     }
 
     DisposableEffect(Unit) {
@@ -246,12 +246,16 @@ fun PhotoReelsScreen(
                                                     text = location,
                                                     color = Color.White.copy(alpha = 0.8f),
                                                     style = MaterialTheme.typography.bodySmall,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
                                                 )
                                             }
                                             Text(
                                                 text = photo.folderName,
                                                 color = Color.White.copy(alpha = 0.6f),
                                                 style = MaterialTheme.typography.labelSmall,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
                                             )
                                         }
                                     }

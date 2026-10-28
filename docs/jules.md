@@ -29,11 +29,11 @@ Your goal is to help maintain and expand PhotoBook as the premier offline photo 
 *   **QR Sharing** — compressed preview transfer only; single-frame QR is tried first, then multi-frame animated QR (`QrTransferProtocol`) with size limits, estimated scan time, and receiver re-assembly via `QrTransferAssembler`.
 *   **Private Notes** — searchable via `PhotoNoteStore.noteContains()` with in-memory cache for O(1) lookups.
 *   **Editor preview** — `QuickEditorBottomSheet` applies a Compose `ColorMatrix` `ColorFilter` so exposure/contrast/filter are reflected live before saving.
-*   **Safe Share** — `ExifMetadataService.createSafeShareCopies` processes photos sequentially with per-photo `runCatching` so a single bad asset doesn't fail the whole batch. `MainActivity` & `PhotoViewerScreen` fall back to sharing the original if privacy prep fails.
-*   **Size Gates** — generated APKs must be <= 30 MB and release AAB must be <= 20 MB. Ship the AAB to Play Store for automatic delivery.
+*   **Safe Share** — privacy preparation is fail-closed. If metadata cleaning/sanitization fails or is uncertain, do not silently share the original. Surface a recoverable failure and clean app-owned partial outputs.
+*   **Size Gates** — preserve the existing generated-APK <= 30 MiB gate and release-AAB <= 20 MiB gate. Blueprint 01 also requires a stricter 30,000,000-byte delivered-APK ceiling before final certification; never relax an existing gate to obtain green CI.
 *   **Conservative Food Archive** — Food candidates require semantic food plus prepared, served, or packaged context. Live people, animals, birds, pets, and wildlife veto the candidate; a generic `food` tag alone must never classify a photo as Food.
 *   **Existing-library migration** — Room migration 11-to-12 reopens ML analysis for existing photos, preserves tags/OCR, and invalidates stale Food decisions for reevaluation.
-*   **PRO badge** — gold gradient badge in top bar.
+*   **PRO badge** — current source still contains the decorative badge, but the product is free and has no paid tier. Blueprint 01 S05 removes the badge as part of the approved Photos navigation redesign; do not add monetization behavior around it.
 
 ## 🧪 Testing Mandate
 

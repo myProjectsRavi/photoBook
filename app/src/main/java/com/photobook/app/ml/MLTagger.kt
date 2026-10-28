@@ -127,6 +127,7 @@ class MLTagger @Inject constructor(
         val faces = if (analyzeMl) CompactLocalIntelligence.detectFaces(bitmap) else emptyList()
         val tagMap = linkedMapOf<String, MLTag>()
         val archiveSignals = mutableListOf<MLTag>()
+        var semanticInferenceFailed = false
         if (analyzeMl) {
             CompactLocalIntelligence.labels(bitmap).forEach { label ->
                 val canonical = LabelMapping.map(label.label) ?: return@forEach
@@ -135,7 +136,9 @@ class MLTagger @Inject constructor(
                 }
             }
 
-            semanticLabels(bitmap).forEach { label ->
+            val semanticResult = semanticImageLabeler.labels(bitmap)
+            semanticInferenceFailed = semanticResult.isFailure
+            semanticResult.getOrDefault(emptyList()).forEach { label ->
                 val canonical = label.label
                 if (label.confidence >= LabelMapping.taggingThreshold(canonical)) {
                     archiveSignals += MLTag(canonical, label.confidence)
@@ -182,7 +185,11 @@ class MLTagger @Inject constructor(
                 ocrText = archiveOcrText,
             ),
             ocrText = normalizedOcrText,
-            mlStatus = if (analyzeMl) IntelligenceStatus.PROCESSED else IntelligenceStatus.PENDING,
+            mlStatus = when {
+                !analyzeMl -> IntelligenceStatus.PENDING
+                semanticInferenceFailed -> IntelligenceStatus.FAILED_RETRYABLE
+                else -> IntelligenceStatus.PROCESSED
+            },
             ocrStatus = when {
                 !analyzeOcr -> IntelligenceStatus.PENDING
                 ocrResult.isSuccess -> IntelligenceStatus.PROCESSED
@@ -190,9 +197,6 @@ class MLTagger @Inject constructor(
             },
         )
     }
-
-    private suspend fun semanticLabels(bitmap: Bitmap): List<LocalSemanticLabel> =
-        semanticImageLabeler.labels(bitmap)
 
     private fun loadOcrBitmap(uriString: String): Bitmap? {
         val maxDimension = if (performanceProfiler.isLite) {

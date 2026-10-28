@@ -16,8 +16,15 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -27,6 +34,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.core.content.ContextCompat
@@ -38,13 +47,19 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.paging.compose.collectAsLazyPagingItems
 import com.photobook.app.R
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.feature.declutter.DeclutterSession
 import com.photobook.app.feature.metadata.ExifMetadataService
 import com.photobook.app.feature.metadata.SafeShareItem
+import com.photobook.app.feature.metadata.SafeShareIntentFactory
 import com.photobook.app.feature.metadata.SafeShareResult
+import com.photobook.app.feature.pdf.PdfExportProgress
 import com.photobook.app.feature.pdf.PdfExportResult
 import com.photobook.app.feature.pdf.PdfExportService
+import com.photobook.app.feature.trash.TrashListResult
+import com.photobook.app.feature.trash.TrashListUiState
 import com.photobook.app.feature.trash.TrashRequestResult
 import com.photobook.app.feature.trash.TrashService
+import com.photobook.app.feature.trash.toTrashListUiState
 import com.photobook.app.feature.vault.VaultCryptoSession
 import com.photobook.app.feature.vault.VaultExportResult
 import com.photobook.app.feature.vault.VaultItem
@@ -53,6 +68,7 @@ import com.photobook.app.feature.vault.VaultService
 import com.photobook.app.feature.vault.rememberVaultAuthenticator
 import com.photobook.app.feature.phototextsearch.vaultPhotoTextLayoutSource
 import com.photobook.app.ui.screen.ArchivesScreen
+import com.photobook.app.ui.screen.DeclutterSwipeScreen
 import com.photobook.app.ui.screen.MainScreen
 import com.photobook.app.ui.screen.OnboardingScreen
 import com.photobook.app.ui.screen.PhotoViewerScreen
@@ -62,7 +78,9 @@ import com.photobook.app.ui.screen.VaultBottomSheet
 import com.photobook.app.ui.theme.PhotoBookTheme
 import com.photobook.app.ui.viewmodel.MainViewModel
 import com.photobook.app.util.PermissionUtils
+import com.photobook.app.feature.memories.MemoryStoryLaunchPolicy
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
@@ -89,12 +107,13 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun handleLaunchIntent(intent: Intent?) {
-        val storyIds = intent?.getStringExtra(EXTRA_WIDGET_STORY_IDS).orEmpty()
-            .split(',')
-            .mapNotNull { token -> token.trim().toLongOrNull() }
-            .distinct()
-        val storyTitle = intent?.getStringExtra(EXTRA_WIDGET_STORY_TITLE).orEmpty()
-        if (storyIds.isNotEmpty()) {
+        val storyIds = MemoryStoryLaunchPolicy.parseExternalIds(
+            intent?.getStringExtra(EXTRA_WIDGET_STORY_IDS).orEmpty(),
+        )
+        val storyTitle = MemoryStoryLaunchPolicy.sanitizeExternalTitle(
+            intent?.getStringExtra(EXTRA_WIDGET_STORY_TITLE).orEmpty(),
+        )
+        if (!storyIds.isNullOrEmpty()) {
             vm.openStoryFromPhotoIds(storyIds, storyTitle)
             return
         }
@@ -142,6 +161,9 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     var vaultPreviewRequests by remember { mutableStateOf<Set<String>>(emptySet()) }
     var isVaultLoading by remember { mutableStateOf(false) }
     var isVaultBusy by remember { mutableStateOf(false) }
+    var pdfExportJob by remember { mutableStateOf<Job?>(null) }
+    var pdfExportProgress by remember { mutableStateOf<PdfExportProgress?>(null) }
+    var pendingLegacyPdfPhotos by remember { mutableStateOf<List<PhotoRecord>>(emptyList()) }
     val vaultTextLayoutSource = remember(vaultService, vaultSession) {
         vaultPhotoTextLayoutSource(
             context = context.applicationContext,
@@ -153,7 +175,46 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
     // Trash bin state
     var showTrashScreen by remember { mutableStateOf(false) }
     var trashedPhotos by remember { mutableStateOf<List<com.photobook.app.feature.trash.TrashedPhoto>>(emptyList()) }
+    var trashListUiState by remember { mutableStateOf(TrashListUiState.READY) }
+    var trashNextOffset by remember { mutableStateOf<Int?>(null) }
     var isLoadingTrash by remember { mutableStateOf(false) }
+    var isLoadingMoreTrash by remember { mutableStateOf(false) }
+
+    val legacyPdfDestinationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/pdf"),
+    ) { destinationUri ->
+        val photos = pendingLegacyPdfPhotos
+        pendingLegacyPdfPhotos = emptyList()
+        if (destinationUri == null || photos.isEmpty() || pdfExportJob?.isActive == true) {
+            return@rememberLauncherForActivityResult
+        }
+        pdfExportJob = coroutineScope.launch {
+            try {
+                pdfExportProgress = PdfExportProgress(
+                    totalItems = photos.size,
+                    processedItems = 0,
+                    writtenPages = 0,
+                    skippedItems = 0,
+                )
+                val result = pdfExportService.exportPhotosToDocumentUri(
+                    photos = photos,
+                    destinationUri = destinationUri,
+                    freshlyCreated = true, // returned by CreateDocument, never an existing picked file
+                ) { progress ->
+                    coroutineScope.launch { pdfExportProgress = progress }
+                }
+                handlePdfExportResult(
+                    context = context,
+                    result = result,
+                    clearSelectionOnSuccess = true,
+                    viewModel = viewModel,
+                )
+            } finally {
+                pdfExportProgress = null
+                pdfExportJob = null
+            }
+        }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -208,8 +269,15 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         coroutineScope.launch {
             isLoadingTrash = true
             val archiveManagedIds = viewModel.archiveManagedTrashPhotoIds()
-            trashedPhotos = trashService.listTrashed()
-                .filterNot { photo -> photo.id in archiveManagedIds }
+            val listed = trashService.listTrashed()
+            trashListUiState = listed.toTrashListUiState()
+            trashNextOffset = (listed as? TrashListResult.Success)?.nextOffset
+            trashedPhotos = when (listed) {
+                is TrashListResult.Success ->
+                    listed.photos.filterNot { photo -> photo.id in archiveManagedIds }
+                TrashListResult.UnsupportedAndroid,
+                is TrashListResult.Error -> emptyList()
+            }
             isLoadingTrash = false
         }
     }
@@ -218,9 +286,58 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         coroutineScope.launch {
             isLoadingTrash = true
             val archiveManagedIds = viewModel.archiveManagedTrashPhotoIds()
-            trashedPhotos = trashService.listTrashed()
-                .filterNot { photo -> photo.id in archiveManagedIds }
+            val listed = trashService.listTrashed()
+            trashListUiState = listed.toTrashListUiState()
+            trashNextOffset = (listed as? TrashListResult.Success)?.nextOffset
+            trashedPhotos = when (listed) {
+                is TrashListResult.Success ->
+                    listed.photos.filterNot { photo -> photo.id in archiveManagedIds }
+                TrashListResult.UnsupportedAndroid,
+                is TrashListResult.Error -> emptyList()
+            }
             isLoadingTrash = false
+        }
+    }
+
+    fun loadMoreTrash() {
+        val offset = trashNextOffset ?: return
+        if (isLoadingTrash || isLoadingMoreTrash) return
+        coroutineScope.launch {
+            isLoadingMoreTrash = true
+            try {
+                val archiveManagedIds = viewModel.archiveManagedTrashPhotoIds()
+                when (val listed = trashService.listTrashed(offset = offset)) {
+                    is TrashListResult.Success -> {
+                        trashListUiState = TrashListUiState.READY
+                        val existingIds = trashedPhotos.asSequence().map { photo -> photo.id }.toHashSet()
+                        val newPhotos = listed.photos.filterNot { photo ->
+                            photo.id in archiveManagedIds || photo.id in existingIds
+                        }
+                        trashedPhotos = trashedPhotos + newPhotos
+                        trashNextOffset = listed.nextOffset
+                    }
+
+                    TrashListResult.UnsupportedAndroid -> {
+                        if (trashedPhotos.isEmpty()) {
+                            trashListUiState = TrashListUiState.UNSUPPORTED
+                        }
+                        trashNextOffset = null
+                    }
+
+                    is TrashListResult.Error -> {
+                        if (trashedPhotos.isEmpty()) {
+                            trashListUiState = TrashListUiState.ERROR
+                        }
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.trash_request_error),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            } finally {
+                isLoadingMoreTrash = false
+            }
         }
     }
 
@@ -238,9 +355,8 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         vaultPreviewRequests = emptySet()
         isVaultLoading = false
         isVaultBusy = false
-        coroutineScope.launch {
-            vaultService.clearPreviewCache(previewCleanupGeneration)
-        }
+        // Cleanup is process-owned, not composition-owned, so activity disposal cannot cancel it.
+        vaultService.schedulePreviewCacheCleanup(previewCleanupGeneration)
     }
 
     suspend fun loadVisibleVaultItems(session: VaultCryptoSession): List<VaultItem> {
@@ -248,14 +364,21 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         val previewGeneration = vaultService.beginPreviewLoad()
         vaultSession = session
         vaultPreviewGeneration = previewGeneration
-        val items = vaultService.listItems(
-            session = session,
-            includePreviews = false,
-        )
-        return when {
-            !showVault -> emptyList()
-            vaultService.isPreviewLoadCurrent(previewGeneration) -> items
-            else -> vaultItems
+        return try {
+            val items = vaultService.listItems(
+                session = session,
+                includePreviews = false,
+            )
+            when {
+                !showVault -> emptyList()
+                vaultService.isPreviewLoadCurrent(previewGeneration) -> items
+                else -> vaultItems
+            }
+        } catch (error: Throwable) {
+            if (showVault && vaultService.isPreviewLoadCurrent(previewGeneration)) {
+                closeVault()
+            }
+            throw error
         }
     }
 
@@ -352,35 +475,39 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         photos: List<PhotoRecord>,
         session: VaultCryptoSession,
     ) {
-        if (photos.isEmpty()) return
+        if (photos.isEmpty() || isVaultBusy) return
+        // Claim ownership synchronously so a duplicate tap cannot enqueue a second Vault mutation.
+        isVaultBusy = true
         coroutineScope.launch {
-            isVaultBusy = true
-            when (val result = vaultService.addPhotos(photos = photos, session = session)) {
-                is VaultSaveResult.Success -> {
-                    val protectedPhotos = photos.filter { photo -> photo.id in result.addedPhotoIds }
-                    Toast.makeText(
-                        context,
-                        context.getString(R.string.vault_move_success, protectedPhotos.size),
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                    viewModel.clearSelection()
-                    vaultItems = runCatching {
-                        loadVisibleVaultItems(session)
-                    }.getOrDefault(emptyList())
-                    if (protectedPhotos.isNotEmpty()) {
-                        requestMoveToTrash(protectedPhotos)
+            try {
+                when (val result = vaultService.addPhotos(photos = photos, session = session)) {
+                    is VaultSaveResult.Success -> {
+                        val protectedPhotos = photos.filter { photo -> photo.id in result.addedPhotoIds }
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.vault_move_success, protectedPhotos.size),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                        viewModel.clearSelection()
+                        vaultItems = runCatching {
+                            loadVisibleVaultItems(session)
+                        }.getOrDefault(emptyList())
+                        if (protectedPhotos.isNotEmpty()) {
+                            requestMoveToTrash(protectedPhotos)
+                        }
+                    }
+
+                    is VaultSaveResult.Error -> {
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.vault_add_error),
+                            Toast.LENGTH_SHORT,
+                        ).show()
                     }
                 }
-
-                is VaultSaveResult.Error -> {
-                    Toast.makeText(
-                        context,
-                        context.getString(R.string.vault_add_error),
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                }
+            } finally {
+                isVaultBusy = false
             }
-            isVaultBusy = false
         }
     }
 
@@ -522,55 +649,20 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             Toast.LENGTH_SHORT,
         ).show()
         val result = if (persistToDownloads) {
-            pdfExportService.exportPhotos(photos)
+            pdfExportService.exportPhotos(photos) { progress ->
+                coroutineScope.launch { pdfExportProgress = progress }
+            }
         } else {
-            pdfExportService.exportPhotosForSharing(photos)
-        }
-        when (result) {
-            is PdfExportResult.Success -> {
-                Toast.makeText(
-                    context,
-                    context.getString(R.string.create_pdf_success, result.pageCount),
-                    Toast.LENGTH_SHORT,
-                ).show()
-                sharePdf(context, result.uri, result.fileName)
-                if (clearSelectionOnSuccess) {
-                    viewModel.clearSelection()
-                }
-            }
-
-            is PdfExportResult.PartialSuccess -> {
-                Toast.makeText(
-                    context,
-                    context.getString(
-                        R.string.create_pdf_partial_success,
-                        result.pageCount,
-                        result.skippedCount,
-                    ),
-                    Toast.LENGTH_LONG,
-                ).show()
-                sharePdf(context, result.uri, result.fileName)
-                if (clearSelectionOnSuccess) {
-                    viewModel.clearSelection()
-                }
-            }
-
-            is PdfExportResult.TooManyPages -> {
-                Toast.makeText(
-                    context,
-                    context.getString(R.string.create_pdf_too_many_pages, result.maxAllowed),
-                    Toast.LENGTH_SHORT,
-                ).show()
-            }
-
-            is PdfExportResult.Error -> {
-                Toast.makeText(
-                    context,
-                    context.getString(R.string.create_pdf_error),
-                    Toast.LENGTH_SHORT,
-                ).show()
+            pdfExportService.exportPhotosForSharing(photos) { progress ->
+                coroutineScope.launch { pdfExportProgress = progress }
             }
         }
+        handlePdfExportResult(
+            context = context,
+            result = result,
+            clearSelectionOnSuccess = clearSelectionOnSuccess,
+            viewModel = viewModel,
+        )
     }
 
     LaunchedEffect(Unit) {
@@ -586,13 +678,22 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         return
     }
 
-    if (uiState.isIndexing) {
+    if (!uiState.basicBrowseReady) {
         OnboardingScreen(
-            isIndexing = true,
+            isIndexing = uiState.isIndexing,
             progress = uiState.indexProgress,
-            onGrantPermission = {}
+            onGrantPermission = {},
+            errorMessage = uiState.indexErrorMessage,
+            onRetry = viewModel::retryIndexing,
         )
         return
+    }
+
+    if (pdfExportJob?.isActive == true) {
+        PdfExportProgressDialog(
+            progress = pdfExportProgress,
+            onCancel = { pdfExportJob?.cancel() },
+        )
     }
 
     MainScreen(
@@ -611,10 +712,16 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         memoryStories = uiState.memoryStories,
         duplicateGroups = uiState.duplicateGroups,
         isFindingDuplicates = uiState.isFindingDuplicates,
+        duplicateScanProgress = uiState.duplicateScanProgress,
+        duplicateScanIncomplete = uiState.duplicateScanIncomplete,
         showDuplicateFinder = uiState.showDuplicateFinder,
         archiveCandidateCount = uiState.archiveCandidates.size,
         archiveDueDeleteCount = uiState.archiveDueDeleteCount,
         limitedPhotoAccess = uiState.photoAccessMode == PermissionUtils.PhotoAccessMode.Limited,
+        albumCatalog = uiState.albumCatalog,
+        pinnedAlbumKeys = uiState.pinnedAlbumKeys,
+        memoriesHidden = uiState.memoriesHidden,
+        activeAlbumLabel = uiState.activeAlbum?.label,
         onQueryChange = viewModel::onQueryChanged,
         onSearchSubmitted = viewModel::onSearchSubmitted,
         onSearchFocusChanged = viewModel::onSearchFocusChanged,
@@ -638,13 +745,31 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
             }
         },
         onCreatePdfSelected = { selectedIds ->
-            coroutineScope.launch {
+            if (pdfExportJob?.isActive != true) {
                 val selectedPhotos = viewModel.resolvePhotosByIds(selectedIds)
-                createAndSharePdf(
-                    photos = selectedPhotos,
-                    persistToDownloads = true,
-                    clearSelectionOnSuccess = true,
-                )
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                    pendingLegacyPdfPhotos = selectedPhotos
+                    legacyPdfDestinationLauncher.launch("PhotoBook_" + System.currentTimeMillis() + ".pdf")
+                } else {
+                    pdfExportJob = coroutineScope.launch {
+                        try {
+                            pdfExportProgress = PdfExportProgress(
+                                totalItems = selectedPhotos.size,
+                                processedItems = 0,
+                                writtenPages = 0,
+                                skippedItems = 0,
+                            )
+                            createAndSharePdf(
+                                photos = selectedPhotos,
+                                persistToDownloads = true,
+                                clearSelectionOnSuccess = true,
+                            )
+                        } finally {
+                            pdfExportProgress = null
+                            pdfExportJob = null
+                        }
+                    }
+                }
             }
         },
         onAddSelectedToVault = { selectedIds ->
@@ -667,7 +792,11 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         },
         onManagePhotoAccess = { permissionLauncher.launch(permissions.toTypedArray()) },
         onOpenArchives = viewModel::openArchives,
-        onSourceSelected = viewModel::onSourceSelected,
+        onOpenDeclutter = viewModel::openDeclutterSwipe,
+        onAlbumSelected = viewModel::onAlbumSelected,
+        onToggleAlbumPinned = viewModel::onToggleAlbumPinned,
+        onToggleMemoriesHidden = viewModel::onToggleMemoriesHidden,
+        onClearAlbumScope = viewModel::clearAlbumScope,
         onOpenDuplicateFinder = viewModel::openDuplicateFinder,
         onRefreshDuplicates = viewModel::refreshDuplicateGroups,
         onDismissDuplicateFinder = viewModel::dismissDuplicateFinder,
@@ -675,6 +804,31 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         onOpenOnThisDayStory = viewModel::onOpenOnThisDayStory,
         onMemoryStorySelected = viewModel::onMemoryStorySelected,
     )
+
+    val declutterOverlaySession = uiState.declutterSession ?: if (uiState.isDeclutterLoading) {
+        DeclutterSession(candidates = emptyList())
+    } else {
+        null
+    }
+    if (declutterOverlaySession != null) {
+        DeclutterSwipeScreen(
+            session = declutterOverlaySession,
+            currentPhoto = uiState.declutterCurrentPhoto,
+            isLoading = uiState.isDeclutterLoading,
+            onDismiss = viewModel::dismissDeclutterSwipe,
+            onKeepCurrent = viewModel::onDeclutterKeepCurrent,
+            onTrashCurrent = viewModel::onDeclutterTrashCurrent,
+            onUndoLast = viewModel::onDeclutterUndo,
+            onApplyTrash = { photoIds ->
+                coroutineScope.launch {
+                    val photos = viewModel.resolvePhotosByIds(photoIds)
+                    if (photos.isNotEmpty()) {
+                        requestMoveToTrash(photos)
+                    }
+                }
+            },
+        )
+    }
 
     val viewerIndex = uiState.viewerStartIndex
     val viewerPhotos = uiState.viewerPhotos
@@ -702,6 +856,9 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
                     )
                 }
             },
+            onLoadPrivateNote = viewModel::loadPrivateNote,
+            onSavePrivateNote = viewModel::savePrivateNote,
+            onDeletePrivateNote = viewModel::deletePrivateNote,
             reelsEnabled = uiState.reelsEnabled,
             initialSearchRequested = uiState.viewerInitialSearchRequested,
         )
@@ -736,6 +893,10 @@ private fun PhotoBookApp(viewModel: MainViewModel = hiltViewModel()) {
         com.photobook.app.ui.screen.TrashScreen(
             photos = trashedPhotos,
             isLoading = isLoadingTrash,
+            listState = trashListUiState,
+            hasMore = trashNextOffset != null,
+            isLoadingMore = isLoadingMoreTrash,
+            onLoadMore = { loadMoreTrash() },
             onDismiss = { showTrashScreen = false },
             onRestore = { item ->
                 when (val req = trashService.createRestoreRequest(listOf(item.uri))) {
@@ -861,40 +1022,89 @@ private fun vaultAuthenticators(): Int {
     }
 }
 
-private fun sharePhotos(context: Context, photos: List<SafeShareItem>) {
-    if (photos.isEmpty()) return
-
-    val uris = photos.map { it.uri }
-    val mimeType = photos
-        .map { it.mimeType.ifBlank { "image/*" } }
-        .distinct()
-        .singleOrNull()
-        ?: "image/*"
-
-    val shareIntent = if (uris.size == 1) {
-        Intent(Intent.ACTION_SEND).apply {
-            type = mimeType
-            putExtra(Intent.EXTRA_STREAM, uris.first())
+private fun handlePdfExportResult(
+    context: Context,
+    result: PdfExportResult,
+    clearSelectionOnSuccess: Boolean,
+    viewModel: MainViewModel,
+) {
+    when (result) {
+        is PdfExportResult.Success -> {
+            Toast.makeText(
+                context,
+                context.getString(R.string.create_pdf_success, result.pageCount),
+                Toast.LENGTH_SHORT,
+            ).show()
+            sharePdf(context, result.uri, result.fileName)
+            if (clearSelectionOnSuccess) viewModel.clearSelection()
         }
-    } else {
-        Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-            type = mimeType
-            putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+        is PdfExportResult.PartialSuccess -> {
+            Toast.makeText(
+                context,
+                context.getString(
+                    R.string.create_pdf_partial_success,
+                    result.pageCount,
+                    result.skippedCount,
+                ),
+                Toast.LENGTH_LONG,
+            ).show()
+            sharePdf(context, result.uri, result.fileName)
+            if (clearSelectionOnSuccess) viewModel.clearSelection()
+        }
+        is PdfExportResult.TooManyPages -> {
+            Toast.makeText(
+                context,
+                context.getString(R.string.create_pdf_too_many_pages, result.maxAllowed),
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+        is PdfExportResult.Error -> {
+            Toast.makeText(
+                context,
+                context.getString(R.string.create_pdf_error),
+                Toast.LENGTH_SHORT,
+            ).show()
         }
     }
+}
 
-    val clipData = ClipData.newUri(
-        context.contentResolver,
-        photos.first().label,
-        uris.first(),
+@Composable
+private fun PdfExportProgressDialog(
+    progress: PdfExportProgress?,
+    onCancel: () -> Unit,
+) {
+    val total = progress?.totalItems?.coerceAtLeast(1) ?: 1
+    val processed = progress?.processedItems?.coerceIn(0, total) ?: 0
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text(text = stringResource(R.string.create_pdf_preparing)) },
+        text = {
+            Column {
+                Text(text = stringResource(R.string.create_pdf_progress, processed, total))
+                LinearProgressIndicator(
+                    progress = { processed.toFloat() / total.toFloat() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onCancel) {
+                Text(text = stringResource(R.string.cancel))
+            }
+        },
     )
-    uris.drop(1).forEach { uri ->
-        clipData.addItem(ClipData.Item(uri))
-    }
+}
 
-    shareIntent.clipData = clipData
-    shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.share_selected)))
+private fun sharePhotos(context: Context, photos: List<SafeShareItem>) {
+    val shareIntent = SafeShareIntentFactory.build(context, photos) ?: return
+    context.startActivity(
+        Intent.createChooser(
+            shareIntent,
+            context.getString(R.string.share_selected),
+        ),
+    )
 }
 
 private fun sharePdf(context: Context, uri: Uri, fileName: String) {

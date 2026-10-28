@@ -12,5 +12,6 @@ data class RawPhotoData(
     val mimeType: String,
     val folderName: String,
     val folderPath: String,
+    val dateModified: Long = dateAdded,
     val generationModified: Long? = null,
 )

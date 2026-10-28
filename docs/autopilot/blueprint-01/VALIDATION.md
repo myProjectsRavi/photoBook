@@ -1,0 +1,486 @@
+# Blueprint 01 Validation Log
+
+This file records reproducible evidence only. Historical evidence is labeled historical; unavailable gates are never recorded as PASS.
+
+## Baseline before S01 edits
+
+- Authorized implementation branch: `autopilot/epics-features-user-stories`.
+- Blueprint source baseline: `d693acd7c52f285b6ba475fdd3712a10e419d4e1`.
+- GitHub compare from baseline to the authorized branch before S01 edits: **identical**, ahead 0, behind 0, total commits 0.
+- Exact baseline Git tree: `08139d86d49c4f955e26ae4ffa02a989648b7125`.
+- Exact baseline tree inventory: 256 blobs, including 224 text candidates, 30 PNG files, 1 DOCX and 1 JAR.
+- Gradle metadata read from the exact baseline branch: `versionCode = 26`, `versionName = "2.0.19"`, `minSdk = 26`, `targetSdk = 36`.
+
+## Blueprint-provided historical evidence
+
+The authoritative Blueprint 01 records the following evidence for its reviewed baseline:
+
+- `bash tools/benchmark/run_phase0_local.sh --host-only` passed 16 tests and produced a deterministic 303-record fixture corpus.
+- GitHub Actions Android Verification run `36228376607` reported success for the exact reviewed source commit.
+- Local Android execution, current visual replay and physical-device execution were unavailable.
+
+These are useful baseline facts, but they are **not fresh S01 runtime execution by the current autopilot run** and must not be promoted to new runtime proof.
+
+## Current-run environment evidence
+
+- GitHub connector access succeeded for repository/branch inspection, exact Git-tree inspection, source/document reads and Git object preparation.
+- A direct sandbox clone was not available because the sandbox had no external GitHub DNS/network route at that time. This is an environment limitation, not a repository failure.
+- No physical Android device is available. Emulator/hosted evidence must be labeled separately from physical/OEM evidence.
+
+## S01 validation required before ACCEPTED
+
+1. Fill exact per-file line counts for all text candidates in `REVIEW_COVERAGE.md`.
+2. Preserve distinct inventory/static-scan/semantic-review/runtime-coverage statuses.
+3. Verify all five canonical checkpoint files exist and agree on branch, baseline and current story.
+4. Verify S01-S32 uniqueness, dependency references and fixed scheduling order.
+5. Verify documented repository paths and commands exist or are explicitly identified as proposed future work.
+6. Review the final S01 diff and confirm it changes documentation/coverage only.
+7. Re-read the authorized branch and `main` refs; confirm the autopilot work did not modify main.
+8. Record the exact S01 source/checkpoint commit after validation.
+
+## Evidence record format for future stories
+
+Each story record must include: story ID; expected behavior; changed files; source commit; command and exit code; test names/counts; environment; fixture hashes; artifact hashes; CI run URLs; screenshot paths when applicable; comparison baseline; known limitations; and reviewer decision.
+
+
+## S01 checkpoint 0bd6ea79d41fcdd740c3e4214a7466d0ebb8405c
+
+- Branch ref after commit: `autopilot/epics-features-user-stories` → `0bd6ea79d41fcdd740c3e4214a7466d0ebb8405c`.
+- Baseline compare: ahead 1, behind 0.
+- Changed paths: exactly 10 documentation/coverage files. No `app/**`, `.github/workflows/**`, Gradle, resource, source or test file changed.
+- `main` ref at the same verification point remained `d693acd7c52f285b6ba475fdd3712a10e419d4e1`.
+- S01 remains **IN_PROGRESS** because exact per-file line counts and final documentation consistency checks are still open.
+
+
+## S01 final acceptance evidence
+
+Evidence source commit: `2ed75bfb50770000815accfd820197d9d783f036`
+
+- Coverage ledger: **224/224** baseline text candidates have exact line counts.
+- Bounded static screen: **224/224** text candidates screened for private-key markers, common hard-coded credential/token signatures, and unresolved merge markers; **0 unresolved flags**.
+- Canonical checkpoint set: STATE.md, BACKLOG.md, VALIDATION.md, DECISIONS.md and REVIEW_COVERAGE.md all exist.
+- Backlog validation: **32/32** stories present exactly once; IDs are S01 through S32 in fixed order; dependency references resolve to known story IDs.
+- Command/path validation: the S01-referenced Phase-0 script exists; Gradle defines printReleaseMetadata, verifyApkSize and verifyReleaseBundleSize. Every one of the 224 inventory paths was fetched from the immutable baseline by exact path/blob identity while completing the ledger.
+- Stale-guidance scan of the ten changed Markdown files found no duplicated old `versionCode = 24`, no duplicated old `versionName = 2.0.17`, and no guidance instructing an unsafe original-share fallback after privacy preparation failure.
+- Markdown-link validation found no broken relative Markdown links in the changed S01 documents.
+- Final baseline compare at the evidence source: branch ahead 19, behind 0; changed paths are exactly the five canonical S01 files plus docs/claude.md, docs/gemini.md, docs/jules.md, docs/performance.md and docs/security.md. No `app/**`, workflow, Gradle, resource, production-source or test path changed.
+- Ref check at final validation: `main` = `d693acd7c52f285b6ba475fdd3712a10e419d4e1`; authorized branch = `2ed75bfb50770000815accfd820197d9d783f036`.
+- Fresh Android runtime execution was not run because S01 changes documentation/coverage only. Blueprint-provided CI run 36228376607 remains historical baseline evidence, not a fresh claim.
+- Sandbox GitHub DNS remained unavailable; connector reads/writes supplied the repository evidence. This did not block S01 completion.
+- Binary/model/dependency provenance, packaged-artifact inspection and physical/OEM properties remain explicitly deferred to their later blueprint gates, especially S31.
+
+**Decision: S01 ACCEPTED.** No confirmed S01 acceptance blocker remains in the tested documentation/inventory scope.
+
+
+## S02 start checkpoint
+
+- Story: S02 — Make branch verification authoritative.
+- Starting branch HEAD: `717a9ef69cd6289d1bc649ce3b666e4d18c10dd3`.
+- S01 dependency: ACCEPTED.
+- Observed source risk: `.github/workflows/android-verify.yml` push branches omit `autopilot/**`.
+- Observed hosted-emulator limitation: current emulator workflows use implicit current-branch checkout and branch-specific push triggers; no reusable exact-ref/evidence-manifest contract exists for the authorized autopilot branch.
+- Hypothesis: adding branch routing plus an exact-ref targeted verification workflow and fail-closed evidence validation will make branch evidence attributable to the tested source rather than to “latest green”.
+- No workflow/application mutation had been made at this checkpoint.
+
+
+## S02 implementation evidence — tested source 03b63c544e016f809618c4509d2cf5f9c6788a4b
+
+### Failed attempts retained as evidence
+
+- Targeted run **36396212144** failed after the new fail-closed manifest detected one failing instrumentation result. Root cause: the initially broad suite included the 100k search p95 timing test on a hosted x86_64 emulator executing the ARM app under translation. The route was narrowed to correctness/privacy instrumentation rather than weakening the 300 ms performance assertion.
+- Targeted run **36396959374** failed because `connectedDebugAndroidTest --offline` required an uncached Gradle UTP host plugin. The route was changed to build APKs before network isolation and invoke AndroidJUnitRunner directly after host/emulator network cut. No product assertion was weakened.
+
+### Passing exact-source evidence
+
+- **Autopilot Targeted Emulator Verification** run **36397730810**: SUCCESS for exact source `03b63c544e016f809618c4509d2cf5f9c6788a4b`.
+  - checkout SHA: `03b63c544e016f809618c4509d2cf5f9c6788a4b`
+  - workflow blob: `eb9edb1387970de77e6b21d0f4eb0055b7380e47`
+  - API: 35
+  - emulator ABI: x86_64
+  - configured AVD RAM: 2048 MiB; observed MemTotal: 2,532,420 kB
+  - airplane mode: 1
+  - targeted instrumentation: **19 tests, 0 failures, 0 errors**
+  - evidence manifest: VALID
+  - fixture SHA-256: `6bc4301485bac8f480ea96d711a2294e42ee9dd9d937fcc4a26a5e351c33b5bc`
+  - instrumentation output SHA-256: `3dfdb7b7242e4c8fb802fd9adcb80d35d6f822e13362a0c8ff9f24ee6d3ba742`
+  - debug ARM64 APK SHA-256: `de3ff0f9de8f1bee9310e5e7d46049b90d463161a05ab5462b8a8060e5071eb8`
+  - debug armeabi-v7a APK SHA-256: `3e2fd29a5f784019cbc47c3e578c4a690264c3d0d84b64eef2f991e9c868970d`
+  - artifact: `autopilot-targeted-36397730810`, ID `10959695052`, SHA-256 `f9fefb5140cc46a4017aebfcc3392d081a9295613818e1be59e6de31a180b24e`
+  - merged manifest, packaged debug APK permissions and installed package were checked for INTERNET; no INTERNET request was found.
+- **Android Verification** run **36397730695**: SUCCESS for exact source `03b63c544e016f809618c4509d2cf5f9c6788a4b`.
+  - host evidence tests: **20 passed**
+  - full Phase-0 Gradle gate: BUILD SUCCESSFUL, 238 actionable tasks
+  - release arm64 APK: **22,429,005 bytes**
+  - release armeabi-v7a APK: **16,387,999 bytes**
+  - release AAB: **20,606,184 bytes**
+  - both release APKs: no `android.permission.INTERNET`
+  - artifact: `phase0-verification-36397730695`, ID `10959551441`, SHA-256 `e5e3efe3edc4042a70de18aa866a17df97029595524cce5f414fea71696c40f9`
+
+### Remaining S02 acceptance check
+
+This checkpoint is documentation-only and exists specifically to demonstrate that `autopilot/**` routing works without altering runtime behavior. Require Android Verification to run and pass for this exact documentation-only commit. The targeted emulator path filter should not schedule a new targeted run.
+
+
+## S05 final acceptance evidence
+
+Evidence source commit: `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`
+
+- Production shell behavior under test includes the S05 changes from `82922885bfe76334f05c3d7a6b8646cef2f08e45`, the missing saveable import fix from `aceb439e274eb6f518eb5540771acadd9824fac6`, and the focused emulator regression harness finalized at the evidence source.
+- Autopilot Targeted Emulator Verification run `37030491199`: **SUCCESS** on exact head `a286b10c306d56a14a24e7e9bece7d3d4ef9f578`. API-35 hosted x86_64 emulator, 2 GB configured AVD RAM, offline/network-isolation gate preserved. The targeted suite includes the real `MainNavigationInstrumentedTest` journey: post-permission launch exposes Photos/Albums/Tools, PRO is absent, no automatic IME is shown, Albums is reachable, Tools exposes Vault and scroll-reachable Trash, and Photos is reachable again. Artifact ID `11237730046`, digest `sha256:e0a26840da0de45e4a9c5b9f04d8c7f809f617463a60e415ae812bed38ceaed4`.
+- Android Verification run `37030491217`: **SUCCESS** on the same exact head. Artifact ID `11238015741`, digest `sha256:28b07900ae75da3c8c1ae273eec1435156eb064a466d0922a116f324c60d7c2c`.
+- Earlier failed S05 runs were retained and diagnosed rather than hidden: missing `rememberSaveable` import; test-only Truth dependency misuse; instrumentation self-termination by `am force-stop`; fresh-install onboarding due absent media permission; and an off-screen Trash assertion that was corrected to verify horizontal-row reachability. None of those failures was waived or converted to PASS.
+- Final branch comparison before documentation acceptance: 66 commits ahead / 0 behind `main`; base and merge-base remain `d693acd7c52f285b6ba475fdd3712a10e419d4e1`. Main was not modified.
+- No physical-device/OEM/camera/battery/thermal claim is made; hosted emulator evidence is labeled as such.
+
+**Decision: S05 ACCEPTED.** The Photos-first shell, Albums/Tools reachability, no automatic keyboard, no PRO badge, and preserved tested journeys have reproducible exact-source evidence.
+
+
+## S08 Local personalization — ACCEPTED
+
+- Tested source: `b58e09c901a5559d0c80136a5283d37b6a15813a`.
+- Android Verification run `37135944789`: SUCCESS. Artifact `11278023491`, digest `sha256:9b51fb39ad99d174d46c1fe6527f3591d85f787e6d7501a8b0cdca50f55e1609`.
+- Offline API-35 targeted run `37135944729`: SUCCESS. Artifact `11278472290`, digest `sha256:fb13cc7b558958a996ffb3adf9205e7f0f2afca9438171a0b8ed0be8f1e93eac`.
+- Production behavior persists only typed album descriptor keys locally, removes stale/duplicate keys, preserves stable order, caps pins at six, and partitions pinned/unpinned albums without duplicate membership.
+- Local Memories visibility is persisted independently and suppresses home presentation without deleting or mutating curated memory data.
+- The previously failing 200%-font navigation evidence was fixed by bounded UI synchronization rather than weakening the accessibility assertion; the corrected targeted suite is green.
+- No account, network, telemetry, cloud, storage-permission, Vault, destructive-action, original-media, or cancellation contract was broadened.
+- No physical/OEM/camera/battery/thermal evidence is claimed.
+
+
+## S09 Decode budget — ACCEPTED
+
+- Tested source: `564efdd847db9c11c7740adc00fe55be78a9d2cd`.
+- Android Verification run `37137095760`: SUCCESS. Artifact `11278987191`, digest `sha256:fd6641c72b35b9b22a6defa2f005a594adf3a1155a280180773fa9f1a5149b19`.
+- Offline API-35 targeted run `37137095732`: SUCCESS. Artifact `11278774921`, digest `sha256:375c804632d5598dc705df9c7d443e53caa42f0599fd9a45e0280729c63f9e5f`.
+- Gallery thumbnail requests now use stable viewport/column decode buckets with a 5% overscan and the existing device-tier cap. A standard 1080px/3-column viewport resolves to 384px instead of a fixed 512px request; a 720px/4-column viewport resolves to 192px; lite devices remain capped at 256px.
+- Unit evidence covers request dimensions, estimated ARGB byte budgets, invalid inputs, and the existing lite/standard image-cache caps. Existing Coil memory/disk caching, hardware bitmaps, and application low-memory cache trimming remain in place.
+- The first S09 test expectation exposed a real bucket mismatch and failed Android Verification; the policy/test was corrected based on the actual geometry rather than waiving the failure.
+- Hosted emulator evidence is correctness/privacy evidence, not native-ARM decode timing certification. No physical/OEM/camera/battery/thermal evidence is claimed.
+
+
+## S10 Grid continuity — ACCEPTED
+
+- Tested source: `296aa0370bce2c08b3fd8464ec422d67c9c99559`.
+- Android Verification run `37139032192`: SUCCESS. Artifact `11279743597`, digest `sha256:55483966db272391f71601ff4720a27e029e072cf00ce0650d5be71f06fe5e4a`.
+- Offline API-35 targeted run `37139032249`: SUCCESS. Artifact `11279462227`, digest `sha256:6c8eecad10e82e32af8a92098c2363054ff6dc8dbc8ff3e38a6cfe0e300d8e21`.
+- The Photos shell now owns one saveable `LazyGridState`, so transient loading/empty-result branches and viewer overlays do not recreate the grid anchor. Stable photo IDs remain the loaded-item keys; Paging remains bounded by the existing 60-page size / 20 prefetch / 300 max loaded-item policy.
+- Fast scrub uses deterministic target mapping, cancels a superseded scroll before launching the latest target, and cancels an in-flight scrub when the result item count changes. Gesture cancellation also cancels the pending scroll.
+- Unit evidence covers deterministic edge/midpoint mapping, out-of-range clamping and fail-closed empty/invalid tracks.
+- The first exact-source validation correctly failed because two imports were missing after the refactor. Commit `296aa037...` fixed only those compile imports; the continuity behavior was unchanged and both authoritative gates then passed.
+- No unbounded retained-photo list, network behavior, privacy boundary, Vault behavior, destructive-action contract or original-media behavior was changed. No physical/OEM/camera/battery/thermal evidence is claimed.
+
+
+## S11 Progressive startup — ACCEPTED
+
+- Tested source: `7efea3564b3aa513c9097de28e3e71755dba6c72`.
+- Android Verification run `37140788377`: SUCCESS. Artifact `11280840914`, digest `sha256:557a5839e44569660a28734b1a0e6b38361b9f6ec1b481ece61734d99352c9ec`.
+- Offline API-35 targeted run `37140788469`: SUCCESS. Artifact `11280671264`, digest `sha256:099a0cdc9cf71a1894b8b651278c3f57feacd549a478f2201987acd15548171a`.
+- Startup readiness now distinguishes permission, safe basic browsing, base-sync/search readiness, and whether optional enrichment was merely scheduled. Access-filtered persisted rows may be browsed while base reconciliation continues; no ungranted persisted rows are published.
+- Empty first launch still waits for base sync before browsing; optional enrichment is never reported as complete merely because browsing is available.
+- Main remains untouched. No physical/OEM/camera/battery/thermal evidence is claimed.
+
+
+## S12 Durable scanning — ACCEPTED
+
+- Tested source: `19714f05851e4d75af589033c0167beb0c66a3a3`.
+- Android Verification `37141371232`: SUCCESS, artifact `11280413100`, digest `sha256:476d7e90c522bdb8454dbfb01b1c95e2982570e8eb2335431e605805b7164299`.
+- Offline API-35 targeted `37141371142`: SUCCESS, artifact `11280372822`, digest `sha256:2221d39f10fb69d3a574f7966d19d959c53186eb5d24d3a976b95ebc4b7c8fa4`.
+- Full and generation-delta MediaStore scans are now cooperative-cancellation aware every 256 rows; index construction checks cancellation between bounded record-build batches.
+- Deterministic batching tests cover 10k/50k/100k libraries (40/196/391 checkpoints at 256 rows). Existing Room persistence remains bounded at 200-row batches and access-generation commit gates remain unchanged.
+- No claim is made that manifest-only scale tests equal physical-device scan timing. No physical/OEM/battery/thermal evidence is claimed.
+
+
+## S13 Resource scheduling — ACCEPTED
+
+- Tested source: `30e914e112d5c7c1ca77d4781b14d2b1c13647c9`.
+- Android Verification `37142161794`: SUCCESS, artifact `11280439276`, digest `sha256:155e96e143fad5411bc07982681ad5361edd577450716b2fb8bd81e8655e2ecf`.
+- Offline API-35 targeted `37142161840`: SUCCESS, artifact `11280364149`, digest `sha256:5065418f56877adcffaf45e55da0dae4b45440264cff6ececa7f1f958d13c802`.
+- PhotoIndex now exposes typed structural/intelligence/favorite revisions while retaining the full revision stream used by search correctness.
+- Memory curation invalidates only on structural/access-generation changes, avoiding intelligence-only re-curation.
+- Whole-library optional intelligence maintenance yields while the app process is foreground; focused-photo work retains its higher-priority path.
+- No search revision was suppressed and no privacy/offline/Vault/media-safety gate was weakened.
+
+
+## S14 Search correctness — ACCEPTED
+
+- Tested source: `d15586ae3151412a4fd40724216e6a43519cea81`.
+- Android Verification `37143132914`: SUCCESS, artifact `11281965345`, digest `sha256:76c1099e3f10eeccf2c70c265424d93619624c0aed26b330d14bebf936432908`.
+- Offline API-35 targeted `37143132942`: SUCCESS, artifact `11281855266`, digest `sha256:a3f80e60ce11619c4700cb1ec13db374640c85518c7ffa14c244535fb48cae25`.
+- Added a hard-coded truth-table oracle covering temporal, source, favorites, location, OCR, semantic tag, compound, recent and oldest semantics with exact eligibility/order assertions against both legacy and v2.
+- Existing scale parity covers 10k/50k/100k deterministic corpora; existing cancellation tests prove bounded cooperative abort; stale generation and missing-candidate paths fail closed rather than publish partial results.
+- Production search semantics were not narrowed or optimized through an unproven candidate subset.
+
+
+## S16 In-photo search — ACCEPTED
+
+- Tested source: `4b98efdc89a6fafe1a7d011de116af8ad0e3eff3`.
+- Android Verification `37166303720` attempt 2: SUCCESS. Artifact `11290940803`, digest `sha256:55772f9c318a53378c04ba40533cf7e8e8907518f71d45baced691c9d5aaa640`.
+- Offline API-35 targeted verification `37166303796`: SUCCESS. Artifact `11289513787`, digest `sha256:98ba92c45d37ca9a0f6d19c4065eaec8de5790ec95e1f57bdf0d8f3e9525bf4e`.
+- Lifecycle regression coverage proves an in-flight layout cannot publish after explicit close or disposal.
+- Existing one-layout-per-session query reuse, stale source/request/query fencing, geometry/insets/reveal behavior and authenticated Vault input boundary were preserved.
+- No physical/OEM/camera/battery/thermal evidence is claimed.
+
+
+## S17 Offline maintenance — ACCEPTED
+
+- Production source: `427f575f28d2a99b87608c776b64143d0104f73a`.
+- Offline API-35 targeted run `37174290335`: SUCCESS, artifact `11292293982`, digest `sha256:56ae40f04ce1ca3d39ba36d3bf2e36bc66ce8cca3bd63214c00967e00d461108`.
+- Android Verification run `37174324230`: SUCCESS on immediate descendant `56ebd10fa9f73efc2f6d6271ef781c49e869aee2`, artifact `11293035617`, digest `sha256:8f36e0df011070fb38ea6a11e169192850a0417d3094048a4fdc20e7d60da79c`.
+- GitHub compare proves the sole intervening change is STATE.md, so both gates exercise the same production/test tree.
+- Retry exhaustion fails truthfully; completed work succeeds; processable work retries only within the existing bounded attempt budget.
+
+
+## S18 Editing — ACCEPTED
+
+- Exact source: `2a4e6c5e7bbc37ed9f6f938b3ca26cd8828e0973`.
+- Android Verification `37177565922`: SUCCESS, artifact `11293519337`, digest `sha256:e6301a5fbcc889b5a403ed146fdd4fcb8c9dcdf8a47f77e491e5240e35f51b45`.
+- Offline API-35 targeted verification `37177565860`: SUCCESS, artifact `11293968337`, digest `sha256:b2156c2c3191e0a03a6fb389992151af5c20c7f4b353e8083a46ade5a22568c6`.
+- Shared EditTransform normalizes rotation/crop and tone/filter state. The viewer preview is rendered through the same bounded bitmap transform path as export, preserving EXIF normalization and custom-crop position.
+- The earlier S18 test failure was a test-oracle mismatch with the existing 0.45 preview aspect lower bound; the expectation was corrected without changing product behavior.
+
+
+## S19 Safe sharing — ACCEPTED
+
+- Exact source: `868902d596b5e3904642ec22e88503331cfb2f4c`.
+- Android Verification `37177989158`: SUCCESS, artifact `11294056125`, digest `sha256:3877b02fcc012947eaad7a52cca70819c629d39a965f42547762dc03ed76034d`.
+- Offline API-35 targeted verification `37177989167`: SUCCESS, artifact `11294101251`, digest `sha256:753ad7d53cb96079315401f62d9192480c8762f879118e0804d3a5bc2e89b77b`.
+- Oversized batches fail before output creation; cancellation propagates and deletes partial safe-share files; a later asset failure deletes earlier prepared outputs. Read-only ClipData grants are centralized and instrumented with an explicit no-write-grant assertion.
+
+
+## S23 final paged acceptance evidence
+
+- Final tested source: `d3d9257e4b8caf5d24ca0164956b5e30c530ee01`.
+- S23 final production behavior now satisfies the full acceptance anchor, including **bounded paged Trash** rather than one unbounded provider materialization.
+- `TrashService.listTrashed(offset, pageSize)` uses MediaStore query limit/offset with a one-item lookahead, stable `DATE_EXPIRES DESC, _ID DESC` ordering, bounded page size, and an explicit next offset only when another item exists.
+- `MainActivity` maintains the next offset, appends additional pages without duplicate IDs, continues filtering archive-managed entries, and preserves already-loaded data if a later page query fails.
+- `TrashScreen` exposes an explicit Load more action and loading state. Unsupported Android, provider failure, genuinely empty Trash, and successful populated Trash remain distinct.
+- Provider `DATE_EXPIRES` is shown when present; no synthetic expiry is invented.
+- Restore and Delete Forever still use Android system-managed confirmation intents. The shared confirmation result path refreshes Trash afterward; no direct destructive bypass was introduced.
+- Focused host regressions cover READY/UNSUPPORTED/ERROR state mapping plus page-boundary lookahead semantics and exact offset advancement.
+- An intermediate paged source `715371371211f0899ad833ecb74bde3ad90566be` failed Android compilation because of an invalid explicit Compose `weight` import. The cause was diagnosed from CI and fixed without changing behavior in `d3d9257e...`.
+- Android Verification run `37584049388`: **SUCCESS** on exact source `d3d9257e...`. Artifact ID `11466207770`, digest `sha256:6d190cf0d84f327502522cda08ab6ad7fd439e3f423e130a4838bd2cddbff851`.
+- Offline API-35 targeted run `37584049334`: **SUCCESS** on exact source `d3d9257e...`. Network isolation passed; **29/29 instrumentation tests** passed; fail-closed evidence manifest was valid for the exact checkout. Artifact ID `11465687691`, digest `sha256:04b4037a363835042acb8d73328a40c375c688af042cb129f06a69140e7634d3`.
+- No physical/OEM/camera/battery/thermal evidence is claimed. Hosted API-35 evidence remains correctness/privacy evidence.
+- `main` remained untouched.
+
+**Decision: S23 ACCEPTED.**
+
+
+## S24 final acceptance
+
+- Tested source commit: `baf9e1fb1f72fae8f2b4e3543c1470bbd2bbbaf4`.
+- Near-duplicate candidate generation now uses `maxDistance + 1` disjoint perceptual-hash bands. For the configured Hamming threshold of 8, any accepted pair must share at least one candidate band; the final Hamming-distance check remains authoritative.
+- Exact duplicate candidate grouping no longer requires matching dimensions. File size is only the first prefilter, the partial MD5 is only a second prefilter, and byte identity is accepted only after full SHA-256 equality.
+- The database exact-duplicate prefilter no longer trusts row-count equality alone. It is used only when Room photo IDs exactly match the in-memory duplicate-analysis snapshot; otherwise analysis fails open to the full supplied record set.
+- Removed the final global duplicate-group truncation so valid groups are not silently omitted.
+- Focused host regressions exercise adversarial distance-8 patterns, all single-bit positions, equal partial-prefix/different-tail SHA-256 rejection, identical-content SHA-256 equality, and database/snapshot identity mismatch cases.
+- Android Verification run `37587447134`: **SUCCESS** on exact source `baf9e1fb...`. Artifact ID `11466913277`, digest `sha256:a88373eb2d0f576afe5af7df5ad2a0cd0860bd8dddcab20b501bacdd9125cb62`.
+- Offline API-35 targeted run `37587447136`: **SUCCESS** on exact source `baf9e1fb...`; host verification, APK/manifest no-INTERNET gates, emulator isolation, 29/29 instrumentation tests, and fail-closed evidence-manifest validation passed. Artifact ID `11467322134`, digest `sha256:f0408f7f5e88fc1a5f698104d3b073815b20a4a3c5bc11d416aff797f58bdd57`.
+- No physical/OEM/camera/battery/thermal evidence is claimed. Hosted API-35 is correctness/privacy evidence, not native-ARM performance certification.
+- `main` remained untouched.
+
+**Decision: S24 ACCEPTED.**
+
+
+## S25 final acceptance
+
+- Tested source commit: `3c21073283e39776751aa26f9d078d691c05910f`.
+- Cleanup groups are fully reviewable: each group exposes every member through a lazy horizontal list rather than truncating to four thumbnails, and category-specific reasons are shown before any action.
+- Hidden burst-group and blurry-member caps were removed so valid cleanup candidates are not silently omitted.
+- Archive cleanup no longer preselects destructive candidates. Refresh/category/enable flows retain only explicit user selections that still belong to the current candidate set; newly discovered candidates start unselected.
+- Confirmed-trash reconciliation is isolated in `CleanupGroupPolicy`: confirmed IDs are removed, groups with fewer than two survivors are dropped, and a deleted burst hero cannot remain as a stale hero reference.
+- Android's system confirmation remains the destructive boundary. Cancellation does not reconcile/delete cleanup state; successful confirmation reconciles the confirmed IDs.
+- Focused host regressions cover explicit cleanup selection retention and cleanup-group reconciliation, including removed hero handling.
+- First targeted attempt `37589482404` failed only in the unchanged large-font navigation harness at the first post-HOME relaunch assertion. The same test had passed on the immediately preceding exact source. The harness was hardened to relaunch through explicit shell `am start -W` while preserving all 200% font reachability assertions.
+- Offline API-35 targeted run `37590387971`: **SUCCESS** on exact source `3c210732...`; 29/29 instrumentation tests passed, including `mainShell_largeFont_keepsPrimaryNavigationReachable`. Fail-closed evidence manifest validated the exact checkout. Artifact ID `11468004866`, digest `sha256:5be9cb24b31c1a5ac919f50a4fc347c54a467dcab668ea6ff73dc61c4c2307b5`.
+- Android Verification run `37590387987`: **SUCCESS** on exact source `3c210732...`. Artifact ID `11469125995`, digest `sha256:da75c2fabf4f3e06d4fbc4b5dd314c08fa3866a282874a9e349ffe434f1c2e90`.
+- No physical/OEM/camera/battery/thermal evidence is claimed. `main` remained untouched.
+
+**Decision: S25 ACCEPTED.**
+
+
+## S26 final acceptance
+
+- Tested source commit: `0bb57c236a345f3f6f55df1c99171c1efc151a9b`.
+- Archive candidate classification remains conservative: favorites, fresh media, non-images, sensitive-document cues, weak payment evidence, weak/legacy food evidence, and live-subject food photos are rejected.
+- Full scans remain bounded by independent keyset pages and now explicitly check coroutine cancellation between pages.
+- Archive UI publication is revision-scoped. Every refresh/toggle/keep/confirmed-trash/due-delete request is ordered by a monotonic publication revision captured at request time; stale partial/final summaries and dismissed-sheet work cannot overwrite a newer request.
+- Background retention only marks decisions due. Actual deletion remains a foreground MediaStore system-confirmation flow, and local state is marked deleted only after RESULT_OK.
+- The targeted suite exposed two unrelated navigation-fixture races during S26. Both were fixed without weakening assertions: large-font relaunch uses explicit shell launch, and the common @Before fixture now asserts deterministic launch readiness.
+- Offline API-35 run `37604161299`: **SUCCESS**, 29/29 instrumentation tests, exact checkout evidence manifest valid. Artifact `11474401280`, digest `sha256:19ab132351493b6b160ffdfdc8831deb06c2aebe1ea1415ac018e690cd8230ff`.
+- Android Verification `37604161533`: **SUCCESS**. Artifact `11474766342`, digest `sha256:0034a7ea3800e94b822c5cccaef95631e921a5c2a30fd12a4707fbe4d7924dda`.
+- No physical/OEM/camera/battery/thermal evidence is claimed. `main` remained untouched.
+
+**Decision: S26 ACCEPTED.**
+
+
+## S27 final acceptance
+
+- Tested source commit: `c19384f2a523df6c31b161e8b68c1dbcab076803`.
+- Viewer More exposes the private-note entry and binds async load/save/delete to the active `PhotoRecord` identity.
+- Production notes use `EncryptedSharedPreferences` only. Storage failure is fail-closed; there is no plaintext fallback path.
+- Stable identity is MediaStore ID + `dateAdded`: URI, path, filename, and folder changes do not orphan the note, while a reused MediaStore ID with a different `dateAdded` cannot inherit it.
+- Encrypted-at-rest instrumentation verifies neither note plaintext nor stable key plaintext appears in the preferences XML; the new identity regression verifies retrieval after URI/path/filename/folder changes.
+- Offline API-35 run `37608695583`: **SUCCESS**, exact checkout evidence valid. Artifact `11477275330`, digest `sha256:250ec383aef50f793d7fa0007045f9dc550f4f46ec23e84d2ccd10d752366f5f`.
+- Android Verification run `37608695584`: **SUCCESS**. Artifact `11476811942`, digest `sha256:32353911f4cd0c3aba3c3f4d9cf96c57bc9467918d22b997a91546e9f6ff0b6a`.
+- No physical-device evidence is claimed. `main` remained untouched.
+
+**Decision: S27 ACCEPTED.**
+
+
+## S28 final acceptance
+
+- Tested source commit: `124cfc35dcb527c39b91faac86ff9d6be410d285`.
+- Declutter review is restored in the live Tools surface and remains bounded to the existing 300-candidate draft.
+- Keep/Trash/Undo mutate only `DeclutterSession`; no media API is called during review.
+- Explicit Apply resolves the marked IDs and routes through the existing Android system trash confirmation.
+- Cancellation leaves the draft and media unchanged. Confirmed success reconciles candidates, marked/kept sets, and current position.
+- Reconciliation now preserves the same current candidate when earlier reviewed trash items disappear and keeps completed sessions complete.
+- Existing Vault/Trash/Archive Tools reachability was preserved by placing Declutter after the established primary actions.
+- Offline API-35 run `37611005386`: **SUCCESS**. Artifact `11477907657`, digest `sha256:4583741ed9dceb9b933d1d39954e4c31d49128b6a6c47fb30b584b881eb02785`.
+- Android Verification run `37611005344`: **SUCCESS**. Artifact `11477358716`, digest `sha256:346154a56bfd6dabb6cf895b3fbbd1083f73cbb5374da71dfee023fb5d5d9306`.
+- No physical-device evidence is claimed. `main` remained untouched.
+
+**Decision: S28 ACCEPTED.**
+
+
+## S29 final acceptance
+
+- Tested source: `726cd8cb42489d07f3f4ff32a7c2514e1ad41211`.
+- QR protocol retains hard limits for transfer ID, frame length, chunk count, per-chunk payload, encoded payload, decoded byte size, MIME types, and safe filenames.
+- Receiver replay/conflict guard now survives "Scan another" and receiver assembler recreation; completed/conflicted transfer IDs remain bounded and time-limited.
+- `reset()` clears only active assembly, not replay protection.
+- Active-session TTL refreshes on valid frames instead of expiring a progressing transfer based only on creation time.
+- Conflicting metadata/chunks quarantine the transfer ID rather than immediately allowing a fresh conflicting session.
+- Received bytes remain preview-only until the user explicitly chooses Save to device.
+- Offline API-35 `37615845287`: SUCCESS. Artifact `11479860889`, digest `sha256:0345f8a5b31ebcc2a40f62133693dbaca79bc586672ff48f9e732ce23d1fbd4d`.
+- Android Verification `37615845284`: SUCCESS. Artifact `11480676306`, digest `sha256:52276c5a64e0d3223b734b9d015d3415ef58b31b4c47eac28f11816c575d249f`.
+- `main` untouched; no physical-device evidence claimed.
+
+**Decision: S29 ACCEPTED.**
+
+
+## S30 final acceptance
+
+- Tested source: `41bf144e8f1b8a11082efc25aeffa9ad227867b3`.
+- Memory discovery is scoped to Albums only; Photos no longer duplicates On This Day/Collections discovery.
+- The persistent hide preference suppresses in-app memory discovery, closes active memory story state, clears pending external story launches, and clears widget story IDs.
+- Widget/deep-link IDs are parsed fail-closed as positive, unique, bounded IDs and must resolve exactly in order against the current access-scoped PhotoIndex before publication. Widget titles are trimmed/bounded.
+- Memory publication remains access-generation scoped. Revoked/reselected access clears stale memory/widget state before a new visible-set publication.
+- Story playback is user-paced: continuous Ken Burns motion and timed auto-advance/dismissal were removed; swipe/tap navigation remains and explicit 48dp Previous/Next controls were added alongside Search/Close.
+- First Android Verification attempt `37618078524` failed only because S30 unit-test code referenced unsupported Truth helpers and an obsolete duplicate-policy test. Those test-compilation defects were corrected without changing production behavior.
+- Offline API-35 run `37618837661`: **SUCCESS**, 31/31 instrumentation tests, offline network gate PASS, evidence manifest valid. Artifact `11481805121`, digest `sha256:6ea3a2ff24b6f25d5b0d77f4d41f29bdab54b82e8f1682548dccc154abf8c082`.
+- Android Verification `37618837677`: **SUCCESS**. Artifact `11481696565`, digest `sha256:d9b7531aae195cc66c54704dc0dfa45350819539a4f1b10bfbbd7914217a00af`.
+- `main` remained untouched. No physical/OEM/camera/battery/thermal evidence is claimed.
+
+**Decision: S30 ACCEPTED.**
+
+
+## S31 final acceptance
+
+- Tested source: `583da1bac1525f7a2a898e7e58b6510778debf86`.
+- Android configuration: application ID `com.photobook.app`, minSdk 26, targetSdk 36, compileSdk 36.
+- Release ABI splits: exactly `arm64-v8a` and `armeabi-v7a`; compatibility report also inventories packaged native libraries by ABI and SHA-256.
+- Release APK hard ceiling is exact decimal 30,000,000 bytes. Exact-source sizes: arm64-v8a `22,497,245` bytes; armeabi-v7a `16,456,239` bytes.
+- Release AAB ceiling is 20 MiB. Exact-source AAB: `20,796,407` bytes (19.83 MiB), below 20,971,520 bytes.
+- Both release APKs were inspected with aapt and have no `android.permission.INTERNET`.
+- Release runtime dependency provenance was captured and hashed; compatibility tooling fails closed on missing permission/dependency/artifact evidence, unexpected native ABI, API mismatch, or size violation.
+- Android Verification run `37625928661`: **SUCCESS**, compatibility report VALID, artifact `11484733092`, digest `sha256:3e9034bb661358ad656fbc1b237ddc4ca9b6c01a5196a4dbdc79b7df4c462762`.
+- Offline API-35 run `37625928524`: **SUCCESS**, artifact `11484238271`, digest `sha256:6359b3cdb6451f5d0eef4d82ec04dca6f1b5d8bcec71b394a1847bbd30fc4279`.
+- Hosted emulator evidence is correctness/privacy evidence only, not native ARM performance or physical/OEM certification. `main` remained untouched.
+
+**Decision: S31 ACCEPTED.**
+
+
+## S32 final acceptance
+
+- Frozen production source remains `583da1bac1525f7a2a898e7e58b6510778debf86`; S32 introduced only evidence/checkpoint/tooling verification changes.
+- Final pre-acceptance exact head: `28e569aa12d6aa62fa6dbce671fa1ff8d708268c`.
+- Offline API-35 targeted run `37632969193`: SUCCESS. Artifact `11487940750`, digest `sha256:2ee9d08a6fe70428b3133f298ae9ee4dd049ed8b4c37c1b91e2ab9273e556d0b`.
+- Android Verification run `37632969166`: SUCCESS. Artifact `11487464064`, digest `sha256:190fe6a372759c817265ecdd0056a23a96a5b9950e44560f96239203fa498af1`.
+- The final S32 accumulated-diff review found no confirmed production defect requiring a story reopen.
+- `main` remained exactly `d693acd7c52f285b6ba475fdd3712a10e419d4e1`; branch was ahead only and never behind.
+- Evidence boundaries remain explicit: hosted API-35 emulator evidence is not physical/OEM/camera/battery/thermal certification.
+
+**Decision: S32 ACCEPTED. Blueprint 01 is complete and ready for independent branch review.**
+
+
+## Independent production review — remediation cycle
+
+- Reviewed head `16c37216a8a14e079a4055df8c5fafcc7a8c3837` received NO LGTM with 6 P1 and 6 P2 findings.
+- Previous S01–S32 ACCEPTED status is superseded for the reopened stories until repaired behavior is reproduced on production paths.
+- Repair baseline remains `main` = `d693acd7c52f285b6ba475fdd3712a10e419d4e1`; no main mutation is authorized.
+- Repair implementation through `1b588f323c8ba6da1289b7da58a5daa691ebca4b` is UNVALIDATED as a final candidate. Passing historical runs do not certify these new changes.
+- Required before re-acceptance: focused fault/concurrency/lifecycle/revision/accessibility/crop regressions, populated Room migration, exact-head unit/lint/build/package gates, offline emulator evidence, supported API matrix, release-like performance/memory/frame evidence where hosted infrastructure can measure it, and explicit gaps for unavailable physical/OEM evidence.
+
+
+## 2026-10-09 S07 compatibility remediation results (pending)
+
+- First reopened incomplete story: S07, IN_PROGRESS. Tested base candidate `a2119461459900a0324abdf80f86f02106d66d8f`.
+- Android Verification https://github.com/myProjectsRavi/photoBook/actions/runs/37912893662: **SUCCESS** for the base candidate. Not sufficient for S07 acceptance.
+- Offline supported API matrix https://github.com/myProjectsRavi/photoBook/actions/runs/37912893689: **FAILURE**, API 34 and API 36 successful, API 26/29/30/33 failed. Connected GitHub job logs: API 26 logcat reset incompatible; API 29/33 native ABI mismatch; API 30 `MainNavigationInstrumentedTest.launchMainActivity` failed 2/28 tests (storage permission grant on pre-33 platform absent). No emulator pass inferred for failed jobs.
+- Scale performance https://github.com/myProjectsRavi/photoBook/actions/runs/37912893656: **FAILURE** across the 10k/50k/100k, 2GB/4GB matrix. Representative job logs show warm-start readiness timeout at 10k/2GB and missing thumbnail/render-thread trace at 100k/4GB. Later source performance work remains blocked pending fresh evidence, not waived.
+- Branch repairs: `fb1e1f00b95f18ae5224faf3c510c613064cf1d3`, `93afb80fc0f53079c08dcc8a7c1ee0bb751c13d2`, `cf02548206221bde2854631d677a353579c21cb0` (three files; details in STATE.md). They have **no PASS claim** until reproducible exact-source checks complete.
+- Pending exact-source `cf02548206221bde2854631d677a353579c21cb0` runs: Android Verification 37920834608; API-35 targeted 37920834602; supported API matrix 37920834730; phase-4 scale 37920834773. Review full logs and artifacts on completion.
+- Main remains unchanged; hardware performance, OEM/camera/battery/thermal claims are explicitly unavailable.
+
+
+## 9 October 2026 — P0 app crash during large-library measurement
+
+- Original app crash proven by GitHub run 37920834773, 10k/2GB job 113788089767, artifact 11612716304: `PhotoBookDiagnostics [uncaught-main]` and `AndroidRuntime FATAL EXCEPTION main` with `IndexOutOfBoundsException: Illegal attempt to access index 0 in ItemSnapshotList of size 0`. Not a synthetic test failure. 10k/2GB `c_warmStartup` and subsequent readiness failed. Prior scale metrics are NOT accepted.
+- API matrix 37920834730: API 26,29,30,34,36 success; API 33 failed large-font navigation wait after relaunch. Targeted API35 37920834602 succeeded on `cf02548206221bde2854631d677a353579c21cb0`.
+- Android Verification run 37920985738 failed strict ABI declaration report because CI-only x86_64 appeared in raw code; corrected by ARM default + explicit opt-in and stricter parser regression tests at `4b597217159f1038ea8ae19c168eccb14b25274c`.
+- Crash fix candidate `edbd0c7899fed25bc1c4cc9cb896e5b3410c6792`: safe loaded-item lookup and guarded Paging indexing in PhotoGrid; unit coverage. Added emulator paging-churn regression at `dbec4ca868624ac985fd8a86eeba14e3c1c2c5e0`. No full end-to-end PASS claimed yet.
+- Required evidence outstanding: successful exact-tree builds/lint/no-INTERNET/release-size, API 33 200% font journey, all supported API matrix, and Phase-4 benchmarks (10k/50k/100k at 2GB/4GB) with no product crash and valid traces. No physical-device claims.
+
+## 9 October 2026 — S07 new test candidate (not yet validated)
+- Epic E03 / Design system / S07 **IN_PROGRESS**. Prior head `46790c1ce70ee0726dde8c6d8fec94ded6c9bf53`; main unchanged. No later reopened story accepted.
+- Android Verification `37939809516` SUCCESS. Unsigned review AAB artifact `11621168363`, 20,844,294 bytes, SHA-256 `627b433ce16ba9ba62a0e8f83aa151dffc44034ea8e270bd456c8d7236af1c26`, ARM-only/no INTERNET/size PASS. NOT Play-ready.
+- Supported API `37939809408`: API29/30/33/34/36 SUCCESS (API33 200% test passed); API26 CANCELLED at 55min. Artifact `11624822073`: Android 8.0 launcher died/restarted on font_scale 2.0; `am start -W HOME` at 13:56:07 hung until cancellation. No API26 PASS.
+- Phase4 `37939809433`: all six 10k/50k/100k x 2GB/4GB jobs FAIL at g Reels viewer not advancing. Downloaded 100k/2GB artifact `11623829697`: six other benchmark tests PASS, 12 short swipes start at 78% screen height near bottom actions. No confirmed app fatal/ANR/OOM in inspected benchmark logcats; a local ML labeling runtime warning requires separate investigation. Original P0 paging crash remains UNRESOLVED without complete green scale matrix.
+- Candidate fixes (test/harness only): API<=27 uses bounded UiAutomator HOME/idle; API>=28 retains API33 synchronous HOME. All 200% assertions remain. Reels starts drag at 62% above bottom overlay, uses 28-step swipe, checks progress after EACH of 12 gestures with bounded polling, and allows Compose animation settling. Mandatory FrameTimingMetric unchanged. Changed: `MainNavigationInstrumentedTest.kt`, `PhotoBookMacrobenchmark.kt`, `STATE.md`, `VALIDATION.md`.
+- **Next step:** inspect exact new branch HEAD and Android Verification, API26/29/30/33/34/36 matrix, and Phase4 all six scale jobs; validate actual page progression/RenderThread timing, crash-free evidence and S07 accessibility. Update tested SHA/CI artifacts after terminal runs. No production release or physical/OEM/camera/battery/thermal claims.
+
+
+## 9 October 2026 — S07 exact-source results and viewport-aware Reels candidate
+
+- Tested source `eb1352d7afbf26a377e6cd372684fcc557c1e7a4`: Android Verification `37955013791` SUCCESS; offline API35 `37955013540` SUCCESS; supported API `37955013602` SUCCESS after strict API36 rerun (API26/29/30/33/34/36 all green, including API33 200% font). No crash-filter bypass.
+- AAB artifact `11627429783`: unsigned, 20,844,293 bytes, SHA-256 `caff4ce14d55fd47ae9a38e65380ec37978e22a160599e8843daaaf890eacaad`, ARM-only/no INTERNET/size PASS. **Not Play-ready**.
+- Phase4 `37955013651` FAILED all six 10k/50k/100k x 2GB/4GB configurations at `g_reelsVerticalSwipeFrameTiming` (no page advance at first swipe); downloaded 10k/2GB artifact `11628293628` confirms full-screen-coordinate 40%-height gesture and real PhotoBook process. Original `ItemSnapshotList` P0 remains UNRESOLVED until complete green scale evidence.
+- New candidate exposes the actual vertical pager's UI test ID and requires it before measuring; swipe coordinates derive from pager visible bounds and exceed half the viewport, with each of 12 page advances checked. Mandatory `FrameTimingMetric` retained. **No PASS is claimed for this untested candidate.**
+- Pending: fresh exact-source Android/targeted/API matrix/Phase4 CI, complete no-fatal/ANR/OOM evidence, S07 accessibility and later reopened stories S09-S32. No physical/OEM certification.
+
+
+## 9 October 2026 — S07 Phase-4 batch timing candidate
+
+- E03 / Design system / S07 remains IN_PROGRESS. Parent source `40c9942f338c6a94307a4add0faa5e449e66e8ef`; main untouched. No later story accepted.
+- Parent Android Verification `37982435890` PASS, offline API35 `37982435832` PASS, supported API matrix `37982435814` ALL SIX PASS. Phase4 `37982435819` terminal FAILURE: 10k/2GB and 100k/4GB seven mandatory macrobenchmarks PASS but missing aggregate scan/build/persist timing markers; other profiles fail page-five Reels or ADB disconnect. P0 ItemSnapshotList crash NOT CLEARED.
+- Dependency-safe candidate measures actual query/cursor scan excluding suspended batch callbacks, aggregates per-batch record/EXIF/geocode work and actual Room/FTS upsert wall time, emits exact-count `completed=1` markers only after successful final commit. Extractor now fails closed on incomplete/mismatched stages; four regression tests added. No timing, privacy, offline, cancellation, size or source-media gates weakened.
+- Changed files: MediaStoreScanner.kt, IndexBuilder.kt, MainViewModel.kt, extract_phase4_timings.py, test_phase0_tools.py, STATE.md, VALIDATION.md. Candidate requires fresh exact-head Android Verification, API35 offline, six-version compatibility and all six Phase4 jobs. Diagnose page-five Reels stall and 100k/2GB emulator disconnect independently. No physical/OEM/camera/battery/thermal evidence or Play upload.
+
+## 10 October 2026 — S07 boundary-aware viewer and strict Reels settle candidate
+
+- Parent tested SHA `4004b9c29159ef48cae69e7684720f1094c4c6a2`; Android Verification `38025575995` SUCCESS, supported API matrix `38025575990` ALL SIX SUCCESS, targeted API35 on parent NOT VERIFIED. Unsigned AAB artifact `11659239035`, 20,848,507 bytes, SHA256 `ed9050ade9f0696920fabca006596c0ed18c9e55e22cc8bb8d6ec64c06b060b7`, not Play-ready.
+- Exact-source Phase4 `38025575912` TERMINAL FAILED (3/6): 10k/2GB, 10k/4GB, 50k/2GB SUCCESS; 50k/4GB `114135596255` Reels swipe8 FAIL artifact `11660441735`; 100k/2GB `114135596212` Reels swipe4 FAIL artifact `11661343686`; 100k/4GB `114135596325` Reels FAIL artifact `11661801420`. Previous passing profiles do not clear the ItemSnapshotList P0; full six-scale matrix with strict timings/crash-free evidence still required.
+- New unverified candidate changes production viewer-window recenter policy only at global boundaries (unit tests for anchored start/end, middle and small windows) and makes benchmark settle timeout fail closed; 12 swipe progress assertions and FrameTimingMetric remain mandatory. No exact-source PASS claimed for this candidate yet. No main changes, Play upload, or physical/OEM/camera/battery/thermal certification.
+
+## 18 October 2026 — exact-head CI and repeated 100k/2GB failures
+
+- Production/test source examined: `4f3017309a58d1471c37b58724991d65aba4a05f`. A subsequent checkpoint-only documentation commit must not be mistaken for independently tested source.
+- Android Verification run `39045644107` **SUCCESS**; API35 offline targeted `39045644080` **SUCCESS**; six supported-API offline matrix `39045644053` **SUCCESS**.
+- Phase4 performance run `39045644125` attempt 1: 5/6 profiles **SUCCESS**, 100k/2GB job `117433701378` **FAIL** at `f_searchTypingAndResultsFrameTiming`, despite 36 Perfetto traces + benchmark JSON captured.
+- Same run attempt 2, failed-job-only retry `117486216305`: 100k/2GB **FAIL** at `g_reelsVerticalSwipeFrameTiming`; 41 Perfetto traces + benchmark JSON captured; raw artifact `12114010822`. Five other original profiles passed. Exact-head overall Phase4 conclusion is **FAILURE**.
+- Two distinct interaction-test failures on a constrained 100k/2GB emulator are not acceptable evidence of smoothness. Root cause unresolved. Do not synthesize timings, weaken assertions, or infer real-device performance from emulators.
+- Release decision **NO LGTM**. Work continues only in `autopilot/epics-features-user-stories`; `main` untouched. Independent N01–N08 signoff and physical/OEM tests not established.
+
+
+## 26 October 2026 — independent exact-source validation record, performance and launch gates remain OPEN
+
+- Current **tested application + instrumentation source**: `d6b9998e7bbca164b795d2f7ae88910ccb5e6a92` on authorized `autopilot/epics-features-user-stories`; `main` remains `d693acd7c52f285b6ba475fdd3712a10e419d4e1`. This entry supersedes the stale 18 October top-level SHA, without deleting or rewriting historical failed-run evidence.
+- Exact-head [Android Verification 40311755827](https://github.com/myProjectsRavi/photoBook/actions/runs/40311755827) **SUCCESS**: `:app:testDebugUnitTest`, release build/manifest/privacy gates PASS; unsigned review AAB **20,864,135 bytes** (< 20 MiB); installed release ARM APKs omit INTERNET. This is **not** a signed Play bundle or physical-device pass.
+- Exact-head [offline API35 targeted 40311755813](https://github.com/myProjectsRavi/photoBook/actions/runs/40311755813) **SUCCESS, 63/63 tests**, including Archives photo-selection accessibility, PhotoBook-owned relaunch readiness, and large-font navigation.
+- Exact-head [API 26/29/30/33/34/36 offline matrix 40311755791](https://github.com/myProjectsRavi/photoBook/actions/runs/40311755791) **SUCCESS on attempt 2, all six jobs**. **Do not hide attempt-1 API34 failure:** job `121534393940` failed 2/43 tests in shared `MainNavigationInstrumentedTest.launchMainActivity:51`: `foreground=android`, shell `am start Status: ok`, PhotoBook-owned Photos node absent after 30s. Replacement job `121538546559` **SUCCESS, OK (43 tests)**. Exact root cause still **OPEN** as [issue #44](https://github.com/myProjectsRavi/photoBook/issues/44). Saved original logcat showed ActivityTaskManager `Displayed com.photobook.app/.MainActivity` but no PhotoBook FATAL/ANR marker; absence in this file is bounded negative evidence, not proof of no possible startup issue.
+- Exact-head [Phase4 six scale profiles 40311755879](https://github.com/myProjectsRavi/photoBook/actions/runs/40311755879) **ALL SIX terminal SUCCESS**, at 10k/50k/100k photos on 2GB/API30 and 4GB/API35 x86_64 hosted emulators. Both 100k jobs log no PhotoBook crash/ANR/OOM signature from lifecycle stress. However **ALL SIX** record `certificationStatus=OBSERVATIONAL_ONLY`, `budgetEnforced=false`, `withinBudget=false`. P95 CPU frame durations (grid/search/Reels), in ms: 10k/2GB **157.500/167.284/126.362**; 10k/4GB **229.750/246.408/186.528**; 50k/2GB **206.005/209.811/170.188**; 50k/4GB **192.757/177.393/164.552**; 100k/2GB **187.448/197.638/148.728**; 100k/4GB **237.758/190.308/192.423**. Each exceeds 16.67ms P95 budget. Run SUCCESS means observational harness completed, **NOT 60fps certification**.
+- Narrow S07 bugs closed with own tests/evidence: #43 non-finite scrub input (`bf41374a`); #45 repeat gesture/ordinary scroll (`77dfb3bc`); #46 accessible gallery scrub (`d7079dcd`); #47 Archives checkbox 48dp target and semantics (`fb331cd7` + test-selection commit `589fa12a`). These issue closures are **not S07 story acceptance**.
+- Canonical S07 remains **IN_PROGRESS**; other reopened backlog stories, S31 and S32 remain unaccepted/in progress. Release verdict **HOLD / NO 100% LGTM**. Remaining gates: reproducible API34 startup/foreground root-cause investigation under #44 without relaxing navigation checks; analyze real bottlenecks and meet strict frame budgets on an appropriate physical ARM/OEM device; 48dp/200% visual/insets review across touched screens; full S01–S32 independent N01–N08 review of reopened stories; exact-signer signed Play AAB provenance and physical-device tests. Never merge into or modify `main` or upload to Play on hosted evidence alone.
+- **Next safe action**: preserve this exact tested source as the pre-checkpoint reference; investigate API34 focus/accessibility/window diagnostic evidence and performance counters while preserving original assertions, crash gates, 12 Reels swipes, test-fixture constraints, and all Phase4 trace collection. Do not advance the story-order checkpoint or mislabel a docs-only commit as a retested application commit.

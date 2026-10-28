@@ -15,6 +15,10 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.photobook.app.data.db.VaultDao
 import com.photobook.app.data.db.VaultEntity
+import com.photobook.app.data.db.VaultOperationDao
+import com.photobook.app.data.db.VaultOperationEntity
+import com.photobook.app.data.db.VaultOperationStates
+import com.photobook.app.data.db.VaultOperationTypes
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.util.BitmapOrientation
 import dagger.hilt.EntryPoint
@@ -28,12 +32,18 @@ import java.io.InputStream
 import java.security.DigestInputStream
 import java.security.MessageDigest
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.Cipher
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -49,13 +59,34 @@ data class VaultItem(
     val previewUri: Uri? = null,
 )
 
+enum class VaultSaveOutcome {
+    ADDED,
+    ALREADY_PROTECTED,
+    FAILED,
+}
+
+data class VaultSaveItemResult(
+    val photoId: Long,
+    val outcome: VaultSaveOutcome,
+)
+
 sealed interface VaultSaveResult {
     data class Success(
-        val addedCount: Int,
-        val skippedCount: Int,
-        val addedPhotoIds: Set<Long>,
-        val protectedPhotoIds: Set<Long>,
-    ) : VaultSaveResult
+        val itemResults: List<VaultSaveItemResult>,
+    ) : VaultSaveResult {
+        val addedPhotoIds: Set<Long>
+            get() = itemResults.filter { it.outcome == VaultSaveOutcome.ADDED }
+                .mapTo(linkedSetOf()) { it.photoId }
+        val protectedPhotoIds: Set<Long>
+            get() = itemResults.filter { it.outcome != VaultSaveOutcome.FAILED }
+                .mapTo(linkedSetOf()) { it.photoId }
+        val failedPhotoIds: Set<Long>
+            get() = itemResults.filter { it.outcome == VaultSaveOutcome.FAILED }
+                .mapTo(linkedSetOf()) { it.photoId }
+        val addedCount: Int get() = addedPhotoIds.size
+        val skippedCount: Int
+            get() = itemResults.count { it.outcome == VaultSaveOutcome.ALREADY_PROTECTED }
+    }
 
     data class Error(val throwable: Throwable? = null) : VaultSaveResult
 }
@@ -72,6 +103,7 @@ sealed interface VaultExportResult {
 class VaultService @Inject constructor(
     @ApplicationContext private val context: Context,
     private val vaultDao: VaultDao,
+    private val vaultOperationDao: VaultOperationDao,
 ) {
     constructor(context: Context) : this(
         context,
@@ -79,6 +111,10 @@ class VaultService @Inject constructor(
             context.applicationContext,
             VaultServiceEntryPoint::class.java,
         ).vaultDao(),
+        EntryPointAccessors.fromApplication(
+            context.applicationContext,
+            VaultServiceEntryPoint::class.java,
+        ).vaultOperationDao(),
     )
 
     private val legacyMasterKey: MasterKey by lazy {
@@ -104,10 +140,6 @@ class VaultService @Inject constructor(
     private val authCrypto: VaultAuthCrypto by lazy {
         VaultAuthCrypto(context)
     }
-
-    private val previewCacheGeneration = java.util.concurrent.atomic.AtomicLong(0L)
-    private val previewCacheNeedsCleanup = java.util.concurrent.atomic.AtomicBoolean(true)
-    private val previewCacheMutex = Mutex()
 
     internal fun beginPreviewLoad(): Long = previewCacheGeneration.incrementAndGet()
 
@@ -166,6 +198,7 @@ class VaultService @Inject constructor(
                 }
             }
             migrateLegacyItemsIfNeeded()
+            reconcileVaultOperations()
             migrateLegacyCiphertextIfNeeded(session)
             if (
                 expectedPreviewGeneration != null &&
@@ -214,6 +247,7 @@ class VaultService @Inject constructor(
             }
 
             migrateLegacyItemsIfNeeded()
+            reconcileVaultOperations()
             migrateLegacyCiphertextIfNeeded(session)
             val entity = vaultDao.getVaultItemById(itemId) ?: return@withContext null
             val uri = createPreviewUri(
@@ -240,6 +274,7 @@ class VaultService @Inject constructor(
         block: suspend (Bitmap) -> T,
     ): T? = withContext(Dispatchers.IO) {
         migrateLegacyItemsIfNeeded()
+        reconcileVaultOperations()
         migrateLegacyCiphertextIfNeeded(session)
         val entity = vaultDao.getVaultItemById(itemId) ?: return@withContext null
         val bitmap = decodeUprightVaultBitmap(
@@ -265,46 +300,86 @@ class VaultService @Inject constructor(
         session: VaultCryptoSession,
     ): VaultSaveResult = withContext(Dispatchers.IO) {
         if (photos.isEmpty()) {
-            return@withContext VaultSaveResult.Success(
-                addedCount = 0,
-                skippedCount = 0,
-                addedPhotoIds = emptySet(),
-                protectedPhotoIds = emptySet(),
-            )
+            return@withContext VaultSaveResult.Success(emptyList())
         }
-        runCatching {
+        try {
             migrateLegacyItemsIfNeeded()
+            reconcileVaultOperations()
             migrateLegacyCiphertextIfNeeded(session)
             val photoIds = photos.map { photo -> photo.id }
             val existingByPhotoId = photoIds.chunked(DB_QUERY_BATCH_SIZE)
                 .flatMap { batch -> vaultDao.getProtectedPhotoIds(batch) }
                 .toMutableSet()
+            val itemResults = ArrayList<VaultSaveItemResult>(photos.size)
 
-            var added = 0
-            var skipped = 0
-            val addedPhotoIds = linkedSetOf<Long>()
-            val protectedPhotoIds = linkedSetOf<Long>()
             photos.forEach { photo ->
+                currentCoroutineContext().ensureActive()
                 if (photo.id in existingByPhotoId) {
-                    skipped += 1
-                    protectedPhotoIds += photo.id
-                    return@forEach
+                    val existing = vaultDao.getVaultItemBySourcePhotoId(photo.id)
+                    if (existing != null) {
+                        val encrypted = File(vaultDir, existing.encryptedFileName)
+                        if (!encrypted.isFile) {
+                            // Old cancelled adds could strand a row with no ciphertext.
+                            // Remove that stale row only after confirming the file is absent.
+                            vaultDao.deleteVaultItemById(existing.id)
+                            if (vaultDao.getVaultItemBySourcePhotoId(photo.id) != null) {
+                                itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.FAILED)
+                                return@forEach
+                            }
+                            existingByPhotoId.remove(photo.id)
+                        } else {
+                            val readable = verifyCommittedCiphertext(existing, session)
+                            itemResults += VaultSaveItemResult(
+                                photo.id,
+                                if (readable) VaultSaveOutcome.ALREADY_PROTECTED else VaultSaveOutcome.FAILED,
+                            )
+                            return@forEach
+                        }
+                    } else {
+                        existingByPhotoId.remove(photo.id)
+                    }
                 }
 
                 val sourceUri = runCatching { Uri.parse(photo.uriString) }.getOrNull()
-                    ?: return@forEach
+                if (sourceUri == null) {
+                    itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.FAILED)
+                    return@forEach
+                }
                 val itemId = UUID.randomUUID().toString()
+                val operationId = UUID.randomUUID().toString()
+                activeVaultOperationIds += operationId
+                try {
                 val encryptedName = buildV2EncryptedFileName(photo.fileName)
                 val targetFile = File(vaultDir, encryptedName)
                 val tempFile = File(vaultDir, authCrypto.temporaryV2FileName(itemId))
                 prepareFreshTemp(tempFile)
                 if (targetFile.exists()) {
-                    throw IOException("Refusing to overwrite an existing Vault v2 file")
+                    itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.FAILED)
+                    return@forEach
                 }
 
+                val now = System.currentTimeMillis()
+                vaultOperationDao.upsert(
+                    VaultOperationEntity(
+                        id = operationId,
+                        type = VaultOperationTypes.ADD,
+                        state = VaultOperationStates.PREPARED,
+                        vaultItemId = itemId,
+                        sourcePhotoId = photo.id,
+                        encryptedFileName = encryptedName,
+                        outputUriString = null,
+                        expectedSha256Hex = null,
+                        createdAtMs = now,
+                        updatedAtMs = now,
+                    ),
+                )
+
                 val sourceInput = context.contentResolver.openInputStream(sourceUri)
-                    ?: return@forEach
-                val copied = runCatching {
+                if (sourceInput == null) {
+                    itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.FAILED)
+                    return@forEach
+                }
+                try {
                     sourceInput.use { input ->
                         authCrypto.encryptToFile(
                             session = session,
@@ -313,14 +388,34 @@ class VaultService @Inject constructor(
                             associatedData = authCrypto.associatedData(itemId),
                         )
                     }
+                    currentCoroutineContext().ensureActive()
                     authCrypto.renameAtomically(tempFile, targetFile)
-                    true
-                }.getOrElse {
+                    vaultOperationDao.upsert(
+                        VaultOperationEntity(
+                            id = operationId,
+                            type = VaultOperationTypes.ADD,
+                            state = VaultOperationStates.CIPHERTEXT_COMMITTED,
+                            vaultItemId = itemId,
+                            sourcePhotoId = photo.id,
+                            encryptedFileName = encryptedName,
+                            outputUriString = null,
+                            expectedSha256Hex = null,
+                            createdAtMs = now,
+                            updatedAtMs = System.currentTimeMillis(),
+                        ),
+                    )
+                } catch (error: CancellationException) {
                     runCatching { tempFile.delete() }
                     runCatching { targetFile.delete() }
-                    false
+                    runCatching { vaultOperationDao.deleteById(operationId) }
+                    throw error
+                } catch (_: Throwable) {
+                    runCatching { tempFile.delete() }
+                    runCatching { targetFile.delete() }
+                    runCatching { vaultOperationDao.deleteById(operationId) }
+                    itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.FAILED)
+                    return@forEach
                 }
-                if (!copied) return@forEach
 
                 val entity = VaultEntity(
                     id = itemId,
@@ -331,35 +426,47 @@ class VaultService @Inject constructor(
                     addedAtMs = System.currentTimeMillis(),
                 )
 
-                val inserted = runCatching { vaultDao.insertVaultItem(entity) }
-                    .getOrElse {
-                        runCatching { targetFile.delete() }
-                        throw it
-                    }
+                val inserted = try {
+                    currentCoroutineContext().ensureActive()
+                    vaultDao.insertVaultItem(entity)
+                } catch (error: CancellationException) {
+                    // The insert may already be durable when cancellation is thrown.
+                    // Preserve ciphertext and journal so recovery can reconcile the row.
+                    throw error
+                } catch (_: Throwable) {
+                    // An ambiguous insert outcome must not delete the last ciphertext.
+                    // Recovery owns orphan cleanup after checking the durable row.
+                    itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.FAILED)
+                    return@forEach
+                }
                 if (inserted == INSERT_CONFLICT) {
                     runCatching { targetFile.delete() }
                     existingByPhotoId += photo.id
-                    skipped += 1
-                    protectedPhotoIds += photo.id
+                    runCatching { vaultOperationDao.deleteById(operationId) }
+                    itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.ALREADY_PROTECTED)
                 } else {
-                    existingByPhotoId += photo.id
-                    added += 1
-                    addedPhotoIds += photo.id
-                    protectedPhotoIds += photo.id
+                    // verifyCommittedCiphertext propagates CancellationException. Never
+                    // flatten cancellation to an invalid-ciphertext result: otherwise
+                    // cancellable DAO rollback can fail while file deletion still runs.
+                    val ciphertextReadable = verifyCommittedCiphertext(entity, session)
+                    if (!ciphertextReadable || !targetFile.exists()) {
+                        compensateUnverifiedAdd(entity, operationId, targetFile)
+                        itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.FAILED)
+                    } else {
+                        existingByPhotoId += photo.id
+                        vaultOperationDao.deleteById(operationId)
+                        itemResults += VaultSaveItemResult(photo.id, VaultSaveOutcome.ADDED)
+                    }
+                }
+                } finally {
+                    activeVaultOperationIds.remove(operationId)
                 }
             }
 
-            if (photos.isNotEmpty() && protectedPhotoIds.isEmpty()) {
-                return@runCatching VaultSaveResult.Error()
-            }
-
-            VaultSaveResult.Success(
-                addedCount = added,
-                skippedCount = skipped,
-                addedPhotoIds = addedPhotoIds,
-                protectedPhotoIds = protectedPhotoIds,
-            )
-        }.getOrElse { error ->
+            VaultSaveResult.Success(itemResults)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
             VaultSaveResult.Error(error)
         }
     }
@@ -436,6 +543,23 @@ class VaultService @Inject constructor(
                     throw IOException("Vault export integrity verification failed")
                 }
 
+                val exportDigestHex = expectedDigest.joinToString("") { byte -> "%02x".format(byte) }
+                val operationId = UUID.randomUUID().toString()
+                val now = System.currentTimeMillis()
+                vaultOperationDao.upsert(
+                    VaultOperationEntity(
+                        id = operationId,
+                        type = VaultOperationTypes.MOVE_OUT,
+                        state = VaultOperationStates.EXPORT_VERIFIED,
+                        vaultItemId = item.id,
+                        sourcePhotoId = item.sourcePhotoId,
+                        encryptedFileName = item.encryptedFileName,
+                        outputUriString = outputUri.toString(),
+                        expectedSha256Hex = exportDigestHex,
+                        createdAtMs = now,
+                        updatedAtMs = now,
+                    ),
+                )
                 committed = true
                 VaultExportResult.Success(uri = outputUri, fileName = outputName)
             } finally {
@@ -451,18 +575,33 @@ class VaultService @Inject constructor(
     }
 
     suspend fun deleteItem(itemId: String): Boolean = withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             migrateLegacyItemsIfNeeded()
-            val item = vaultDao.getVaultItemById(itemId) ?: return@runCatching false
-            val deletedRows = vaultDao.deleteVaultItemById(itemId)
-            if (deletedRows <= 0) return@runCatching false
-            runCatching { File(vaultDir, item.encryptedFileName).delete() }
+            currentCoroutineContext().ensureActive()
+            val item = vaultDao.getVaultItemById(itemId) ?: return@withContext false
+            val encryptedFile = File(vaultDir, item.encryptedFileName)
+            if (encryptedFile.exists() && !encryptedFile.delete()) {
+                return@withContext false
+            }
             authCrypto.legacyTwinNameFor(item.encryptedFileName)?.let { legacyTwin ->
-                runCatching { File(vaultDir, legacyTwin).delete() }
+                val legacyFile = File(vaultDir, legacyTwin)
+                if (legacyFile.exists() && !legacyFile.delete()) {
+                    return@withContext false
+                }
+            }
+            currentCoroutineContext().ensureActive()
+            val deletedRows = vaultDao.deleteVaultItemById(itemId)
+            if (deletedRows <= 0) {
+                return@withContext false
             }
             deletePreviewFile(item.id)
+            runCatching { vaultOperationDao.deleteByVaultItemId(item.id) }
             true
-        }.getOrDefault(false)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     suspend fun clearPreviewCache(expectedGeneration: Long): Boolean = withContext(Dispatchers.IO) {
@@ -477,6 +616,17 @@ class VaultService @Inject constructor(
         } finally {
             previewCacheMutex.unlock()
         }
+    }
+
+    fun schedulePreviewCacheCleanup(expectedGeneration: Long) {
+        previewCleanupScope.launch {
+            clearPreviewCache(expectedGeneration)
+        }
+    }
+
+    suspend fun clearStalePreviewCacheAtStartup(): Boolean {
+        val generation = invalidatePreviewCache()
+        return clearPreviewCache(generation)
     }
 
     private fun deletePreviewCacheFiles(): Boolean {
@@ -565,6 +715,61 @@ class VaultService @Inject constructor(
                 runCatching { tempPreview.delete() }
             }
         }.getOrNull()
+    }
+
+    /**
+     * Roll back an invalid new Vault entry without breaking row/file integrity.
+     * Compensation is bounded and non-cancellable; on ambiguous database outcome
+     * retain both the ciphertext and journal for a later recovery attempt.
+     */
+    private suspend fun compensateUnverifiedAdd(
+        entity: VaultEntity,
+        operationId: String,
+        encrypted: File,
+    ): Boolean = withContext(NonCancellable + Dispatchers.IO) {
+        try {
+            withTimeout(5_000L) {
+                if (vaultDao.getVaultItemById(entity.id) != null) {
+                    vaultDao.deleteVaultItemById(entity.id)
+                }
+                if (vaultDao.getVaultItemById(entity.id) != null) {
+                    return@withTimeout false
+                }
+                if (encrypted.exists() && !encrypted.delete()) {
+                    return@withTimeout false
+                }
+                vaultOperationDao.deleteById(operationId)
+                true
+            }
+        } catch (error: Exception) {
+            com.photobook.app.util.LocalDiagnostics.record(
+                context, "vault", "Could not finish Vault add compensation; journal retained", error,
+            )
+            false
+        }
+    }
+
+    private suspend fun verifyCommittedCiphertext(
+        entity: VaultEntity,
+        session: VaultCryptoSession,
+    ): Boolean {
+        return try {
+            openVaultInput(entity, session).use { input ->
+                val buffer = ByteArray(STREAM_BUFFER_BYTES)
+                var total = 0L
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    total += read
+                }
+                total > 0L
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     private fun openVaultInput(
@@ -719,8 +924,16 @@ class VaultService @Inject constructor(
             ?.filter { file -> file.isFile && file.extension.equals("jpg", ignoreCase = true) }
             ?.sortedByDescending { file -> file.lastModified() }
             .orEmpty()
-        files.drop(MAX_PREVIEW_CACHE_FILES).forEach { file ->
-            runCatching { file.delete() }
+        var retainedBytes = 0L
+        files.forEachIndexed { index, file ->
+            val keepByCount = index < MAX_PREVIEW_CACHE_FILES
+            val nextBytes = retainedBytes + file.length().coerceAtLeast(0L)
+            val keepByBytes = nextBytes <= MAX_PREVIEW_CACHE_BYTES
+            if (keepByCount && keepByBytes) {
+                retainedBytes = nextBytes
+            } else {
+                runCatching { file.delete() }
+            }
         }
     }
 
@@ -789,6 +1002,50 @@ class VaultService @Inject constructor(
             if (withinEdge && withinPixels) return sampleSize
             if (sampleSize >= MAX_BITMAP_SAMPLE_SIZE) return sampleSize
             sampleSize *= 2
+        }
+    }
+
+    private suspend fun reconcileVaultOperations() {
+        vaultOperationDao.getAll().forEach { operation ->
+            // A journal can be visible while a live operation has committed ciphertext but has not
+            // inserted its row yet. Recovery must never interpret that in-flight state as abandoned.
+            if (activeVaultOperationIds.contains(operation.id)) return@forEach
+            when (operation.type) {
+                VaultOperationTypes.ADD -> {
+                    val itemId = operation.vaultItemId ?: return@forEach
+                    val fileName = operation.encryptedFileName ?: return@forEach
+                    val row = vaultDao.getVaultItemById(itemId)
+                    val file = File(vaultDir, fileName)
+                    when {
+                        row != null -> {
+                            if (row.encryptedFileName == fileName && !file.isFile) {
+                                // Repair a stranded post-insert cancellation from older builds.
+                                // Never claim protection when no ciphertext exists.
+                                vaultDao.deleteVaultItemById(itemId)
+                                if (vaultDao.getVaultItemById(itemId) == null) {
+                                    vaultOperationDao.deleteById(operation.id)
+                                }
+                            } else {
+                                vaultOperationDao.deleteById(operation.id)
+                            }
+                        }
+                        operation.state == VaultOperationStates.PREPARED -> {
+                            runCatching { file.delete() }
+                            vaultOperationDao.deleteById(operation.id)
+                        }
+                        operation.state == VaultOperationStates.CIPHERTEXT_COMMITTED -> {
+                            if (file.exists()) runCatching { file.delete() }
+                            vaultOperationDao.deleteById(operation.id)
+                        }
+                    }
+                }
+                VaultOperationTypes.MOVE_OUT -> {
+                    val itemId = operation.vaultItemId ?: return@forEach
+                    if (vaultDao.getVaultItemById(itemId) == null) {
+                        vaultOperationDao.deleteById(operation.id)
+                    }
+                }
+            }
         }
     }
 
@@ -863,6 +1120,12 @@ class VaultService @Inject constructor(
     }
 
     private companion object {
+        private val activeVaultOperationIds = ConcurrentHashMap.newKeySet<String>()
+        private val previewCacheGeneration = java.util.concurrent.atomic.AtomicLong(0L)
+        private val previewCacheNeedsCleanup = java.util.concurrent.atomic.AtomicBoolean(true)
+        private val previewCacheMutex = Mutex()
+        private val previewCleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
         private const val PREFS_NAME = "vault_secure_prefs"
         private const val KEY_ITEMS = "vault_items"
         private const val VAULT_DIR = "vault_store"
@@ -877,6 +1140,7 @@ class VaultService @Inject constructor(
         private const val MAX_BITMAP_SAMPLE_SIZE = 128
         private const val PREVIEW_JPEG_QUALITY = 82
         private const val MAX_PREVIEW_CACHE_FILES = 48
+        private const val MAX_PREVIEW_CACHE_BYTES = 12L * 1024L * 1024L
         private const val DB_QUERY_BATCH_SIZE = 200
         private const val STREAM_BUFFER_BYTES = 64 * 1024
     }
@@ -908,4 +1172,5 @@ private fun VaultItem.toVaultEntity(): VaultEntity {
 @InstallIn(SingletonComponent::class)
 internal interface VaultServiceEntryPoint {
     fun vaultDao(): VaultDao
+    fun vaultOperationDao(): VaultOperationDao
 }

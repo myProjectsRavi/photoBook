@@ -3,6 +3,9 @@ package com.photobook.app.data.index
 import com.photobook.app.data.model.IntelligenceStatus
 import com.photobook.app.data.model.MLTag
 import com.photobook.app.data.model.PhotoRecord
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotSame
@@ -136,6 +139,54 @@ class PhotoIndexV2ParityTest {
         assertEquals(beforeVersion + 1L, v2.version())
         assertEquals(v2.version(), v2.changes().value)
         assertEquals(before.map { it.id }, after.map { it.id })
+    }
+
+    @Test
+    fun typedRevisions_distinguishStructuralIntelligenceAndFavoriteChanges() = runBlocking {
+        val index = PhotoIndex(PhotoIndexStrategy.V2)
+        val record = deterministicRecords(1).single()
+
+        assertEquals(PhotoIndexRevisions(), index.revisions().value)
+
+        index.setRecords(listOf(record))
+        assertEquals(1L, index.revisions().value.structural)
+        assertEquals(0L, index.revisions().value.intelligence)
+        assertEquals(0L, index.revisions().value.favorite)
+
+        index.updatePhotoIntelligence(
+            id = record.id,
+            tags = listOf(MLTag("document", 0.9f)),
+            isMlProcessed = true,
+            mlStatus = IntelligenceStatus.PROCESSED,
+        )
+        assertEquals(1L, index.revisions().value.structural)
+        assertEquals(1L, index.revisions().value.intelligence)
+        assertEquals(0L, index.revisions().value.favorite)
+
+        index.setFavorite(record.id, true)
+        assertEquals(1L, index.revisions().value.structural)
+        assertEquals(1L, index.revisions().value.intelligence)
+        assertEquals(1L, index.revisions().value.favorite)
+
+        index.removeRecords(setOf(record.id))
+        assertEquals(2L, index.revisions().value.structural)
+    }
+
+    @Test
+    fun typedRevisions_countEveryConcurrentFavoriteMutation() = runBlocking {
+        val index = PhotoIndex(PhotoIndexStrategy.V2)
+        index.setRecords(deterministicRecords(1))
+        val operations = 256
+        coroutineScope {
+            repeat(operations) {
+                launch(Dispatchers.Default) {
+                    index.toggleFavorite(1L)
+                }
+            }
+        }
+        assertEquals(operations.toLong(), index.revisions().value.favorite)
+        assertEquals(operations.toLong() + 1L, index.version())
+        assertEquals(1L, index.revisions().value.structural)
     }
 
     private fun assertParity(legacy: PhotoIndex, v2: PhotoIndex, label: String) {

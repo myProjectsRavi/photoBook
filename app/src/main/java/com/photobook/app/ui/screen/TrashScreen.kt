@@ -25,7 +25,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import java.text.DateFormat
+import java.util.Date
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,12 +38,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import com.photobook.app.feature.trash.TrashListUiState
 import com.photobook.app.feature.trash.TrashedPhoto
+
+/** A filtered empty page is not an empty Trash while more MediaStore pages remain. */
+internal fun shouldShowTrashEmptyState(visiblePhotoCount: Int, hasMore: Boolean): Boolean =
+    visiblePhotoCount == 0 && !hasMore
 
 @Composable
 fun TrashScreen(
     photos: List<TrashedPhoto>,
     isLoading: Boolean,
+    listState: TrashListUiState,
+    hasMore: Boolean,
+    isLoadingMore: Boolean,
+    onLoadMore: () -> Unit,
     onDismiss: () -> Unit,
     onRestore: (TrashedPhoto) -> Unit,
     onDeleteForever: (TrashedPhoto) -> Unit,
@@ -70,7 +82,7 @@ fun TrashScreen(
                             style = MaterialTheme.typography.titleMedium,
                         )
                         Text(
-                            text = "Items here are removed automatically after ~30 days.",
+                            text = "Android manages removal timing for items in Recently Deleted.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -84,10 +96,30 @@ fun TrashScreen(
                             CircularProgressIndicator()
                         }
                     }
-                    photos.isEmpty() -> {
+                    listState == TrashListUiState.UNSUPPORTED -> {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text(
-                                text = "Trash is empty. Deleted photos will appear here for ~30 days before permanent removal.",
+                                text = "Recently Deleted is not supported on this Android version.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(32.dp),
+                            )
+                        }
+                    }
+                    listState == TrashListUiState.ERROR -> {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "Unable to load Recently Deleted. Close and reopen to retry.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(32.dp),
+                            )
+                        }
+                    }
+                    shouldShowTrashEmptyState(photos.size, hasMore) -> {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "Trash is empty.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(32.dp),
@@ -95,55 +127,92 @@ fun TrashScreen(
                         }
                     }
                     else -> {
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(3),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 8.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            items(photos, key = { it.id }) { photo ->
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .aspectRatio(1f)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(Color.Black.copy(alpha = 0.08f)),
-                                ) {
-                                    AsyncImage(
-                                        model = photo.uri,
-                                        contentDescription = photo.displayName,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize(),
-                                    )
-                                    Row(
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(3),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                items(photos, key = { it.id }) { photo ->
+                                    Box(
                                         modifier = Modifier
-                                            .align(Alignment.BottomCenter)
                                             .fillMaxWidth()
-                                            .background(Color.Black.copy(alpha = 0.45f))
-                                            .padding(horizontal = 4.dp, vertical = 2.dp),
-                                        horizontalArrangement = Arrangement.SpaceEvenly,
+                                            .aspectRatio(1f)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(Color.Black.copy(alpha = 0.08f)),
                                     ) {
-                                        FilledTonalIconButton(
-                                            onClick = { onRestore(photo) },
-                                            modifier = Modifier.size(32.dp),
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Restore,
-                                                contentDescription = "Restore",
-                                                modifier = Modifier.size(18.dp),
+                                        AsyncImage(
+                                            model = photo.uri,
+                                            contentDescription = photo.displayName,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize(),
+                                        )
+                                        photo.expiresAtMillis?.let { expiresAtMillis ->
+                                            Text(
+                                                text = "Expires " + DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(expiresAtMillis)),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color.White,
+                                                modifier = Modifier
+                                                    .align(Alignment.TopCenter)
+                                                    .fillMaxWidth()
+                                                    .background(Color.Black.copy(alpha = 0.45f))
+                                                    .padding(horizontal = 4.dp, vertical = 2.dp),
                                             )
                                         }
-                                        FilledTonalIconButton(
-                                            onClick = { onDeleteForever(photo) },
-                                            modifier = Modifier.size(32.dp),
+                                        Row(
+                                            modifier = Modifier
+                                                .align(Alignment.BottomCenter)
+                                                .fillMaxWidth()
+                                                .background(Color.Black.copy(alpha = 0.45f))
+                                                .padding(horizontal = 4.dp, vertical = 2.dp),
+                                            horizontalArrangement = Arrangement.SpaceEvenly,
                                         ) {
-                                            Icon(
-                                                imageVector = Icons.Default.DeleteForever,
-                                                contentDescription = "Delete forever",
+                                            FilledTonalIconButton(
+                                                onClick = { onRestore(photo) },
+                                                modifier = Modifier.size(32.dp),
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Restore,
+                                                    contentDescription = "Restore",
+                                                    modifier = Modifier.size(18.dp),
+                                                )
+                                            }
+                                            FilledTonalIconButton(
+                                                onClick = { onDeleteForever(photo) },
+                                                modifier = Modifier.size(32.dp),
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.DeleteForever,
+                                                    contentDescription = "Delete forever",
+                                                    modifier = Modifier.size(18.dp),
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if (hasMore) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(8.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                ) {
+                                    TextButton(
+                                        onClick = onLoadMore,
+                                        enabled = !isLoadingMore,
+                                    ) {
+                                        if (isLoadingMore) {
+                                            CircularProgressIndicator(
                                                 modifier = Modifier.size(18.dp),
+                                                strokeWidth = 2.dp,
                                             )
+                                        } else {
+                                            Text("Load more")
                                         }
                                     }
                                 }

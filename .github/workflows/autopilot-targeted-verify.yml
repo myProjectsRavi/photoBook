@@ -1,0 +1,362 @@
+name: Autopilot Targeted Emulator Verification
+# Exact-head review candidate: SDK provisioning retry hardened.
+# S05 navigation evidence retrigger after instrumentation-harness fix.
+
+on:
+  push:
+    branches:
+      - "autopilot/**"
+    paths:
+      - "app/src/**"
+      - "app/build.gradle.kts"
+      - "gradle/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "tools/benchmark/**"
+      - ".github/workflows/autopilot-targeted-verify.yml"
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact 40-character commit SHA to verify
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: autopilot-targeted-${{ github.ref }}-${{ inputs.source_sha || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  api35-offline:
+    name: exact-ref-api35-offline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+
+    steps:
+      - name: Validate requested source SHA
+        id: source
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "source_sha must be an exact 40-character lowercase Git SHA" >&2
+            exit 2
+          fi
+          echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout exact source commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          fetch-depth: 1
+
+      - name: Record checkout and workflow revision
+        id: revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHECKOUT_SHA="$(git rev-parse HEAD)"
+          test "$CHECKOUT_SHA" = "${{ steps.source.outputs.sha }}"
+          WORKFLOW_BLOB="$(git rev-parse HEAD:.github/workflows/autopilot-targeted-verify.yml)"
+          {
+            echo "checkout_sha=$CHECKOUT_SHA"
+            echo "workflow_blob=$WORKFLOW_BLOB"
+          } >> "$GITHUB_OUTPUT"
+          mkdir -p build/reports/autopilot-targeted
+          {
+            echo "checkout_sha=$CHECKOUT_SHA"
+            echo "workflow_blob=$WORKFLOW_BLOB"
+            echo "workflow_ref=$GITHUB_WORKFLOW_REF"
+          } > build/reports/autopilot-targeted/revision.txt
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Run host verification and deterministic fixture generation
+        run: bash tools/benchmark/run_phase0_local.sh --host-only
+
+      - name: Build target and instrumentation APKs
+        run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest -Pphotobook.compatibilityX86=true --stacktrace
+
+      - name: Inspect merged manifest and APK package permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          AAPT="$(find "$SDK_ROOT/build-tools" -maxdepth 2 -type f -name aapt -print | sort -V | tail -n 1)"
+          test -x "$AAPT"
+          mkdir -p build/reports/autopilot-targeted
+
+          MERGED_MANIFEST="$(find app/build/intermediates/merged_manifest/debug -type f -name AndroidManifest.xml -print | head -n 1)"
+          test -n "$MERGED_MANIFEST"
+          test -f "$MERGED_MANIFEST"
+          cp "$MERGED_MANIFEST" build/reports/autopilot-targeted/merged-debug-manifest.xml
+          if grep -Fq 'android.permission.INTERNET' "$MERGED_MANIFEST"; then
+            echo "Debug merged manifest requests android.permission.INTERNET" >&2
+            exit 1
+          fi
+
+          mapfile -t APKS < <(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' -print | sort)
+          if [[ "${#APKS[@]}" -eq 0 ]]; then
+            echo "No debug APKs were generated" >&2
+            exit 1
+          fi
+          : > build/reports/autopilot-targeted/apk-permissions.txt
+          for apk in "${APKS[@]}"; do
+            echo "apk=$apk" | tee -a build/reports/autopilot-targeted/apk-permissions.txt
+            "$AAPT" dump permissions "$apk" | tee -a build/reports/autopilot-targeted/apk-permissions.txt
+            if "$AAPT" dump permissions "$apk" | grep -Fq 'android.permission.INTERNET'; then
+              echo "PhotoBook APK requests android.permission.INTERNET: $apk" >&2
+              exit 1
+            fi
+          done
+
+      - name: Install emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+
+      - name: Provision Android 15 emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n 1)"
+          AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager 2>/dev/null | sort | tail -n 1)"
+          ADB="$SDK_ROOT/platform-tools/adb"
+          EMULATOR="$SDK_ROOT/emulator/emulator"
+          SYSTEM_IMAGE="system-images;android-35;google_apis;x86_64"
+          AVD_NAME="photobook-autopilot-api35"
+
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+
+          test -x "$SDKMANAGER"
+          test -x "$AVDMANAGER"
+          test -x "$ADB"
+          sudo rm -rf "$SDK_ROOT/ndk" "$SDK_ROOT/cmake"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          install_emulator_packages() {
+            "$SDKMANAGER" --channel=0 "emulator" "$SYSTEM_IMAGE"
+          }
+          if ! install_emulator_packages; then
+            echo "Initial Android SDK package install failed; clearing partial archives and retrying once." >&2
+            rm -rf "$SDK_ROOT/.temp" "$HOME/.android/cache" "$ANDROID_USER_HOME/cache"
+            rm -rf "$SDK_ROOT/emulator" "$SDK_ROOT/system-images/android-35/google_apis/x86_64"
+            sleep 5
+            install_emulator_packages
+          fi
+          test -x "$EMULATOR"
+
+          echo "no" | "$AVDMANAGER" create avd             --force             --name "$AVD_NAME"             --package "$SYSTEM_IMAGE"             --device "pixel_2"             --path "$ANDROID_AVD_HOME/$AVD_NAME.avd"
+
+          test -f "$ANDROID_AVD_HOME/$AVD_NAME.ini"
+          test -d "$ANDROID_AVD_HOME/$AVD_NAME.avd"
+          "$EMULATOR" -list-avds | tee "$RUNNER_TEMP/autopilot-avd-list.txt"
+          grep -Fxq "$AVD_NAME" "$RUNNER_TEMP/autopilot-avd-list.txt"
+
+          if [[ ! -e /dev/kvm ]]; then
+            echo "GitHub runner has no /dev/kvm; refusing software-emulated evidence." >&2
+            exit 1
+          fi
+          sudo chmod 666 /dev/kvm
+          "$EMULATOR" -accel-check
+
+          nohup "$EMULATOR"             -avd "$AVD_NAME"             -no-window             -no-audio             -no-boot-anim             -no-snapshot             -no-metrics             -gpu swiftshader_indirect             -memory 2560             -cores 2             > "$RUNNER_TEMP/autopilot-emulator.log" 2>&1 &
+          EMULATOR_PID=$!
+
+          ready=false
+          for attempt in $(seq 1 120); do
+            if "$ADB" get-state 2>/dev/null | grep -q '^device$'; then
+              ready=true
+              break
+            fi
+            if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then
+              cat "$RUNNER_TEMP/autopilot-emulator.log" || true
+              exit 1
+            fi
+            sleep 2
+          done
+          [[ "$ready" == "true" ]] || {
+            cat "$RUNNER_TEMP/autopilot-emulator.log" || true
+            exit 1
+          }
+
+          booted=false
+          for attempt in $(seq 1 120); do
+            if [[ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
+              booted=true
+              break
+            fi
+            sleep 2
+          done
+          [[ "$booted" == "true" ]] || {
+            cat "$RUNNER_TEMP/autopilot-emulator.log" || true
+            exit 1
+          }
+
+          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          "$ADB" shell settings put global window_animation_scale 0
+          "$ADB" shell settings put global transition_animation_scale 0
+          "$ADB" shell settings put global animator_duration_scale 0
+          "$ADB" shell input keyevent 82 || true
+
+      - name: Cut emulator network
+        shell: bash
+        run: |
+          set -euo pipefail
+          adb shell svc wifi disable || true
+          adb shell svc data disable || true
+          adb shell settings put global airplane_mode_on 1
+          adb shell am broadcast -a android.intent.action.AIRPLANE_MODE --ez state true >/dev/null 2>&1 || true
+          adb logcat -c
+
+      - name: Verify emulator isolation and environment
+        id: emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/reports/autopilot-targeted
+          API="$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
+          ABI="$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
+          RAM_KB="$(adb shell cat /proc/meminfo | tr -d '\r' | awk '/MemTotal/ {print $2; exit}')"
+          AIRPLANE="$(adb shell settings get global airplane_mode_on | tr -d '\r')"
+          [[ "$API" == "35" ]]
+          [[ "$AIRPLANE" == "1" ]]
+          test -n "$ABI"
+          test -n "$RAM_KB"
+          EXPECTED_RAM_KB=$((2560 * 1024))
+          MIN_RAM_KB=$((EXPECTED_RAM_KB * 80 / 100))
+          MAX_RAM_KB=$((EXPECTED_RAM_KB * 110 / 100))
+          if (( RAM_KB < MIN_RAM_KB || RAM_KB > MAX_RAM_KB )); then
+            echo "API35 correctness emulator RAM does not match its declared 2560 MB profile: ${RAM_KB} kB" >&2
+            exit 1
+          fi
+          {
+            echo "api=$API"
+            echo "abi=$ABI"
+            echo "ram_kb=$RAM_KB"
+            echo "airplane_mode_on=$AIRPLANE"
+          } | tee build/reports/autopilot-targeted/emulator-environment.txt
+          {
+            echo "api=$API"
+            echo "abi=$ABI"
+            echo "ram_kb=$RAM_KB"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run targeted correctness instrumentation with all usable network cut
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This S02 route is correctness/privacy evidence, not ARM performance evidence.
+          # Performance-only instrumentation remains in dedicated certification gates.
+          TARGET_CLASSES="com.photobook.app.data.source.MediaStoreScannerFailureInstrumentedTest,com.photobook.app.feature.metadata.ExifMetadataServiceInstrumentedTest,com.photobook.app.feature.phototextsearch.MediaStorePhotoTextLayoutSourceInstrumentedTest,com.photobook.app.ml.LocalSemanticImageLabelerInstrumentedTest,com.photobook.app.ml.LocalOcrEngineInstrumentedTest,com.photobook.app.util.BitmapOrientationInstrumentedTest,com.photobook.app.verification.ArchiveAccessBoundaryInstrumentedTest,com.photobook.app.verification.IndexPersistenceInstrumentedTest,com.photobook.app.verification.OfflineAndDatabaseInvariantTest,com.photobook.app.verification.RoomMigrationInfrastructureTest,com.photobook.app.verification.HistoricalRoomMigrationInstrumentedTest,com.photobook.app.feature.editor.EditorOutputPublisherInstrumentedTest,com.photobook.app.feature.editor.PhotoEditServiceInstrumentedTest,com.photobook.app.ui.component.PhotoThumbnailAccessibilityInstrumentedTest,com.photobook.app.ui.screen.ArchiveTileAccessibilityInstrumentedTest,com.photobook.app.ui.screen.MainTabsAccessibilityInstrumentedTest,com.photobook.app.verification.MainNavigationInstrumentedTest,com.photobook.app.verification.SearchPagingCancellationInstrumentedTest,com.photobook.app.feature.pdf.PdfExportServiceInstrumentedTest,com.photobook.app.feature.vault.VaultOperationJournalInstrumentedTest,com.photobook.app.feature.notes.PhotoNoteStoreInstrumentedTest"
+
+          # Use the emulator-native x86_64 ABI for actual JNI model inference.
+          # The ARM-only release AAB remains independently enforced by Phase-0.
+          test "$(adb shell getprop ro.product.cpu.abi | tr -d '\r')" = "x86_64"
+          mapfile -t APP_APKS < <(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*x86_64*.apk' -print | sort)
+          if [[ "${#APP_APKS[@]}" -ne 1 ]]; then
+            echo "Expected exactly one native x86_64 compatibility APK, found ${#APP_APKS[@]}" >&2
+            exit 1
+          fi
+          TEST_APK="$(find app/build/outputs/apk/androidTest/debug -type f -name '*.apk' -print | head -n 1)"
+          test -n "$TEST_APK"
+          test -f "$TEST_APK"
+          adb install -r "${APP_APKS[0]}" >/dev/null
+          adb install -r "$TEST_APK" >/dev/null
+
+          adb shell dumpsys package com.photobook.app > build/reports/autopilot-targeted/installed-package.txt
+          if sed -n '/requested permissions:/,/install permissions:/p' build/reports/autopilot-targeted/installed-package.txt | grep -Fq 'android.permission.INTERNET'; then
+            echo "Installed PhotoBook package requests android.permission.INTERNET" >&2
+            exit 1
+          fi
+
+          INSTRUMENTATION="$(adb shell pm list instrumentation | tr -d '\r' | grep '(target=com.photobook.app)' | head -n 1 | sed -E 's/^instrumentation:([^ ]+).*/\1/')"
+          test -n "$INSTRUMENTATION"
+
+          uid="$(id -u)"
+          sudo iptables -I OUTPUT 1 -o lo -j ACCEPT
+          sudo iptables -I OUTPUT 2 -m owner --uid-owner "$uid" -j REJECT
+          cleanup() {
+            sudo iptables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null || true
+            sudo iptables -D OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          if curl -fsS --connect-timeout 2 --max-time 3 https://www.google.com >/dev/null 2>&1; then
+            echo "Hosted runner outbound network unexpectedly reachable during offline instrumentation" >&2
+            exit 1
+          fi
+          if adb shell 'command -v ping >/dev/null 2>&1'; then
+            if adb shell ping -c 1 -W 1 8.8.8.8 >/dev/null 2>&1; then
+              echo "Emulator outbound network unexpectedly reachable" >&2
+              exit 1
+            fi
+          fi
+          echo "offline_network_gate=PASS"
+
+          set +e
+          adb shell am instrument -w -r -e class "$TARGET_CLASSES" "$INSTRUMENTATION" | tee build/reports/autopilot-targeted/instrumentation.txt
+          instrument_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$instrument_status" -ne 0 ]]; then
+            echo "Instrumentation command failed with exit code $instrument_status" >&2
+            exit "$instrument_status"
+          fi
+          if grep -Eq 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' build/reports/autopilot-targeted/instrumentation.txt; then
+            echo "Instrumentation reported failure" >&2
+            exit 1
+          fi
+          if ! grep -Eq 'OK \([1-9][0-9]* tests?\)' build/reports/autopilot-targeted/instrumentation.txt; then
+            echo "Instrumentation did not report a non-zero completed test count" >&2
+            exit 1
+          fi
+
+      - name: Build fail-closed evidence manifest
+        if: always()
+        shell: bash
+        env:
+          CHECKOUT_SHA: ${{ steps.revision.outputs.checkout_sha }}
+          WORKFLOW_BLOB: ${{ steps.revision.outputs.workflow_blob }}
+          EMULATOR_API: ${{ steps.emulator.outputs.api }}
+          EMULATOR_ABI: ${{ steps.emulator.outputs.abi }}
+        run: |
+          set -euo pipefail
+          python3 tools/benchmark/build_ci_evidence_manifest.py             --checkout-sha "$CHECKOUT_SHA"             --workflow-revision "$WORKFLOW_BLOB"             --workflow-ref "$GITHUB_WORKFLOW_REF"             --api "$EMULATOR_API"             --abi "$EMULATOR_ABI"             --avd-ram-mb 2560             --fixture build/phase0-fixtures/manifest-303.jsonl             --instrumentation-output build/reports/autopilot-targeted/instrumentation.txt             --apk-root app/build/outputs/apk/debug             --output build/reports/autopilot-targeted/evidence-manifest.json
+
+      - name: Capture emulator diagnostics
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          mkdir -p build/reports/autopilot-targeted
+          adb devices -l > build/reports/autopilot-targeted/adb-devices.txt 2>/dev/null || true
+          adb shell getprop > build/reports/autopilot-targeted/getprop.txt 2>/dev/null || true
+          adb logcat -d > build/reports/autopilot-targeted/logcat.txt 2>/dev/null || true
+          cp "$RUNNER_TEMP/autopilot-emulator.log" build/reports/autopilot-targeted/emulator.log 2>/dev/null || true
+          cp "$RUNNER_TEMP/autopilot-avd-list.txt" build/reports/autopilot-targeted/avd-list.txt 2>/dev/null || true
+
+      - name: Upload targeted verification evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: autopilot-targeted-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            build/reports/autopilot-targeted/
+            build/phase0-fixtures/manifest-303.jsonl
+            build/phase0-fixtures/summary-303.json

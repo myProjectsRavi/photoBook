@@ -62,6 +62,23 @@ interface PhotoDao {
     )
     suspend fun reopenDerivedSemanticIntelligence(): Int
 
+    /**
+     * v3: earlier builds marked photos PROCESSED despite a broken FlatBuffers
+     * semantic union. Requeue only those stale derived ML rows; never touch
+     * user favorites, originals, OCR, private notes or vault state.
+     */
+    @Query(
+        """
+        UPDATE photos
+        SET mlTagsPayload = '[]',
+            isMlProcessed = 0,
+            mlStatus = 'PENDING',
+            isArchiveFoodCandidate = 0
+        WHERE mlStatus = 'PROCESSED'
+        """,
+    )
+    suspend fun reopenSemanticsAfterBrokenRuntime(): Int
+
     @Query(
         """
         SELECT * FROM photos
@@ -198,15 +215,13 @@ interface PhotoDao {
         """
         SELECT p.id FROM photos AS p
         INNER JOIN (
-            SELECT fileSize, width, height FROM photos
-            WHERE fileSize > 0 AND width > 0 AND height > 0
-            GROUP BY fileSize, width, height
+            SELECT fileSize FROM photos
+            WHERE fileSize > 0
+            GROUP BY fileSize
             HAVING COUNT(*) > 1
         ) AS duplicate_key
         ON p.fileSize = duplicate_key.fileSize
-            AND p.width = duplicate_key.width
-            AND p.height = duplicate_key.height
-        ORDER BY p.fileSize DESC
+        ORDER BY p.fileSize DESC, p.id DESC
         """,
     )
     suspend fun getExactDuplicateCandidateIds(): List<Long>

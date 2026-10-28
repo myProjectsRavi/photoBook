@@ -3,11 +3,9 @@
 package com.photobook.app.ui.screen
 
 import android.content.ClipData
-import android.content.ContentValues
 import android.content.Intent
-import android.os.Build
+import android.graphics.Bitmap
 import android.net.Uri
-import android.provider.MediaStore
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animate
@@ -16,6 +14,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
@@ -53,6 +52,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
@@ -61,6 +61,8 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -81,6 +83,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -91,8 +94,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
@@ -137,6 +139,10 @@ import com.photobook.app.feature.duplicates.BestShotRecommendation
 import com.photobook.app.feature.duplicates.BurstBestShotPicker
 import com.photobook.app.feature.editor.CropPreset
 import com.photobook.app.feature.editor.NormalizedCropRegion
+import com.photobook.app.feature.editor.EditorOutputPublisher
+import com.photobook.app.feature.editor.EditTransform
+import com.photobook.app.feature.editor.EditorPublicationRequest
+import com.photobook.app.feature.editor.EditorPublicationResult
 import com.photobook.app.feature.editor.PhotoEditResult
 import com.photobook.app.feature.editor.PhotoEditService
 import com.photobook.app.feature.editor.PhotoEditState
@@ -145,6 +151,8 @@ import com.photobook.app.feature.metadata.ExifDetails
 import com.photobook.app.feature.metadata.ExifDetailsResult
 import com.photobook.app.feature.metadata.ExifMetadataService
 import com.photobook.app.feature.metadata.MetadataCleanResult
+import com.photobook.app.feature.metadata.SafeShareIntentFactory
+import com.photobook.app.feature.notes.PhotoNoteStore
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -165,6 +173,9 @@ fun PhotoViewerScreen(
     onMoveToTrash: (PhotoRecord) -> Unit,
     onMoveToVault: (PhotoRecord) -> Unit,
     onShareAsPdf: (PhotoRecord) -> Unit,
+    onLoadPrivateNote: suspend (PhotoRecord) -> String,
+    onSavePrivateNote: suspend (PhotoRecord, String) -> Boolean,
+    onDeletePrivateNote: suspend (PhotoRecord) -> Boolean,
     reelsEnabled: Boolean = false,
     initialSearchRequested: Boolean = false,
     photoTextLayoutSourceOverride: PhotoTextLayoutSource? = null,
@@ -208,6 +219,9 @@ fun PhotoViewerScreen(
     val photoEditService = remember(context.applicationContext) {
         PhotoEditService(context.applicationContext)
     }
+    val editorOutputPublisher = remember(context.applicationContext) {
+        EditorOutputPublisher(context.applicationContext)
+    }
     var showCopyTextSheet by remember { mutableStateOf(false) }
     var copySheetState by remember { mutableStateOf<CopySheetState>(CopySheetState.Idle) }
     var copySheetPhotoId by remember { mutableStateOf<Long?>(null) }
@@ -221,8 +235,94 @@ fun PhotoViewerScreen(
     var showEditorSheet by remember { mutableStateOf(false) }
     var editorState by remember { mutableStateOf(PhotoEditState()) }
     var isApplyingEditorAction by remember { mutableStateOf(false) }
+    var editorSaveState by remember { mutableStateOf<EditorSaveUiState>(EditorSaveUiState.Idle) }
+    var editorActionJob by remember { mutableStateOf<Job?>(null) }
+    var editorActionToken by remember { mutableStateOf(0L) }
     var showCropSelector by remember { mutableStateOf(false) }
     var showControls by remember { mutableStateOf(true) }
+    var showMoreMenu by remember { mutableStateOf(false) }
+    var showPrivateNoteSheet by remember { mutableStateOf(false) }
+    var privateNotePhoto by remember { mutableStateOf<PhotoRecord?>(null) }
+    var privateNoteText by remember { mutableStateOf("") }
+    var isPrivateNoteBusy by remember { mutableStateOf(false) }
+
+    fun samePrivateNoteIdentity(left: PhotoRecord?, right: PhotoRecord?): Boolean {
+        return left != null &&
+            right != null &&
+            left.id == right.id &&
+            left.dateAdded == right.dateAdded
+    }
+
+    fun dismissPrivateNoteSheet() {
+        showPrivateNoteSheet = false
+        privateNotePhoto = null
+        privateNoteText = ""
+        isPrivateNoteBusy = false
+    }
+
+    fun openPrivateNote() {
+        val active = photos.getOrNull(pagerState.currentPage) ?: return
+        showMoreMenu = false
+        val requested = active
+        coroutineScope.launch {
+            val note = onLoadPrivateNote(requested).take(PhotoNoteStore.MAX_NOTE_CHARS)
+            val current = photos.getOrNull(pagerState.currentPage)
+            if (samePrivateNoteIdentity(requested, current)) {
+                privateNotePhoto = requested
+                privateNoteText = note
+                showPrivateNoteSheet = true
+            }
+        }
+    }
+
+    fun savePrivateNote() {
+        val boundPhoto = privateNotePhoto ?: return
+        if (isPrivateNoteBusy) return
+        val note = privateNoteText.take(PhotoNoteStore.MAX_NOTE_CHARS)
+        isPrivateNoteBusy = true
+        coroutineScope.launch {
+            val saved = onSavePrivateNote(boundPhoto, note)
+            if (saved && samePrivateNoteIdentity(boundPhoto, privateNotePhoto)) {
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.viewer_note_saved),
+                    Toast.LENGTH_SHORT,
+                ).show()
+                dismissPrivateNoteSheet()
+            } else {
+                isPrivateNoteBusy = false
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.viewer_note_storage_error),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+    }
+
+    fun clearPrivateNote() {
+        val boundPhoto = privateNotePhoto ?: return
+        if (isPrivateNoteBusy) return
+        isPrivateNoteBusy = true
+        coroutineScope.launch {
+            val cleared = onDeletePrivateNote(boundPhoto)
+            if (cleared && samePrivateNoteIdentity(boundPhoto, privateNotePhoto)) {
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.viewer_note_cleared),
+                    Toast.LENGTH_SHORT,
+                ).show()
+                dismissPrivateNoteSheet()
+            } else {
+                isPrivateNoteBusy = false
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.viewer_note_storage_error),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+    }
 
     fun resetViewerZoom() {
         currentPageZoom = MIN_VIEWER_ZOOM
@@ -293,6 +393,11 @@ fun PhotoViewerScreen(
     }
 
     fun openEditorSheet() {
+        editorActionJob?.cancel()
+        editorActionJob = null
+        editorActionToken += 1
+        isApplyingEditorAction = false
+        editorSaveState = EditorSaveUiState.Idle
         editorState = PhotoEditState()
         showCropSelector = false
         showEditorSheet = true
@@ -308,72 +413,116 @@ fun PhotoViewerScreen(
         context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.viewer_share)))
     }
 
-    fun saveEditedCopyToDevice(result: PhotoEditResult.Success): Boolean {
-        val resolver = context.contentResolver
-        val outputName = "PhotoBook_Edit_${System.currentTimeMillis()}.jpg"
-        val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, outputName)
-            put(MediaStore.Images.Media.MIME_TYPE, result.mimeType)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/PhotoBook")
-                put(MediaStore.Images.Media.IS_PENDING, 1)
-            }
-        }
-
-        val destUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
-        val copied = runCatching {
-            resolver.openInputStream(result.uri)?.use { input ->
-                resolver.openOutputStream(destUri)?.use { output ->
-                    input.copyTo(output)
-                    true
-                } ?: false
-            } ?: false
-        }.getOrDefault(false)
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val doneValues = ContentValues().apply {
-                put(MediaStore.Images.Media.IS_PENDING, 0)
-            }
-            resolver.update(destUri, doneValues, null, null)
-        }
-        if (!copied) {
-            runCatching { resolver.delete(destUri, null, null) }
-        }
-        return copied
-    }
-
     fun runEditorAction(shareAfterRender: Boolean) {
         if (isApplyingEditorAction) return
-        val active = photos.getOrNull(pagerState.currentPage) ?: return
+        val activeSnapshot = photos.getOrNull(pagerState.currentPage) ?: return
+        val editSnapshot = editorState
+        val sourceRevision = listOf(
+            activeSnapshot.id,
+            activeSnapshot.dateAdded,
+            activeSnapshot.fileSize,
+            activeSnapshot.width,
+            activeSnapshot.height,
+        ).joinToString(":")
+        val actionToken = editorActionToken + 1
+        editorActionToken = actionToken
         isApplyingEditorAction = true
-        coroutineScope.launch {
-            when (val result = photoEditService.renderEditedCopy(active, editorState)) {
-                is PhotoEditResult.Success -> {
-                    if (shareAfterRender) {
-                        shareEditedCopy(result)
-                    } else {
-                        val saved = saveEditedCopyToDevice(result)
-                        Toast.makeText(
-                            context,
-                            if (saved) {
-                                context.getString(R.string.viewer_editor_save_success)
-                            } else {
-                                context.getString(R.string.viewer_editor_save_error)
-                            },
-                            Toast.LENGTH_SHORT,
-                        ).show()
+        if (!shareAfterRender) {
+            editorSaveState = EditorSaveUiState.Idle
+        }
+
+        editorActionJob = coroutineScope.launch {
+            try {
+                when (val result = photoEditService.renderEditedCopy(activeSnapshot, editSnapshot)) {
+                    is PhotoEditResult.Success -> {
+                        if (shareAfterRender) {
+                            if (
+                                actionToken == editorActionToken &&
+                                showEditorSheet &&
+                                photos.getOrNull(pagerState.currentPage)?.id == activeSnapshot.id
+                            ) {
+                                shareEditedCopy(result)
+                            }
+                        } else {
+                            val publication = editorOutputPublisher.publish(
+                                EditorPublicationRequest(
+                                    sourcePhotoId = activeSnapshot.id,
+                                    sourceRevision = sourceRevision,
+                                    editState = editSnapshot,
+                                    renderedUriString = result.uri.toString(),
+                                    mimeType = result.mimeType,
+                                ),
+                            )
+                            if (
+                                actionToken == editorActionToken &&
+                                showEditorSheet &&
+                                photos.getOrNull(pagerState.currentPage)?.id == activeSnapshot.id
+                            ) {
+                                editorSaveState = when (publication) {
+                                    is EditorPublicationResult.Success -> {
+                                        EditorSaveUiState.Saved(publication.uriString)
+                                    }
+
+                                    EditorPublicationResult.Cancelled -> {
+                                        EditorSaveUiState.Failed(R.string.viewer_editor_save_cancelled)
+                                    }
+
+                                    EditorPublicationResult.InsufficientStorage -> {
+                                        EditorSaveUiState.Failed(R.string.viewer_editor_save_storage_error)
+                                    }
+
+                                    EditorPublicationResult.AccessDenied -> {
+                                        EditorSaveUiState.Failed(R.string.viewer_editor_save_access_error)
+                                    }
+
+                                    EditorPublicationResult.Failed -> {
+                                        EditorSaveUiState.Failed(R.string.viewer_editor_save_error)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    PhotoEditResult.Error -> {
+                        if (
+                            actionToken == editorActionToken &&
+                            showEditorSheet &&
+                            photos.getOrNull(pagerState.currentPage)?.id == activeSnapshot.id
+                        ) {
+                            editorSaveState = EditorSaveUiState.Failed(
+                                R.string.viewer_editor_render_error,
+                            )
+                        }
                     }
                 }
-
-                PhotoEditResult.Error -> {
-                    Toast.makeText(
-                        context,
-                        context.getString(R.string.viewer_editor_render_error),
-                        Toast.LENGTH_SHORT,
-                    ).show()
+            } finally {
+                if (actionToken == editorActionToken) {
+                    isApplyingEditorAction = false
+                    editorActionJob = null
                 }
             }
-            isApplyingEditorAction = false
+        }
+    }
+
+    fun openSavedEditedCopy(uriString: String) {
+        val uri = Uri.parse(uriString)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "image/jpeg")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        runCatching {
+            context.startActivity(
+                Intent.createChooser(
+                    intent,
+                    context.getString(R.string.viewer_editor_open_saved),
+                ),
+            )
+        }.onFailure {
+            Toast.makeText(
+                context,
+                context.getString(R.string.viewer_editor_open_error),
+                Toast.LENGTH_SHORT,
+            ).show()
         }
     }
 
@@ -437,13 +586,8 @@ fun PhotoViewerScreen(
         coroutineScope.launch {
             when (val result = exifMetadataService.createSafeShareCopies(listOf(active))) {
                 is com.photobook.app.feature.metadata.SafeShareResult.Success -> {
-                    val item = result.items.firstOrNull() ?: return@launch
-                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                        type = item.mimeType.ifBlank { "image/*" }
-                        putExtra(Intent.EXTRA_STREAM, item.uri)
-                        clipData = ClipData.newUri(context.contentResolver, item.label, item.uri)
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
+                    val shareIntent = SafeShareIntentFactory.build(context, result.items)
+                        ?: return@launch
                     runCatching {
                         context.startActivity(
                             Intent.createChooser(shareIntent, context.getString(R.string.viewer_share)),
@@ -482,6 +626,10 @@ fun PhotoViewerScreen(
         if (exifSheetPhotoId != null && exifSheetPhotoId != activeId) {
             dismissExifSheet()
         }
+        if (privateNotePhoto != null && !samePrivateNoteIdentity(privateNotePhoto, active)) {
+            dismissPrivateNoteSheet()
+        }
+        showMoreMenu = false
         if (showEditorSheet) {
             showEditorSheet = false
             editorState = PhotoEditState()
@@ -597,7 +745,10 @@ fun PhotoViewerScreen(
                                 state = pagerState,
                                 key = { page -> photos.getOrNull(page)?.id ?: page.toLong() },
                                 userScrollEnabled = pagerScrollEnabled,
-                                modifier = Modifier.fillMaxSize(),
+                                // Expose the actual vertical pager to fail-closed UI/performance
+                                // verification. The enclosing viewport exports test tags as IDs.
+                                modifier = Modifier.fillMaxSize()
+                                    .testTag("photobook_reels_vertical_pager"),
                             ) { page ->
                                 photos.getOrNull(page)?.let { photo ->
                                     PhotoPage(
@@ -924,6 +1075,41 @@ fun PhotoViewerScreen(
                                                     )
                                                 }
                                             }
+                                            Box {
+                                                Surface(
+                                                    color = Color(0x22FFFFFF),
+                                                    shape = RoundedCornerShape(28.dp),
+                                                ) {
+                                                    IconButton(
+                                                        modifier = Modifier.size(42.dp),
+                                                        onClick = { showMoreMenu = true },
+                                                    ) {
+                                                        Icon(
+                                                            Icons.Default.MoreVert,
+                                                            contentDescription = stringResource(
+                                                                R.string.more_actions,
+                                                            ),
+                                                            tint = Color.White,
+                                                            modifier = Modifier.size(22.dp),
+                                                        )
+                                                    }
+                                                }
+                                                DropdownMenu(
+                                                    expanded = showMoreMenu,
+                                                    onDismissRequest = { showMoreMenu = false },
+                                                ) {
+                                                    DropdownMenuItem(
+                                                        text = {
+                                                            Text(
+                                                                text = stringResource(
+                                                                    R.string.viewer_private_note,
+                                                                ),
+                                                            )
+                                                        },
+                                                        onClick = ::openPrivateNote,
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
 
@@ -996,37 +1182,79 @@ fun PhotoViewerScreen(
                 onCleanCopy = ::cleanMetadataCopy,
             )
         }
+        if (showPrivateNoteSheet && privateNotePhoto != null) {
+            PrivateNoteBottomSheet(
+                noteText = privateNoteText,
+                maxChars = PhotoNoteStore.MAX_NOTE_CHARS,
+                isBusy = isPrivateNoteBusy,
+                onDismiss = ::dismissPrivateNoteSheet,
+                onTextChange = { next ->
+                    privateNoteText = next.take(PhotoNoteStore.MAX_NOTE_CHARS)
+                },
+                onSave = ::savePrivateNote,
+                onClear = ::clearPrivateNote,
+            )
+        }
 
         if (showEditorSheet && activePhoto != null) {
             QuickEditorBottomSheet(
                 photo = activePhoto,
+                photoEditService = photoEditService,
                 state = editorState,
                 isApplying = isApplyingEditorAction,
+                saveState = editorSaveState,
                 onDismiss = {
+                    editorActionJob?.cancel()
+                    editorActionJob = null
+                    editorActionToken += 1
+                    isApplyingEditorAction = false
                     showEditorSheet = false
                     showCropSelector = false
+                    editorSaveState = EditorSaveUiState.Idle
                     editorState = PhotoEditState()
                 },
-                onStateChange = { next -> editorState = next },
+                onStateChange = { next ->
+                    if (!isApplyingEditorAction) {
+                        editorSaveState = EditorSaveUiState.Idle
+                        editorState = next
+                    }
+                },
                 onRotate = {
-                    editorState = editorState.copy(rotationQuarterTurns = (editorState.rotationQuarterTurns + 1) % 4)
+                    if (!isApplyingEditorAction) {
+                        editorSaveState = EditorSaveUiState.Idle
+                        val previousTurns = ((editorState.rotationQuarterTurns % 4) + 4) % 4
+                        val nextTurns = (previousTurns + 1) % 4
+                        val sourceCrop = editorState.customCrop?.rotatedClockwise((4 - previousTurns) % 4)
+                        editorState = editorState.copy(
+                            rotationQuarterTurns = nextTurns,
+                            customCrop = sourceCrop?.rotatedClockwise(nextTurns),
+                        )
+                    }
                 },
                 onCustomCrop = {
-                    showCropSelector = true
+                    if (!isApplyingEditorAction) {
+                        showCropSelector = true
+                    }
                 },
                 onSaveCopy = { runEditorAction(shareAfterRender = false) },
                 onShareCopy = { runEditorAction(shareAfterRender = true) },
+                onRetrySave = { runEditorAction(shareAfterRender = false) },
+                onOpenSavedCopy = ::openSavedEditedCopy,
             )
         }
         if (showCropSelector && activePhoto != null) {
             CropSelectionDialog(
                 photo = activePhoto,
-                initialRegion = editorState.customCrop,
+                photoEditService = photoEditService,
+                initialRegion = editorState.customCrop?.rotatedClockwise(
+                    (4 - ((editorState.rotationQuarterTurns % 4) + 4) % 4) % 4,
+                ),
                 onDismiss = { showCropSelector = false },
                 onCropSelected = { region ->
+                    editorSaveState = EditorSaveUiState.Idle
                     editorState = editorState.copy(
                         cropPreset = CropPreset.Original,
-                        customCrop = region.normalized(),
+                        customCrop = region.normalized().rotatedClockwise(editorState.rotationQuarterTurns),
                     )
                     showCropSelector = false
                 },
@@ -1038,6 +1266,7 @@ fun PhotoViewerScreen(
 @Composable
 private fun CropSelectionDialog(
     photo: PhotoRecord,
+    photoEditService: PhotoEditService,
     initialRegion: NormalizedCropRegion?,
     onDismiss: () -> Unit,
     onCropSelected: (NormalizedCropRegion) -> Unit,
@@ -1050,6 +1279,12 @@ private fun CropSelectionDialog(
         )
     }
     var dragMode by remember { mutableStateOf(CropSelectionDragMode.None) }
+    val normalizedDimensions by produceState(
+        initialValue = photo.width.coerceAtLeast(1) to photo.height.coerceAtLeast(1),
+        key1 = photo.uriString,
+    ) {
+        value = photoEditService.normalizedSourceDimensions(photo)
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -1098,8 +1333,8 @@ private fun CropSelectionDialog(
                     val density = LocalDensity.current
                     val containerWidth = with(density) { maxWidth.toPx() }.coerceAtLeast(1f)
                     val containerHeight = with(density) { maxHeight.toPx() }.coerceAtLeast(1f)
-                    val imageWidth = photo.width.takeIf { it > 0 }?.toFloat() ?: 1f
-                    val imageHeight = photo.height.takeIf { it > 0 }?.toFloat() ?: 1f
+                    val imageWidth = normalizedDimensions.first.toFloat().coerceAtLeast(1f)
+                    val imageHeight = normalizedDimensions.second.toFloat().coerceAtLeast(1f)
                     val scale = min(containerWidth / imageWidth, containerHeight / imageHeight)
                     val displayWidth = (imageWidth * scale).coerceAtLeast(1f)
                     val displayHeight = (imageHeight * scale).coerceAtLeast(1f)
@@ -1482,22 +1717,43 @@ private fun CopyTextBottomSheet(
 @Composable
 private fun QuickEditorBottomSheet(
     photo: PhotoRecord,
+    photoEditService: PhotoEditService,
     state: PhotoEditState,
     isApplying: Boolean,
+    saveState: EditorSaveUiState,
     onDismiss: () -> Unit,
     onStateChange: (PhotoEditState) -> Unit,
     onRotate: () -> Unit,
     onCustomCrop: () -> Unit,
     onSaveCopy: () -> Unit,
     onShareCopy: () -> Unit,
+    onRetrySave: () -> Unit,
+    onOpenSavedCopy: (String) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val cropAspect = state.customCrop?.aspectRatioFor(photo.aspectRatio)
-        ?: if (state.cropPreset == CropPreset.Original) {
-            photo.aspectRatio.coerceIn(0.45f, 2.2f)
-        } else {
-            state.cropPreset.ratio
+    val editTransform = remember(state) { EditTransform.from(state) }
+    var previewBitmap by remember(photo.id) { mutableStateOf<Bitmap?>(null) }
+    var isPreviewRendering by remember(photo.id) { mutableStateOf(true) }
+
+    LaunchedEffect(photo.id, photo.uriString, state) {
+        previewBitmap = null
+        isPreviewRendering = true
+        val rendered = photoEditService.renderPreviewBitmap(photo, state)
+        previewBitmap = rendered
+        isPreviewRendering = false
+    }
+    DisposableEffect(previewBitmap) {
+        val ownedBitmap = previewBitmap
+        onDispose {
+            if (ownedBitmap != null && !ownedBitmap.isRecycled) {
+                ownedBitmap.recycle()
+            }
         }
+    }
+
+    val cropAspect = previewBitmap?.let { bitmap ->
+        bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1).toFloat()
+    } ?: editTransform.previewAspectRatio(photo.aspectRatio)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1527,27 +1783,22 @@ private fun QuickEditorBottomSheet(
                     .background(Color.Black, RoundedCornerShape(14.dp)),
                 contentAlignment = Alignment.Center,
             ) {
-                val previewColorFilter = remember(state.exposure, state.contrast, state.filter) {
-                    ColorFilter.colorMatrix(
-                        buildEditorPreviewMatrix(
-                            exposure = state.exposure,
-                            contrast = state.contrast,
-                            filter = state.filter,
-                        )
+                val rendered = previewBitmap
+                if (rendered != null && !rendered.isRecycled) {
+                    Image(
+                        bitmap = rendered.asImageBitmap(),
+                        contentDescription = photo.fileName,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(10.dp),
+                    )
+                } else if (isPreviewRendering) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(28.dp),
+                        strokeWidth = 2.dp,
                     )
                 }
-                AsyncImage(
-                    model = Uri.parse(photo.uriString),
-                    contentDescription = photo.fileName,
-                    contentScale = ContentScale.Crop,
-                    colorFilter = previewColorFilter,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer {
-                            rotationZ = (state.rotationQuarterTurns % 4) * 90f
-                        }
-                        .padding(10.dp),
-                )
             }
 
             Row(
@@ -1667,6 +1918,66 @@ private fun QuickEditorBottomSheet(
                     Text(text = stringResource(R.string.viewer_editor_share_copy))
                 }
             }
+
+            when (val status = saveState) {
+                EditorSaveUiState.Idle -> Unit
+
+                is EditorSaveUiState.Saved -> {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        tonalElevation = 1.dp,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = stringResource(R.string.viewer_editor_save_success),
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(
+                                onClick = { onOpenSavedCopy(status.uriString) },
+                                enabled = !isApplying,
+                            ) {
+                                Text(text = stringResource(R.string.viewer_editor_open_saved))
+                            }
+                        }
+                    }
+                }
+
+                is EditorSaveUiState.Failed -> {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        tonalElevation = 1.dp,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = stringResource(status.messageRes),
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(
+                                onClick = onRetrySave,
+                                enabled = !isApplying,
+                            ) {
+                                Text(text = stringResource(R.string.viewer_editor_retry_save))
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -1676,6 +1987,7 @@ private fun QuickEditorBottomSheet(
 private fun PrivateNoteBottomSheet(
     noteText: String,
     maxChars: Int,
+    isBusy: Boolean,
     onDismiss: () -> Unit,
     onTextChange: (String) -> Unit,
     onSave: () -> Unit,
@@ -1725,12 +2037,14 @@ private fun PrivateNoteBottomSheet(
             ) {
                 TextButton(
                     onClick = onClear,
+                    enabled = !isBusy,
                     modifier = Modifier.weight(1f),
                 ) {
                     Text(text = stringResource(R.string.viewer_note_clear))
                 }
                 Button(
                     onClick = onSave,
+                    enabled = !isBusy,
                     modifier = Modifier.weight(1f),
                 ) {
                     Text(text = stringResource(R.string.viewer_note_save))
@@ -2357,85 +2671,8 @@ private const val MAX_VIEWER_ZOOM = 8f
 private const val DOUBLE_TAP_VIEWER_ZOOM = 2.8f
 private const val VIEWER_ZOOM_EPSILON = 0.01f
 
-/**
- * Builds a Compose ColorMatrix mirroring [PhotoEditService]'s contrast → exposure → filter pipeline
- * so the live preview matches the rendered result.
- */
-private fun buildEditorPreviewMatrix(
-    exposure: Float,
-    contrast: Float,
-    filter: com.photobook.app.feature.editor.QuickFilter,
-): ColorMatrix {
-    val c = contrast.coerceIn(0.6f, 1.6f)
-    val translate = 128f * (1f - c)
-    val contrastValues = floatArrayOf(
-        c, 0f, 0f, 0f, translate,
-        0f, c, 0f, 0f, translate,
-        0f, 0f, c, 0f, translate,
-        0f, 0f, 0f, 1f, 0f,
-    )
-
-    val offset = exposure.coerceIn(-1f, 1f) * 62f
-    val exposureValues = floatArrayOf(
-        1f, 0f, 0f, 0f, offset,
-        0f, 1f, 0f, 0f, offset,
-        0f, 0f, 1f, 0f, offset,
-        0f, 0f, 0f, 1f, 0f,
-    )
-
-    val filterValues = when (filter) {
-        com.photobook.app.feature.editor.QuickFilter.Original -> floatArrayOf(
-            1f, 0f, 0f, 0f, 0f,
-            0f, 1f, 0f, 0f, 0f,
-            0f, 0f, 1f, 0f, 0f,
-            0f, 0f, 0f, 1f, 0f,
-        )
-        com.photobook.app.feature.editor.QuickFilter.Mono -> floatArrayOf(
-            0.299f, 0.587f, 0.114f, 0f, 0f,
-            0.299f, 0.587f, 0.114f, 0f, 0f,
-            0.299f, 0.587f, 0.114f, 0f, 0f,
-            0f, 0f, 0f, 1f, 0f,
-        )
-        com.photobook.app.feature.editor.QuickFilter.Vivid -> floatArrayOf(
-            1.343f, -0.168f, -0.033f, 0f, 6f,
-            -0.078f, 1.434f, -0.114f, 0f, 6f,
-            -0.078f, -0.168f, 1.388f, 0f, 6f,
-            0f, 0f, 0f, 1f, 0f,
-        )
-        com.photobook.app.feature.editor.QuickFilter.Warm -> floatArrayOf(
-            1.08f, 0f, 0f, 0f, 8f,
-            0f, 1.0f, 0f, 0f, 2f,
-            0f, 0f, 0.92f, 0f, -6f,
-            0f, 0f, 0f, 1f, 0f,
-        )
-        com.photobook.app.feature.editor.QuickFilter.Cool -> floatArrayOf(
-            0.94f, 0f, 0f, 0f, -4f,
-            0f, 1.0f, 0f, 0f, 0f,
-            0f, 0f, 1.08f, 0f, 8f,
-            0f, 0f, 0f, 1f, 0f,
-        )
-    }
-
-    return ColorMatrix(multiplyColorMatrices(multiplyColorMatrices(contrastValues, exposureValues), filterValues))
-}
-
-/** Compose a × b for 4×5 ColorMatrix arrays (rows of mat-A applied after mat-B logically). */
-private fun multiplyColorMatrices(a: FloatArray, b: FloatArray): FloatArray {
-    val out = FloatArray(20)
-    for (row in 0..3) {
-        for (col in 0..3) {
-            var sum = 0f
-            for (k in 0..3) {
-                sum += a[row * 5 + k] * b[k * 5 + col]
-            }
-            out[row * 5 + col] = sum
-        }
-        // Translation column (index 4) combines the row of A applied to B's translation, plus A's own translation.
-        var translation = a[row * 5 + 4]
-        for (k in 0..3) {
-            translation += a[row * 5 + k] * b[k * 5 + 4]
-        }
-        out[row * 5 + 4] = translation
-    }
-    return out
+private sealed interface EditorSaveUiState {
+    data object Idle : EditorSaveUiState
+    data class Saved(val uriString: String) : EditorSaveUiState
+    data class Failed(val messageRes: Int) : EditorSaveUiState
 }

@@ -11,6 +11,8 @@ import com.photobook.app.data.db.toPhotoRecord
 import com.photobook.app.data.model.PhotoRecord
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 data class ArchiveCandidate(
@@ -136,6 +138,7 @@ class ArchiveService @Inject constructor(
         var foodCursor = ArchiveKeysetCursor()
 
         while (enabledCategories.isNotEmpty()) {
+            currentCoroutineContext().ensureActive()
             val paymentPage = if (
                 ArchiveCategory.Payments in enabledCategories && !paymentCursor.exhausted
             ) {

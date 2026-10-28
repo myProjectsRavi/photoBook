@@ -22,10 +22,13 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -84,6 +87,10 @@ data class ExifDetails(
     val latitude: Double?,
     val longitude: Double?,
 )
+
+object SafeSharePolicy {
+    const val MAX_ITEMS = 50
+}
 
 class ExifMetadataService @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -253,7 +260,10 @@ class ExifMetadataService @Inject constructor(
                 )
             }.fold(
                 onSuccess = { summary -> SharePrivacyScanResult.Success(summary) },
-                onFailure = { error -> SharePrivacyScanResult.Error(error) },
+                onFailure = { error ->
+                    if (error is CancellationException) throw error
+                    SharePrivacyScanResult.Error(error)
+                },
             )
         }
     }
@@ -263,6 +273,13 @@ class ExifMetadataService @Inject constructor(
         options: SafeShareOptions = SafeShareOptions(),
     ): SafeShareResult {
         if (photos.isEmpty()) return SafeShareResult.Error()
+        if (photos.size > SafeSharePolicy.MAX_ITEMS) {
+            return SafeShareResult.Error(
+                IllegalArgumentException(
+                    "Safe Share supports at most ${SafeSharePolicy.MAX_ITEMS} photos per request",
+                ),
+            )
+        }
         return withContext(Dispatchers.IO) {
             val safeShareDir = File(context.cacheDir, SAFE_SHARE_CACHE_DIR)
             if (!safeShareDir.exists() && !safeShareDir.mkdirs()) {
@@ -274,59 +291,68 @@ class ExifMetadataService @Inject constructor(
 
             val createdFiles = mutableListOf<File>()
             val prepared = mutableListOf<SafeShareItem>()
-            for (photo in photos) {
-                var failedFile: File? = null
-                val resultPair = runCatching {
-                    val sourceUri = Uri.parse(photo.uriString)
-                    val mimeType = normalizeImageMime(photo.mimeType)
-                    val outputFile = File(
-                        safeShareDir,
-                        safeShareFileName(photo.fileName, extensionForMime(mimeType)),
-                    )
-                    failedFile = outputFile
+            try {
+                for (photo in photos) {
+                    currentCoroutineContext().ensureActive()
+                    var outputFile: File? = null
+                    try {
+                        val sourceUri = Uri.parse(photo.uriString)
+                        val mimeType = normalizeImageMime(photo.mimeType)
+                        outputFile = File(
+                            safeShareDir,
+                            safeShareFileName(photo.fileName, extensionForMime(mimeType)),
+                        )
 
-                    check(copyImageBytesToFile(sourceUri, outputFile)) {
-                        "Failed to copy image to Safe Share cache"
-                    }
-                    if (options.blurFaces) {
-                        check(
-                            blurFacesInSafeShareCopy(
-                                sourceUri = sourceUri,
-                                targetFile = outputFile,
-                                mimeType = mimeType,
-                            ) && verifyNoDetectableFaces(outputFile),
-                        ) { "Unable to prove face blurring" }
-                    }
-                    if (options.stripMetadata) {
-                        check(sanitizeMetadata(outputFile, mimeType)) {
-                            "Unable to prove sensitive metadata removal"
+                        check(copyImageBytesToFile(sourceUri, outputFile)) {
+                            "Failed to copy image to Safe Share cache"
                         }
-                    }
-                    check(verifyReadableImage(outputFile)) {
-                        "Safe Share output is not a readable image"
-                    }
+                        currentCoroutineContext().ensureActive()
 
-                    val shareUri = FileProvider.getUriForFile(
-                        context,
-                        "${context.packageName}.fileprovider",
-                        outputFile,
-                    )
-                    SafeShareItem(
-                        uri = shareUri,
-                        mimeType = mimeType,
-                        label = photo.fileName.ifBlank { outputFile.name },
-                    ) to outputFile
-                }
+                        if (options.blurFaces) {
+                            check(
+                                blurFacesInSafeShareCopy(
+                                    sourceUri = sourceUri,
+                                    targetFile = outputFile,
+                                    mimeType = mimeType,
+                                ) && verifyNoDetectableFaces(outputFile),
+                            ) { "Unable to prove face blurring" }
+                            currentCoroutineContext().ensureActive()
+                        }
+                        if (options.stripMetadata) {
+                            check(sanitizeMetadata(outputFile, mimeType)) {
+                                "Unable to prove sensitive metadata removal"
+                            }
+                            currentCoroutineContext().ensureActive()
+                        }
+                        check(verifyReadableImage(outputFile)) {
+                            "Safe Share output is not a readable image"
+                        }
 
-                val pair = resultPair.getOrElse { error ->
-                    failedFile?.let { file -> runCatching { file.delete() } }
-                    cleanupSafeShareFiles(createdFiles)
-                    return@withContext SafeShareResult.Error(error)
+                        val shareUri = FileProvider.getUriForFile(
+                            context,
+                            "${context.packageName}.fileprovider",
+                            outputFile,
+                        )
+                        prepared += SafeShareItem(
+                            uri = shareUri,
+                            mimeType = mimeType,
+                            label = photo.fileName.ifBlank { outputFile.name },
+                        )
+                        createdFiles += outputFile
+                    } catch (error: CancellationException) {
+                        outputFile?.let { file -> runCatching { file.delete() } }
+                        throw error
+                    } catch (error: Throwable) {
+                        outputFile?.let { file -> runCatching { file.delete() } }
+                        cleanupSafeShareFiles(createdFiles)
+                        return@withContext SafeShareResult.Error(error)
+                    }
                 }
-                prepared += pair.first
-                createdFiles += pair.second
+                SafeShareResult.Success(prepared)
+            } catch (error: CancellationException) {
+                cleanupSafeShareFiles(createdFiles)
+                throw error
             }
-            SafeShareResult.Success(prepared)
         }
     }
 

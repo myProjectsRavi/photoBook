@@ -8,10 +8,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items as lazyItems
+import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -22,6 +25,7 @@ import androidx.compose.material.icons.automirrored.filled.TextSnippet
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -31,11 +35,18 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import coil.compose.AsyncImage
 import com.photobook.app.R
@@ -43,26 +54,55 @@ import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.feature.duplicates.DuplicateMatchKind
 import com.photobook.app.feature.duplicates.DuplicatePhotoGroup
 import com.photobook.app.feature.memories.MemoryStory
-import com.photobook.app.search.PhotoSource
 import com.photobook.app.ui.component.EmptyState
 import com.photobook.app.ui.component.PhotoGrid
 import com.photobook.app.ui.component.SearchBar
 import com.photobook.app.ui.component.SuggestionDropdown
 import com.photobook.app.ui.component.WelcomeState
 import com.photobook.app.search.SuggestionItem
+import com.photobook.app.ui.model.AlbumDescriptor
+import com.photobook.app.ui.model.AlbumKind
+import com.photobook.app.ui.model.AlbumPersonalizationPolicy
+import com.photobook.app.ui.model.AlbumScope
+import com.photobook.app.ui.model.SearchFeedbackPolicy
+import com.photobook.app.ui.model.SearchFeedbackState
 import com.photobook.app.ui.model.TimelineMark
+import com.photobook.app.ui.theme.PhotoBookGalleryAccentAmber
+import com.photobook.app.ui.theme.PhotoBookGalleryAccentIndigo
+import com.photobook.app.ui.theme.PhotoBookGalleryAccentPink
+import com.photobook.app.ui.theme.PhotoBookGalleryAccentTeal
+import com.photobook.app.ui.theme.PhotoBookGalleryAccentViolet
+import com.photobook.app.ui.theme.PhotoBookGalleryGlassBorder
+import com.photobook.app.ui.theme.PhotoBookGalleryGlassSurface
+import com.photobook.app.ui.theme.PhotoBookGalleryMeshBase
+import com.photobook.app.ui.theme.PhotoBookGalleryMeshMint
+import com.photobook.app.ui.theme.PhotoBookGalleryMeshRose
+import com.photobook.app.ui.theme.PhotoBookGalleryMeshWarm
 
-private val MeshBase = Color(0xFFFFF0E4)
-private val MeshWarm = Color(0xFFFFD8B8)
-private val MeshRose = Color(0xFFFFD4E4)
-private val MeshMint = Color(0xFFE9F3FF)
-private val GlassSurface = Color(0xCCFFFFFF)
-private val GlassBorder = Color(0xF2FFFFFF)
-private val AccentIndigo = Color(0xFF4F46E5)
-private val AccentPink = Color(0xFFEC4899)
-private val AccentViolet = Color(0xFF8B5CF6)
-private val AccentTeal = Color(0xFF0F766E)
-private val AccentAmber = Color(0xFFB45309)
+private val MeshBase = PhotoBookGalleryMeshBase
+private val MeshWarm = PhotoBookGalleryMeshWarm
+private val MeshRose = PhotoBookGalleryMeshRose
+private val MeshMint = PhotoBookGalleryMeshMint
+private val GlassSurface = PhotoBookGalleryGlassSurface
+private val GlassBorder = PhotoBookGalleryGlassBorder
+private val AccentIndigo = PhotoBookGalleryAccentIndigo
+private val AccentPink = PhotoBookGalleryAccentPink
+private val AccentViolet = PhotoBookGalleryAccentViolet
+private val AccentTeal = PhotoBookGalleryAccentTeal
+private val AccentAmber = PhotoBookGalleryAccentAmber
+
+internal enum class MainDestination {
+    Photos,
+    Albums,
+    Tools,
+}
+
+internal fun shouldShowMemoryDiscovery(
+    destination: MainDestination,
+    memoriesHidden: Boolean,
+    hasMemoryContent: Boolean,
+): Boolean =
+    destination == MainDestination.Albums && !memoriesHidden && hasMemoryContent
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -82,10 +122,16 @@ fun MainScreen(
     memoryStories: List<MemoryStory>,
     duplicateGroups: List<DuplicatePhotoGroup>,
     isFindingDuplicates: Boolean,
+    duplicateScanProgress: Float?,
+    duplicateScanIncomplete: Boolean,
     showDuplicateFinder: Boolean,
     archiveCandidateCount: Int,
     archiveDueDeleteCount: Int,
     limitedPhotoAccess: Boolean,
+    albumCatalog: List<AlbumDescriptor>,
+    pinnedAlbumKeys: List<String>,
+    memoriesHidden: Boolean,
+    activeAlbumLabel: String?,
     onQueryChange: (String) -> Unit,
     onSearchSubmitted: () -> Unit,
     onSearchFocusChanged: (Boolean) -> Unit,
@@ -106,7 +152,11 @@ fun MainScreen(
     onOpenVault: () -> Unit,
     onManagePhotoAccess: () -> Unit,
     onOpenArchives: () -> Unit,
-    onSourceSelected: (PhotoSource) -> Unit,
+    onOpenDeclutter: () -> Unit,
+    onAlbumSelected: (AlbumDescriptor) -> Unit,
+    onToggleAlbumPinned: (AlbumDescriptor) -> Unit,
+    onToggleMemoriesHidden: () -> Unit,
+    onClearAlbumScope: () -> Unit,
     onOpenDuplicateFinder: () -> Unit,
     onRefreshDuplicates: () -> Unit,
     onDismissDuplicateFinder: () -> Unit,
@@ -115,39 +165,21 @@ fun MainScreen(
     onMemoryStorySelected: (MemoryStory) -> Unit,
 ) {
     val isSelectionMode = selectedPhotoIds.isNotEmpty()
-    val isSearchRevisionCurrent = query == resultQuery
-    val smartAlbums = remember {
-        listOf(
-            SmartAlbum.Search("Screenshots", "source:screenshots", Icons.Default.Image, AccentIndigo),
-            SmartAlbum.Search("Receipts", "receipts", Icons.AutoMirrored.Filled.ReceiptLong, AccentAmber),
-            SmartAlbum.Search("Documents", "document", Icons.Default.Description, Color(0xFF475569)),
-            SmartAlbum.Archives("Payments", Icons.Default.Payments, AccentTeal),
-            SmartAlbum.Search("Food", "food", Icons.Default.Restaurant, Color(0xFFBE123C)),
-            SmartAlbum.Search("Selfies", "selfie", Icons.Default.Face, AccentPink),
-            SmartAlbum.Search("Groups", "people", Icons.Default.Groups, Color(0xFF7C3AED)),
-            SmartAlbum.Search("Blurry", "blurry", Icons.Default.BlurOn, Color(0xFF64748B)),
-            SmartAlbum.Storage("Duplicates", Icons.Default.ContentCopy, AccentIndigo),
-            SmartAlbum.Search("Large files", "large", Icons.Default.SdStorage, AccentViolet),
-            SmartAlbum.Search("WhatsApp", "source:whatsapp", Icons.AutoMirrored.Filled.Chat, Color(0xFF15803D)),
-            SmartAlbum.Search("Camera", "source:camera", Icons.Default.CameraAlt, Color(0xFF0369A1)),
-            SmartAlbum.Search("Downloads", "source:downloads", Icons.Default.Download, Color(0xFF7C2D12)),
-            SmartAlbum.Search("Text", "with_text", Icons.AutoMirrored.Filled.TextSnippet, Color(0xFF4338CA)),
-            SmartAlbum.Search("With location", "with_location", Icons.Default.LocationOn, Color(0xFF0E7490)),
-            SmartAlbum.Search("No location", "without_location", Icons.Default.LocationOff, Color(0xFF9F1239)),
-        )
+    var destination by rememberSaveable { mutableStateOf(MainDestination.Photos) }
+    val photoGridState = rememberLazyGridState()
+    var selectionBarHeightPx by remember { mutableIntStateOf(0) }
+    val selectionGridClearance = if (isSelectionMode) {
+        maxOf(128.dp, with(LocalDensity.current) { selectionBarHeightPx.toDp() } + 48.dp)
+    } else {
+        0.dp
     }
-
-    fun openSmartAlbum(album: SmartAlbum) {
-        when (album) {
-            is SmartAlbum.Search -> {
-                onQueryChange(album.query)
-                onSearchSubmitted()
-            }
-            is SmartAlbum.Archives -> onOpenArchives()
-            is SmartAlbum.Storage -> onOpenDuplicateFinder()
-        }
-    }
-
+    val searchFeedback = SearchFeedbackPolicy.resolve(
+        searchReady = searchReady,
+        query = query,
+        resultQuery = resultQuery,
+        resultCount = resultCount,
+        refreshFailed = results.loadState.refresh is LoadState.Error,
+    )
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -199,7 +231,7 @@ fun MainScreen(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(44.dp)
+                            .size(48.dp)
                             .rotate(3f)
                             .background(
                                 Brush.linearGradient(
@@ -222,45 +254,6 @@ fun MainScreen(
                     )
                 }
 
-                Surface(
-                    color = Color.White.copy(alpha = 0.18f),
-                    shape = RoundedCornerShape(18.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)),
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .background(
-                                Brush.horizontalGradient(
-                                    colors = listOf(
-                                        AccentIndigo,
-                                        AccentViolet,
-                                        AccentPink,
-                                    )
-                                ),
-                                shape = RoundedCornerShape(18.dp)
-                            )
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(18.dp)
-                                .background(Color.White.copy(alpha = 0.16f), CircleShape),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text("✦", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Black)
-                        }
-                        Text(
-                            "PRO",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Black,
-                                color = Color.White,
-                                letterSpacing = 1.2.sp
-                            )
-                        )
-                    }
-                }
             }
 
             // Search Area
@@ -286,69 +279,28 @@ fun MainScreen(
                             onSearch = onSearchSubmitted,
                             onClear = onClearQuery,
                             onFocusChanged = onSearchFocusChanged,
-                            autoFocus = searchReady && query.isBlank(),
                         )
                     }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Action Row
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color.White.copy(alpha = 0.52f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorder),
                 ) {
-                    RefinedActionButton(
-                        icon = Icons.Default.Storage,
-                        label = stringResource(R.string.duplicates_title),
-                        onClick = onOpenDuplicateFinder,
-                        color = AccentIndigo,
-                        enabled = searchReady && !isSelectionMode,
-                        modifier = Modifier.width(76.dp),
-                    )
-                    RefinedActionButton(
-                        icon = if (favoritesOnly) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                        label = "Favorites",
-                        onClick = onToggleFavoritesOnly,
-                        color = if (favoritesOnly) AccentPink else Color(0xFF64748B),
-                        enabled = searchReady,
-                        modifier = Modifier.width(76.dp),
-                    )
-                    RefinedActionButton(
-                        icon = Icons.Default.Slideshow,
-                        label = stringResource(R.string.reels_browsing_action),
-                        onClick = onToggleReels,
-                        color = if (reelsEnabled) AccentPink else Color(0xFF64748B),
-                        enabled = searchReady && !isSelectionMode,
-                        modifier = Modifier.width(76.dp),
-                    )
-                    RefinedActionButton(
-                        icon = Icons.Default.Archive,
-                        label = stringResource(R.string.archives_action),
-                        onClick = onOpenArchives,
-                        color = Color(0xFF0F766E),
-                        enabled = searchReady && !isSelectionMode,
-                        badgeCount = archiveCandidateCount + archiveDueDeleteCount,
-                        modifier = Modifier.width(76.dp),
-                    )
-                    RefinedActionButton(
-                        icon = Icons.Default.Lock,
-                        label = stringResource(R.string.vault_short_action),
-                        onClick = onOpenVault,
-                        color = Color(0xFF7C2D12),
-                        enabled = searchReady && !isSelectionMode,
-                        modifier = Modifier.width(76.dp),
-                    )
-                    RefinedActionButton(
-                        icon = Icons.Default.Delete,
-                        label = "Trash",
-                        onClick = onOpenTrash,
-                        color = AccentViolet,
-                        enabled = searchReady && !isSelectionMode,
-                        modifier = Modifier.width(76.dp),
-                    )
+                    Row(modifier = Modifier.padding(2.dp)) {
+                        MainDestination.entries.forEach { item ->
+                            RefinedTabButton(
+                                label = item.name,
+                                selected = destination == item,
+                                onClick = { destination = item },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
                 }
 
                 if (limitedPhotoAccess) {
@@ -356,50 +308,148 @@ fun MainScreen(
                     LimitedPhotoAccessBanner(onManagePhotoAccess = onManagePhotoAccess)
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
-
-                Text(
-                    text = stringResource(R.string.smart_albums_title),
-                    style = MaterialTheme.typography.labelLarge.copy(
-                        fontWeight = FontWeight.Black,
-                        color = Color(0xFF334155),
-                    ),
-                    modifier = Modifier.padding(start = 2.dp, bottom = 8.dp),
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    smartAlbums.forEach { album ->
-                        SmartAlbumChip(
-                            album = album,
-                            enabled = searchReady && !isSelectionMode,
-                            onClick = { openSmartAlbum(album) },
-                        )
-                    }
-                }
-
                 Spacer(modifier = Modifier.height(14.dp))
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    PhotoSource.all.forEach { source ->
-                        RefinedGlassChip(
-                            label = source.label,
-                            onClick = { onSourceSelected(source) }
-                        )
+                when (destination) {
+                    MainDestination.Photos -> {
+                        if (activeAlbumLabel != null) {
+                            InputChip(
+                                selected = true,
+                                onClick = onClearAlbumScope,
+                                label = { Text(activeAlbumLabel) },
+                                trailingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear album filter",
+                                    )
+                                },
+                            )
+                        }
+                    }
+
+                    MainDestination.Albums -> {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column {
+                                Text(
+                                    text = "Memories",
+                                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Black),
+                                )
+                                Text(
+                                    text = if (memoriesHidden) "Hidden on this device" else "Shown on this device",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = !memoriesHidden,
+                                onCheckedChange = { onToggleMemoriesHidden() },
+                                enabled = !isSelectionMode,
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        if (
+                            shouldShowMemoryDiscovery(
+                                destination = destination,
+                                memoriesHidden = memoriesHidden,
+                                hasMemoryContent = onThisDayStory != null || memoryStories.isNotEmpty(),
+                            )
+                        ) {
+                            WelcomeState(
+                                memories = memoryStories,
+                                onThisDayStory = onThisDayStory,
+                                onOnThisDayClick = onOpenOnThisDayStory,
+                                onMemoryClick = onMemoryStorySelected,
+                                compact = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                        }
+
+                        if (albumCatalog.isEmpty()) {
+                            Text(
+                                text = "No albums in current access",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            val (pinnedAlbums, unpinnedAlbums) = AlbumPersonalizationPolicy.partition(
+                                albumCatalog,
+                                pinnedAlbumKeys,
+                            )
+                            val groups = listOf(
+                                "Pinned" to pinnedAlbums,
+                                "Favorites" to unpinnedAlbums.filter { it.kind == AlbumKind.Favorite },
+                                "On this device" to unpinnedAlbums.filter {
+                                    it.kind == AlbumKind.Source || it.kind == AlbumKind.Folder
+                                },
+                                "Smart collections" to unpinnedAlbums.filter {
+                                    it.kind == AlbumKind.SmartQuery
+                                },
+                            )
+                            groups.forEach { (title, group) ->
+                                if (group.isNotEmpty()) {
+                                    Text(
+                                        text = title,
+                                        style = MaterialTheme.typography.labelLarge.copy(
+                                            fontWeight = FontWeight.Black,
+                                            color = Color(0xFF334155),
+                                        ),
+                                        modifier = Modifier.padding(start = 2.dp, bottom = 8.dp),
+                                    )
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    ) {
+                                        group.forEach { album ->
+                                            val pinned = album.key in pinnedAlbumKeys
+                                            AlbumDescriptorChip(
+                                                album = album,
+                                                enabled = searchReady && !isSelectionMode,
+                                                pinned = pinned,
+                                                pinEnabled = pinned ||
+                                                    pinnedAlbumKeys.size < AlbumPersonalizationPolicy.MAX_PINNED_ALBUMS,
+                                                onTogglePinned = { onToggleAlbumPinned(album) },
+                                                onClick = {
+                                                    onAlbumSelected(album)
+                                                    destination = MainDestination.Photos
+                                                },
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                }
+                            }
+                        }
+                    }
+
+                    MainDestination.Tools -> {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            RefinedActionButton(Icons.Default.Storage, stringResource(R.string.duplicates_title), onOpenDuplicateFinder, AccentIndigo, searchReady && !isSelectionMode, Modifier.width(76.dp))
+                            RefinedActionButton(if (favoritesOnly) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Favorites", onToggleFavoritesOnly, if (favoritesOnly) AccentPink else Color(0xFF64748B), searchReady, Modifier.width(76.dp))
+                            RefinedActionButton(Icons.Default.Slideshow, stringResource(R.string.reels_browsing_action), onToggleReels, if (reelsEnabled) AccentPink else Color(0xFF64748B), searchReady && !isSelectionMode, Modifier.width(76.dp))
+                            RefinedActionButton(Icons.Default.Archive, stringResource(R.string.archives_action), onOpenArchives, AccentTeal, searchReady && !isSelectionMode, Modifier.width(76.dp), archiveCandidateCount + archiveDueDeleteCount)
+                            RefinedActionButton(Icons.Default.Lock, stringResource(R.string.vault_short_action), onOpenVault, Color(0xFF7C2D12), searchReady && !isSelectionMode, Modifier.width(76.dp))
+                            RefinedActionButton(Icons.Default.Delete, "Trash", onOpenTrash, AccentViolet, searchReady && !isSelectionMode, Modifier.width(76.dp))
+                            RefinedActionButton(Icons.Default.Delete, stringResource(R.string.declutter_title), onOpenDeclutter, AccentAmber, searchReady && !isSelectionMode, Modifier.width(76.dp))
+                        }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(18.dp))
 
-                // (Removed Timeline/Screenshots tab row — Timeline is the only feed.)
+
             }
 
             // Suggestions
@@ -416,18 +466,18 @@ fun MainScreen(
                     .fillMaxSize()
                     .padding(horizontal = 20.dp)
             ) {
-                when {
-                    !searchReady -> {
+                when (searchFeedback) {
+                    SearchFeedbackState.NOT_READY -> {
                         WelcomeState(
-                            memories = memoryStories,
-                            onThisDayStory = onThisDayStory,
+                            memories = emptyList(),
+                            onThisDayStory = null,
                             onOnThisDayClick = onOpenOnThisDayStory,
                             onMemoryClick = onMemoryStorySelected,
                             compact = searchReady,
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
-                    !isSearchRevisionCurrent -> {
+                    SearchFeedbackState.SEARCHING -> {
                         Box(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center,
@@ -435,20 +485,24 @@ fun MainScreen(
                             CircularProgressIndicator()
                         }
                     }
-                    query.isBlank() && resultCount == 0 -> {
-                        WelcomeState(
-                            memories = memoryStories,
-                            onThisDayStory = onThisDayStory,
-                            onOnThisDayClick = onOpenOnThisDayStory,
-                            onMemoryClick = onMemoryStorySelected,
-                            compact = true,
-                            modifier = Modifier.fillMaxSize(),
-                        )
+                    SearchFeedbackState.FAILED -> {
+                        SearchFailureState(modifier = Modifier.fillMaxSize())
                     }
-                    query.isNotBlank() && resultCount == 0 -> {
-                        EmptyState(modifier = Modifier.fillMaxSize())
+                    SearchFeedbackState.EMPTY -> {
+                        if (query.isBlank()) {
+                            WelcomeState(
+                                memories = emptyList(),
+                                onThisDayStory = null,
+                                onOnThisDayClick = onOpenOnThisDayStory,
+                                onMemoryClick = onMemoryStorySelected,
+                                compact = true,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        } else {
+                            EmptyState(modifier = Modifier.fillMaxSize())
+                        }
                     }
-                    else -> {
+                    SearchFeedbackState.RESULTS -> {
                         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                             val columns = if (maxWidth >= 700.dp) 5 else if (maxWidth >= 520.dp) 4 else 3
                             PhotoGrid(
@@ -459,6 +513,8 @@ fun MainScreen(
                                 isSelectionMode = isSelectionMode,
                                 onPhotoClick = onPhotoClick,
                                 onPhotoLongClick = onPhotoLongClick,
+                                gridState = photoGridState,
+                                bottomContentPadding = selectionGridClearance,
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
@@ -467,49 +523,29 @@ fun MainScreen(
             }
         }
 
-        // Selection Bar overlay
+        // Measure the actual selection bar, including scaled text, and keep the final grid
+        // rows scrollable above it instead of covering thumbnails with a fixed overlay.
         if (isSelectionMode) {
-             Surface(
+            Surface(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(horizontal = 16.dp, vertical = 24.dp)
-                    .fillMaxWidth(),
+                    .fillMaxWidth()
+                    .onSizeChanged { selectionBarHeightPx = it.height },
                 shape = RoundedCornerShape(24.dp),
                 tonalElevation = 8.dp,
                 color = GlassSurface.copy(alpha = 0.94f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorder)
+                border = androidx.compose.foundation.BorderStroke(1.dp, GlassBorder),
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = stringResource(R.string.selection_count, selectedPhotoIds.size),
-                        fontWeight = FontWeight.Black
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        IconButton(onClick = onClearSelection) { Icon(Icons.Default.Close, null) }
-                        if (selectedPhotoIds.size == 1) {
-                            IconButton(onClick = { onCopyTextFromPhoto(selectedPhotoIds.first()) }) { Icon(Icons.Default.ContentCopy, contentDescription = "Copy text from photo") }
-                        }
-                        IconButton(onClick = { onCreatePdfSelected(selectedPhotoIds) }) {
-                            Icon(Icons.Default.PictureAsPdf, contentDescription = stringResource(R.string.create_pdf_selected))
-                        }
-                        IconButton(onClick = { onShareSelected(selectedPhotoIds) }) {
-                            Icon(Icons.Default.Share, contentDescription = stringResource(R.string.share_selected))
-                        }
-                        IconButton(onClick = { onAddSelectedToVault(selectedPhotoIds) }) {
-                            Icon(Icons.Default.Lock, contentDescription = stringResource(R.string.vault_add_selected))
-                        }
-                        IconButton(
-                            onClick = { onMoveSelectedToTrash(selectedPhotoIds) },
-                            colors = IconButtonDefaults.iconButtonColors(contentColor = Color.Red),
-                        ) {
-                            Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.trash_selected))
-                        }
-                    }
-                }
+                SelectionActionBar(
+                    selectedPhotoIds = selectedPhotoIds,
+                    onClearSelection = onClearSelection,
+                    onShareSelected = onShareSelected,
+                    onMoveSelectedToTrash = onMoveSelectedToTrash,
+                    onCreatePdfSelected = onCreatePdfSelected,
+                    onAddSelectedToVault = onAddSelectedToVault,
+                    onCopyTextFromPhoto = onCopyTextFromPhoto,
+                )
             }
         }
 
@@ -517,6 +553,8 @@ fun MainScreen(
             DuplicateFinderSheet(
                 groups = duplicateGroups,
                 isLoading = isFindingDuplicates,
+                progress = duplicateScanProgress,
+                incomplete = duplicateScanIncomplete,
                 onDismiss = onDismissDuplicateFinder,
                 onRefresh = onRefreshDuplicates,
                 onPhotoClick = onDuplicatePhotoClick,
@@ -525,43 +563,157 @@ fun MainScreen(
     }
 }
 
-private sealed class SmartAlbum(
-    val label: String,
-    val icon: androidx.compose.ui.graphics.vector.ImageVector,
-    val color: Color,
+/**
+ * The destructive action remains a request for system-confirmed Trash, never a direct delete.
+ * Count/Close and Share/Trash/More have separate rows so all controls stay reachable at 320dp
+ * and 200% font scale, with at least 48dp touch targets.
+ */
+@Composable
+internal fun SelectionActionBar(
+    selectedPhotoIds: Set<Long>,
+    onClearSelection: () -> Unit,
+    onShareSelected: (Set<Long>) -> Unit,
+    onMoveSelectedToTrash: (Set<Long>) -> Unit,
+    onCreatePdfSelected: (Set<Long>) -> Unit,
+    onAddSelectedToVault: (Set<Long>) -> Unit,
+    onCopyTextFromPhoto: (Long) -> Unit,
 ) {
-    class Search(
-        label: String,
-        val query: String,
-        icon: androidx.compose.ui.graphics.vector.ImageVector,
-        color: Color,
-    ) : SmartAlbum(label, icon, color)
-
-    class Archives(
-        label: String,
-        icon: androidx.compose.ui.graphics.vector.ImageVector,
-        color: Color,
-    ) : SmartAlbum(label, icon, color)
-
-    class Storage(
-        label: String,
-        icon: androidx.compose.ui.graphics.vector.ImageVector,
-        color: Color,
-    ) : SmartAlbum(label, icon, color)
+    var menuExpanded by remember { mutableStateOf(false) }
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = stringResource(R.string.selection_count, selectedPhotoIds.size),
+                color = Color(0xFF111827),
+                fontWeight = FontWeight.Black,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = onClearSelection, modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)) {
+                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.clear_selection))
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
+            IconButton(
+                onClick = { onShareSelected(selectedPhotoIds) },
+                modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
+            ) {
+                Icon(Icons.Default.Share, contentDescription = stringResource(R.string.share_selected))
+            }
+            IconButton(
+                onClick = { onMoveSelectedToTrash(selectedPhotoIds) },
+                modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
+            ) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = stringResource(R.string.trash_selected),
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            }
+            Box {
+                IconButton(
+                    onClick = { menuExpanded = true },
+                    modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
+                ) {
+                    Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.more_selection_actions))
+                }
+                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    if (selectedPhotoIds.size == 1) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.viewer_copy_text_title)) },
+                            leadingIcon = { Icon(Icons.Default.ContentCopy, null) },
+                            onClick = {
+                                menuExpanded = false
+                                onCopyTextFromPhoto(selectedPhotoIds.first())
+                            },
+                        )
+                    }
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.create_pdf_selected)) },
+                        leadingIcon = { Icon(Icons.Default.PictureAsPdf, null) },
+                        onClick = {
+                            menuExpanded = false
+                            onCreatePdfSelected(selectedPhotoIds)
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.vault_add_selected)) },
+                        leadingIcon = { Icon(Icons.Default.Lock, null) },
+                        onClick = {
+                            menuExpanded = false
+                            onAddSelectedToVault(selectedPhotoIds)
+                        },
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
-private fun SmartAlbumChip(
-    album: SmartAlbum,
+private fun SearchFailureState(modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier.padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(
+            imageVector = Icons.Default.ErrorOutline,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.error,
+            modifier = Modifier.size(56.dp),
+        )
+        Text(
+            text = "Search couldn’t refresh",
+            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Black),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 16.dp),
+        )
+        Text(
+            text = "PhotoBook did not replace this query with stale results. Try again after local indexing settles.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+    }
+}
+
+@Composable
+private fun AlbumDescriptorChip(
+    album: AlbumDescriptor,
     enabled: Boolean,
+    pinned: Boolean,
+    pinEnabled: Boolean,
+    onTogglePinned: () -> Unit,
     onClick: () -> Unit,
 ) {
+    val icon = when (val scope = album.scope) {
+        AlbumScope.Favorites -> Icons.Default.Favorite
+        is AlbumScope.Source -> when (scope.source.token) {
+            "camera" -> Icons.Default.CameraAlt
+            "downloads" -> Icons.Default.Download
+            "screenshots" -> Icons.Default.Image
+            else -> Icons.Default.Folder
+        }
+        is AlbumScope.Folder -> Icons.Default.Folder
+        is AlbumScope.SmartQuery -> Icons.Default.AutoAwesome
+    }
     Surface(
         onClick = onClick,
         enabled = enabled,
         color = Color.White.copy(alpha = 0.74f),
         shape = RoundedCornerShape(16.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, album.color.copy(alpha = 0.20f)),
+        border = androidx.compose.foundation.BorderStroke(1.dp, AccentIndigo.copy(alpha = 0.20f)),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -569,19 +721,30 @@ private fun SmartAlbumChip(
             horizontalArrangement = Arrangement.spacedBy(7.dp),
         ) {
             Icon(
-                imageVector = album.icon,
+                imageVector = icon,
                 contentDescription = null,
-                tint = album.color,
+                tint = AccentIndigo,
                 modifier = Modifier.size(18.dp),
             )
             Text(
-                text = album.label,
+                text = "${album.label} (${album.count})",
                 style = MaterialTheme.typography.labelMedium.copy(
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF334155),
                 ),
                 maxLines = 1,
             )
+            IconButton(
+                onClick = onTogglePinned,
+                enabled = enabled && pinEnabled,
+                modifier = Modifier.size(48.dp),
+            ) {
+                Icon(
+                    imageVector = if (pinned) Icons.Default.Star else Icons.Default.StarBorder,
+                    contentDescription = if (pinned) "Unpin ${album.label}" else "Pin ${album.label}",
+                    tint = if (pinned) AccentAmber else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
@@ -708,7 +871,7 @@ private fun LimitedPhotoAccessBanner(
 }
 
 @Composable
-private fun RefinedTabButton(
+internal fun RefinedTabButton(
     label: String,
     selected: Boolean,
     onClick: () -> Unit,
@@ -719,7 +882,14 @@ private fun RefinedTabButton(
 
     Surface(
         onClick = onClick,
-        modifier = modifier.padding(2.dp),
+        modifier = modifier
+            .padding(2.dp)
+            // Touch/semantics target is >= 48dp even at the default font scale.
+            .heightIn(min = 48.dp)
+            .semantics {
+                this.role = Role.Tab
+                this.selected = selected
+            },
         color = backgroundColor,
         shape = RoundedCornerShape(12.dp),
         tonalElevation = if (selected) 2.dp else 0.dp
@@ -744,6 +914,8 @@ private fun RefinedTabButton(
 private fun DuplicateFinderSheet(
     groups: List<DuplicatePhotoGroup>,
     isLoading: Boolean,
+    progress: Float?,
+    incomplete: Boolean,
     onDismiss: () -> Unit,
     onRefresh: () -> Unit,
     onPhotoClick: (String, Int) -> Unit,
@@ -785,7 +957,25 @@ private fun DuplicateFinderSheet(
             }
 
             if (isLoading) {
-                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(2.dp))
+                if (progress != null) {
+                    LinearProgressIndicator(
+                        progress = { progress.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth().height(2.dp),
+                    )
+                    Text(
+                        text = "Scanning locally… ${(progress.coerceIn(0f, 1f) * 100).toInt()}%",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(2.dp))
+                }
+            } else if (incomplete) {
+                Text(
+                    text = "Previous scan was interrupted. Refresh to continue with a new bounded scan.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
 
             Box(modifier = Modifier.height(400.dp)) {
@@ -831,31 +1021,51 @@ private fun DuplicateGroupCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-             Text(
+            Text(
                 text = when (group.kind) {
-                    DuplicateMatchKind.Exact -> "Exact Duplicates (${group.photos.size})"
-                    DuplicateMatchKind.Similar -> "Similar Photos (${group.photos.size})"
-                    DuplicateMatchKind.Burst -> "Best from Burst (${group.photos.size})"
-                    DuplicateMatchKind.Blurry -> "Blurry Photos (${group.photos.size})"
+                    DuplicateMatchKind.Exact -> stringResource(R.string.duplicates_exact_group, group.photos.size)
+                    DuplicateMatchKind.Similar -> stringResource(R.string.duplicates_similar_group, group.photos.size)
+                    DuplicateMatchKind.Burst -> stringResource(R.string.duplicates_burst_group, group.photos.size)
+                    DuplicateMatchKind.Blurry -> stringResource(R.string.duplicates_blurry_group, group.photos.size)
                 },
-                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Black)
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Black),
             )
-            Row(
+            Text(
+                text = when (group.kind) {
+                    DuplicateMatchKind.Exact -> stringResource(R.string.duplicates_exact_hint)
+                    DuplicateMatchKind.Similar -> stringResource(R.string.duplicates_similar_hint)
+                    DuplicateMatchKind.Burst -> stringResource(R.string.duplicates_burst_hint)
+                    DuplicateMatchKind.Blurry -> stringResource(R.string.duplicates_blurry_hint)
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (group.heroPhotoId != null) {
+                Text(
+                    text = stringResource(R.string.duplicates_hero_shot),
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = AccentIndigo,
+                )
+            }
+            LazyRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                group.photos.take(4).forEachIndexed { index, photo ->
+                lazyItemsIndexed(
+                    items = group.photos,
+                    key = { _, photo -> photo.id },
+                ) { index, photo ->
                     val isHero = photo.id == group.heroPhotoId
                     AsyncImage(
                         model = Uri.parse(photo.uriString),
-                        contentDescription = null,
+                        contentDescription = photo.fileName,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
                             .size(64.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .border(
                                 width = if (isHero) 2.dp else 0.dp,
-                                color = if (isHero) Color(0xFF4F46E5) else Color.Transparent,
+                                color = if (isHero) AccentIndigo else Color.Transparent,
                                 shape = RoundedCornerShape(12.dp),
                             )
                             .clickable { onPhotoClick(index) },

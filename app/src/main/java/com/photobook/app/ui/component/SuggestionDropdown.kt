@@ -24,7 +24,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.photobook.app.search.SuggestionItem
 
@@ -44,9 +43,12 @@ fun SuggestionDropdown(
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.88f)),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+            ),
             elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
             LazyColumn {
                 items(suggestions, key = { it.text }) { suggestion ->
@@ -62,7 +64,7 @@ fun SuggestionDropdown(
                             Icon(
                                 imageVector = Icons.Default.Search,
                                 contentDescription = null,
-                                tint = Color(0xFF4F46E5),
+                                tint = MaterialTheme.colorScheme.primary,
                             )
                             Text(
                                 text = suggestion.text,

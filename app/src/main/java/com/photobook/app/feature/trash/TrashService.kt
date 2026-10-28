@@ -1,6 +1,7 @@
 package com.photobook.app.feature.trash
 
 import android.content.ContentUris
+import android.content.ContentResolver
 import android.content.Context
 import android.content.IntentSender
 import android.net.Uri
@@ -19,13 +20,40 @@ sealed interface TrashRequestResult {
     data class Error(val throwable: Throwable? = null) : TrashRequestResult
 }
 
+sealed interface TrashListResult {
+    data class Success(
+        val photos: List<TrashedPhoto>,
+        val nextOffset: Int? = null,
+    ) : TrashListResult
+    data object UnsupportedAndroid : TrashListResult
+    data class Error(val throwable: Throwable? = null) : TrashListResult
+}
+
+enum class TrashListUiState {
+    READY,
+    UNSUPPORTED,
+    ERROR,
+}
+
+fun TrashListResult.toTrashListUiState(): TrashListUiState = when (this) {
+    is TrashListResult.Success -> TrashListUiState.READY
+    TrashListResult.UnsupportedAndroid -> TrashListUiState.UNSUPPORTED
+    is TrashListResult.Error -> TrashListUiState.ERROR
+}
+
+internal fun nextTrashOffset(
+    offset: Int,
+    pageSize: Int,
+    fetchedCount: Int,
+): Int? = if (fetchedCount > pageSize) offset + pageSize else null
+
 data class TrashedPhoto(
     val id: Long,
     val uri: Uri,
     val displayName: String,
     val mimeType: String,
     val sizeBytes: Long,
-    val dateTrashedMillis: Long,
+    val expiresAtMillis: Long?,
 )
 
 class TrashService @Inject constructor(
@@ -57,11 +85,18 @@ class TrashService @Inject constructor(
         }
     }
 
-    /** Lists media that is currently in the trash (Android 11+). Empty list on older OS. */
-    suspend fun listTrashed(limit: Int = 200): List<TrashedPhoto> = withContext(Dispatchers.IO) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return@withContext emptyList()
+    /** Lists all media currently in the trash (Android 11+), preserving provider failures. */
+    suspend fun listTrashed(
+        offset: Int = 0,
+        pageSize: Int = DEFAULT_TRASH_PAGE_SIZE,
+    ): TrashListResult = withContext(Dispatchers.IO) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return@withContext TrashListResult.UnsupportedAndroid
+        }
 
         runCatching {
+            require(offset >= 0) { "Trash offset must be non-negative" }
+            val boundedPageSize = pageSize.coerceIn(1, MAX_TRASH_PAGE_SIZE)
             val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
             val projection = arrayOf(
                 MediaStore.Images.Media._ID,
@@ -72,34 +107,45 @@ class TrashService @Inject constructor(
             )
             val queryArgs = Bundle().apply {
                 putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_ONLY)
+                putInt(ContentResolver.QUERY_ARG_LIMIT, boundedPageSize + 1)
+                putInt(ContentResolver.QUERY_ARG_OFFSET, offset)
                 putString(
-                    android.content.ContentResolver.QUERY_ARG_SQL_SORT_ORDER,
-                    "${MediaStore.Images.Media.DATE_EXPIRES} DESC",
+                    ContentResolver.QUERY_ARG_SQL_SORT_ORDER,
+                    "${MediaStore.Images.Media.DATE_EXPIRES} DESC, ${MediaStore.Images.Media._ID} DESC",
                 )
-                putInt(android.content.ContentResolver.QUERY_ARG_LIMIT, limit)
             }
 
             val results = mutableListOf<TrashedPhoto>()
-            context.contentResolver.query(collection, projection, queryArgs, null)?.use { cursor ->
-                val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-                val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-                val mimeCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.MIME_TYPE)
-                val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
-                val expiresCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_EXPIRES)
-                while (cursor.moveToNext()) {
-                    val id = cursor.getLong(idCol)
+            val cursor = context.contentResolver.query(collection, projection, queryArgs, null)
+                ?: error("MediaStore trash query returned no cursor")
+            cursor.use {
+                val idCol = it.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                val nameCol = it.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
+                val mimeCol = it.getColumnIndexOrThrow(MediaStore.Images.Media.MIME_TYPE)
+                val sizeCol = it.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
+                val expiresCol = it.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_EXPIRES)
+                while (it.moveToNext() && results.size <= boundedPageSize) {
+                    val id = it.getLong(idCol)
+                    val expiresSeconds = if (it.isNull(expiresCol)) null else it.getLong(expiresCol)
                     results += TrashedPhoto(
                         id = id,
                         uri = ContentUris.withAppendedId(collection, id),
-                        displayName = cursor.getString(nameCol).orEmpty(),
-                        mimeType = cursor.getString(mimeCol).orEmpty().ifBlank { "image/*" },
-                        sizeBytes = cursor.getLong(sizeCol),
-                        dateTrashedMillis = cursor.getLong(expiresCol) * 1000L,
+                        displayName = it.getString(nameCol).orEmpty(),
+                        mimeType = it.getString(mimeCol).orEmpty().ifBlank { "image/*" },
+                        sizeBytes = it.getLong(sizeCol),
+                        expiresAtMillis = expiresSeconds?.takeIf { value -> value > 0L }?.times(1000L),
                     )
                 }
             }
-            results
-        }.getOrDefault(emptyList())
+            TrashListResult.Success(
+                photos = results.take(boundedPageSize),
+                nextOffset = nextTrashOffset(
+                    offset = offset,
+                    pageSize = boundedPageSize,
+                    fetchedCount = results.size,
+                ),
+            )
+        }.getOrElse { TrashListResult.Error(it) }
     }
 
     /** Creates a system-managed PendingIntent to restore trashed items. */
@@ -120,5 +166,10 @@ class TrashService @Inject constructor(
             val pi = MediaStore.createDeleteRequest(context.contentResolver, uris)
             TrashRequestResult.Ready(pi.intentSender)
         }.getOrElse { TrashRequestResult.Error(it) }
+    }
+
+    private companion object {
+        const val DEFAULT_TRASH_PAGE_SIZE = 120
+        const val MAX_TRASH_PAGE_SIZE = 200
     }
 }

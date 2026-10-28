@@ -1,5 +1,6 @@
 package com.photobook.app.ml
 
+import android.app.ActivityManager
 import android.content.Context
 import android.os.BatteryManager
 import androidx.hilt.work.HiltWorker
@@ -71,10 +72,18 @@ class TaggingWorker @AssistedInject constructor(
             val requestedIdList = requestedIds.toList()
             val focused = indexPersistence.getByIdsOrdered(requestedIdList)
             if (focused.isEmpty()) return Result.success()
-            if (!processPhotoBatch(focused, processedBefore = 0)) return Result.retry()
+            if (!processPhotoBatch(focused, processedBefore = 0, pauseWhenForeground = false)) return Result.retry()
             val hasRemainingFocusedWork = indexPersistence.getByIdsOrdered(requestedIdList)
                 .any { photo -> photo.needsIntelligenceWork() }
             return resultForRemainingWork(hasRemainingFocusedWork)
+        }
+
+        if (!IntelligenceSchedulingPolicy.shouldRunLibraryMaintenance(
+                appInForeground = isAppInForeground(),
+                batteryTooLow = false,
+            )
+        ) {
+            return Result.retry()
         }
 
         val accessMode = PermissionUtils.photoAccessMode(applicationContext)
@@ -86,10 +95,10 @@ class TaggingWorker @AssistedInject constructor(
             val visibleIds = mediaStoreScanner.scanAllIds().sorted()
             var processed = 0
             visibleIds.chunked(DURABLE_FETCH_BATCH_SIZE).forEach { batchIds ->
-                if (isStopped) return Result.retry()
+                if (isStopped || isAppInForeground()) return Result.retry()
                 val photos = indexPersistence.getByIdsOrdered(batchIds)
                     .filter { photo -> photo.needsIntelligenceWork() }
-                if (!processPhotoBatch(photos, processedBefore = processed)) {
+                if (!processPhotoBatch(photos, processedBefore = processed, pauseWhenForeground = true)) {
                     return Result.retry()
                 }
                 processed += photos.size
@@ -106,7 +115,7 @@ class TaggingWorker @AssistedInject constructor(
         var afterId = -1L
         var processed = 0
         while (true) {
-            if (isStopped) return Result.retry()
+            if (isStopped || isAppInForeground()) return Result.retry()
 
             val photos = indexPersistence.getPendingIntelligenceBatch(
                 afterId = afterId,
@@ -114,7 +123,7 @@ class TaggingWorker @AssistedInject constructor(
             )
             if (photos.isEmpty()) break
 
-            if (!processPhotoBatch(photos, processedBefore = processed)) {
+            if (!processPhotoBatch(photos, processedBefore = processed, pauseWhenForeground = true)) {
                 return Result.retry()
             }
             processed += photos.size
@@ -131,11 +140,12 @@ class TaggingWorker @AssistedInject constructor(
     private suspend fun processPhotoBatch(
         photos: List<PhotoRecord>,
         processedBefore: Int,
+        pauseWhenForeground: Boolean,
     ): Boolean {
         val pendingIndexUpdates = mutableListOf<PhotoIndex.PhotoIntelligenceUpdate>()
 
         photos.forEachIndexed { index, photo ->
-            if (isStopped) return false
+            if (isStopped || (pauseWhenForeground && isAppInForeground())) return false
 
             val needsMl = photo.mlStatus.shouldProcess
             val needsOcr = photo.ocrStatus.shouldProcess
@@ -229,7 +239,7 @@ class TaggingWorker @AssistedInject constructor(
 
             if (pendingIndexUpdates.size >= Constants.BATCH_SIZE) {
                 flushPendingUpdates(pendingIndexUpdates)
-                if (isBatteryTooLow()) return false
+                if (isBatteryTooLow() || (pauseWhenForeground && isAppInForeground())) return false
                 delay(Constants.BATCH_DELAY_MS)
             }
 
@@ -253,13 +263,19 @@ class TaggingWorker @AssistedInject constructor(
     }
 
     private fun resultForRemainingWork(hasRemainingWork: Boolean): Result {
-        if (!hasRemainingWork) return Result.success()
-        return if (runAttemptCount < MAX_RETRY_ATTEMPTS) {
-            Result.retry()
-        } else {
-            Result.failure(workDataOf("reason" to "intelligence_work_incomplete"))
-        }
+        return resultForRemainingWork(
+            hasRemainingWork = hasRemainingWork,
+            runAttemptCount = runAttemptCount,
+        )
     }
+
+    private fun resultForRemainingWork(
+        hasRemainingWork: Boolean,
+        runAttemptCount: Int,
+    ): Result = TaggingRetryPolicy.result(
+        hasRemainingWork = hasRemainingWork,
+        runAttemptCount = runAttemptCount,
+    )
 
     private suspend fun flushPendingUpdates(
         pendingIndexUpdates: MutableList<PhotoIndex.PhotoIntelligenceUpdate>,
@@ -283,6 +299,13 @@ class TaggingWorker @AssistedInject constructor(
             ?: return false
         val level = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         return level in 1..14
+    }
+
+
+    private fun isAppInForeground(): Boolean {
+        val processInfo = ActivityManager.RunningAppProcessInfo()
+        ActivityManager.getMyMemoryState(processInfo)
+        return processInfo.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
     }
 
     companion object {

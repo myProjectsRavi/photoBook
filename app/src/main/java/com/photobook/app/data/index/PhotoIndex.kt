@@ -10,6 +10,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -22,16 +23,27 @@ internal enum class PhotoIndexStrategy {
     V2,
 }
 
+data class PhotoIndexRevisions(
+    val structural: Long = 0L,
+    val intelligence: Long = 0L,
+    val favorite: Long = 0L,
+)
+
 @Singleton
 class PhotoIndex internal constructor(
     private val backend: PhotoIndexBackend,
 ) {
+    private val revisionFlow = MutableStateFlow(PhotoIndexRevisions())
     @Inject
     constructor() : this(createBackend(ACTIVE_STRATEGY))
 
     internal constructor(strategy: PhotoIndexStrategy) : this(createBackend(strategy))
 
     fun changes(): StateFlow<Long> = backend.changes()
+
+    fun revisions(): StateFlow<PhotoIndexRevisions> = revisionFlow.asStateFlow()
+
+    fun structuralRevision(): Long = revisionFlow.value.structural
 
     fun snapshot(): List<PhotoRecord> = backend.snapshot()
 
@@ -59,6 +71,9 @@ class PhotoIndex internal constructor(
 
     suspend fun setRecords(records: List<PhotoRecord>) {
         backend.setRecords(records)
+        revisionFlow.update { revisions ->
+            revisions.copy(structural = revisions.structural + 1L)
+        }
     }
 
     suspend fun updatePhotoIntelligence(
@@ -90,21 +105,44 @@ class PhotoIndex internal constructor(
     }
 
     suspend fun updatePhotosIntelligence(updates: List<PhotoIntelligenceUpdate>): List<PhotoRecord> {
-        return backend.updatePhotosIntelligence(updates)
+        val committed = backend.updatePhotosIntelligence(updates)
+        if (committed.isNotEmpty()) {
+            revisionFlow.update { revisions ->
+                revisions.copy(intelligence = revisions.intelligence + 1L)
+            }
+        }
+        return committed
     }
 
     suspend fun setFavorite(id: Long, isFavorite: Boolean) {
         backend.setFavorite(id, isFavorite)
+        revisionFlow.update { revisions ->
+            revisions.copy(favorite = revisions.favorite + 1L)
+        }
     }
 
-    suspend fun toggleFavorite(id: Long): Boolean = backend.toggleFavorite(id)
+    suspend fun toggleFavorite(id: Long): Boolean {
+        val value = backend.toggleFavorite(id)
+        revisionFlow.update { revisions ->
+            revisions.copy(favorite = revisions.favorite + 1L)
+        }
+        return value
+    }
 
     suspend fun upsertRecord(record: PhotoRecord) {
         backend.upsertRecord(record)
+        revisionFlow.update { revisions ->
+            revisions.copy(structural = revisions.structural + 1L)
+        }
     }
 
     suspend fun removeRecords(ids: Set<Long>) {
         backend.removeRecords(ids)
+        if (ids.isNotEmpty()) {
+            revisionFlow.update { revisions ->
+                revisions.copy(structural = revisions.structural + 1L)
+            }
+        }
     }
 
     data class PhotoIntelligenceUpdate(

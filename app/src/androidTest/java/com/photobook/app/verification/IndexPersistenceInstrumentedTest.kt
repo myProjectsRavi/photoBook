@@ -77,6 +77,43 @@ class IndexPersistenceInstrumentedTest {
     }
 
     @Test
+    fun semanticRuntimeUpgrade_reopensOnlyProcessedMlAndPreservesUserState() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val database = Room.inMemoryDatabaseBuilder(context, PhotoBookDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        try {
+            val persistence = IndexPersistence(context, database, database.photoDao())
+            val processed = fixtureRecord(9_001L, "old_semantic.jpg").copy(
+                isFavorite = true,
+                mlStatus = IntelligenceStatus.PROCESSED,
+                isMlProcessed = true,
+                ocrStatus = IntelligenceStatus.PROCESSED,
+                isOcrProcessed = true,
+                ocrText = "private searchable invoice",
+                isArchiveFoodCandidate = true,
+            )
+            val pending = fixtureRecord(9_002L, "already_pending.jpg")
+            persistence.upsertAll(listOf(processed, pending))
+            assertEquals(1, database.photoDao().reopenSemanticsAfterBrokenRuntime())
+
+            val reopened = requireNotNull(database.photoDao().getById(processed.id))
+            assertEquals(IntelligenceStatus.PENDING.name, reopened.mlStatus)
+            assertEquals(false, reopened.isMlProcessed)
+            assertEquals(false, reopened.isArchiveFoodCandidate)
+            assertEquals(true, reopened.isFavorite)
+            assertEquals("private searchable invoice", reopened.ocrText)
+            assertEquals(IntelligenceStatus.PROCESSED.name, reopened.ocrStatus)
+
+            // A repeated interrupted upgrade is idempotent.
+            assertEquals(0, database.photoDao().reopenSemanticsAfterBrokenRuntime())
+            assertEquals(2, database.photoDao().getPhotoCount())
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
     fun getByIdsOrdered_aboveAndroidSqliteBindLimit_batchesAndPreservesOrder() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val database = Room.inMemoryDatabaseBuilder(

@@ -48,6 +48,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
@@ -57,6 +59,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import coil.request.CachePolicy
+import coil.request.ImageRequest
 import com.photobook.app.R
 import com.photobook.app.feature.phototextsearch.PhotoTextLayoutSource
 import com.photobook.app.feature.phototextsearch.PhotoTextSearchController
@@ -133,8 +137,9 @@ fun VaultBottomSheet(
                 }
 
                 else -> {
+                    val minCardWidth = if (LocalDensity.current.fontScale >= 1.5f) 320.dp else 128.dp
                     LazyVerticalGrid(
-                        columns = GridCells.Adaptive(minSize = 128.dp),
+                        columns = GridCells.Adaptive(minSize = minCardWidth),
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = 520.dp),
@@ -456,8 +461,17 @@ private fun VaultPreviewImage(
             )
         }
     } else {
+        val context = LocalContext.current
+        val request = remember(item.previewUri) {
+            ImageRequest.Builder(context)
+                .data(item.previewUri)
+                .memoryCachePolicy(CachePolicy.DISABLED)
+                .diskCachePolicy(CachePolicy.DISABLED)
+                .networkCachePolicy(CachePolicy.DISABLED)
+                .build()
+        }
         AsyncImage(
-            model = item.previewUri,
+            model = request,
             contentDescription = contentDescription,
             contentScale = contentScale,
             onError = { onPreviewError() },

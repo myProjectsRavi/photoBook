@@ -25,11 +25,11 @@ In-photo search is on-demand and fully local. Use the existing bundled Latin OCR
 
 ## Release truth and workflow
 
-`app/build.gradle.kts` is authoritative for checked-in metadata: `versionCode = 24`, `versionName = "2.0.17"`, `targetSdk = 36`. Play Console state is external and must be verified at upload time, not documented as fact. `finish_release.sh` only builds and verifies; it does not push, open browsers, or upload.
+`app/build.gradle.kts` is authoritative for checked-in release metadata. Do not duplicate versionCode/versionName in this guide; read the exact branch values from Gradle or run `./gradlew :app:printReleaseMetadata`. Play Console state is external and must be verified at upload time, not documented as repository fact. `finish_release.sh` only builds and verifies; it does not push, open browsers, or upload.
 
-Release already enables R8 optimization and resource shrinking with the optimized Android defaults. Preserve this configuration and verify the signed AAB, size gates, and runtime-critical keep rules after release changes.
+Release enables R8 optimization and resource shrinking with the optimized Android defaults. Preserve this configuration and verify the exact release output, size gates, runtime-critical keep rules, and packaged local assets after release changes.
 
-The signed bundle intended for Play upload is `app/build/outputs/bundle/release/app-release.aab`. Confirm its package, version code/name, signature, size gate, and bundled model asset from the exact built file.
+The release bundle path is `app/build/outputs/bundle/release/app-release.aab`. Confirm its package/version metadata from the built artifact, signature when applicable, size gates, and bundled model asset before any separate release decision. Preserve the existing 30 MiB APK gate and 20 MiB AAB gate; Blueprint 01 adds a stricter 30,000,000-byte delivered-APK ceiling for final certification rather than relaxing existing gates.
 
 Run the sequential gate:
 

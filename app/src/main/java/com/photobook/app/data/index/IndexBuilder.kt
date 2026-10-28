@@ -14,7 +14,18 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+
+data class IndexBuildTiming(
+    val elapsedMs: Long,
+    val count: Int,
+    val exifElapsedMs: Long,
+    val geocodeElapsedMs: Long,
+    val geocodeCount: Int,
+    val parallelism: Int,
+)
 
 class IndexBuilder @Inject constructor(
     private val mediaStoreScanner: MediaStoreScanner,
@@ -43,9 +54,44 @@ class IndexBuilder @Inject constructor(
         return records
     }
 
+    fun buildBasicRecords(rawPhotos: List<RawPhotoData>): List<PhotoRecord> {
+        if (rawPhotos.isEmpty()) return emptyList()
+        return rawPhotos.map { raw ->
+            val dateParts = DateUtils.toDateParts(raw.dateAdded)
+            PhotoRecord(
+                id = raw.id,
+                uriString = raw.uriString,
+                filePath = raw.filePath,
+                fileName = raw.fileName,
+                dateAdded = raw.dateAdded,
+                year = dateParts.year,
+                month = dateParts.month,
+                dayOfMonth = dateParts.dayOfMonth,
+                dayOfWeek = dateParts.dayOfWeekIso,
+                hourOfDay = dateParts.hourOfDay,
+                latitude = null,
+                longitude = null,
+                city = null,
+                state = null,
+                country = null,
+                fileSize = raw.fileSize,
+                width = raw.width,
+                height = raw.height,
+                mimeType = raw.mimeType,
+                folderName = raw.folderName.lowercase(),
+                folderPath = raw.folderPath.lowercase(),
+                cameraModel = null,
+                isFrontCamera = false,
+                isHdr = false,
+                sourceRevision = raw.generationModified ?: raw.dateModified,
+            )
+        }
+    }
+
     suspend fun buildIndexFromRaw(
         rawPhotos: List<RawPhotoData>,
         onProgress: (processed: Int, total: Int) -> Unit = { _, _ -> },
+        onTiming: (IndexBuildTiming) -> Unit = {},
     ): List<PhotoRecord> {
         return withContext(Dispatchers.IO) {
             if (rawPhotos.isEmpty()) {
@@ -62,6 +108,7 @@ class IndexBuilder @Inject constructor(
 
             var startIndex = 0
             while (startIndex < rawPhotos.size) {
+                currentCoroutineContext().ensureActive()
                 val endIndex = (startIndex + RECORD_BUILD_PARALLELISM).coerceAtMost(rawPhotos.size)
                 val batchResults = coroutineScope {
                     (startIndex until endIndex)
@@ -86,13 +133,23 @@ class IndexBuilder @Inject constructor(
                 startIndex = endIndex
             }
 
+            val timing = IndexBuildTiming(
+                elapsedMs = SystemClock.elapsedRealtime() - buildStartMs,
+                count = records.size,
+                exifElapsedMs = exifElapsedMs,
+                geocodeElapsedMs = geocodeElapsedMs,
+                geocodeCount = geocodeCount,
+                parallelism = RECORD_BUILD_PARALLELISM,
+            )
             Log.i(
                 PHASE4_TAG,
-                "stage=record_build elapsedMs=${SystemClock.elapsedRealtime() - buildStartMs} " +
-                    "count=${rawPhotos.size} exifElapsedMs=$exifElapsedMs " +
+                "stage=record_build elapsedMs=${timing.elapsedMs} " +
+                    "count=${timing.count} exifElapsedMs=$exifElapsedMs " +
                     "geocodeElapsedMs=$geocodeElapsedMs geocodeCount=$geocodeCount " +
                     "parallelism=$RECORD_BUILD_PARALLELISM",
             )
+            currentCoroutineContext().ensureActive()
+            onTiming(timing)
             records
         }
     }
@@ -147,6 +204,7 @@ class IndexBuilder @Inject constructor(
             ocrText = "",
             isOcrProcessed = false,
             ocrStatus = IntelligenceStatus.PENDING,
+            sourceRevision = raw.generationModified ?: raw.dateModified,
         )
         return MeasuredPhotoRecord(
             record = record,

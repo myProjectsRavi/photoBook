@@ -28,7 +28,7 @@ data class SearchContext(
 )
 
 class FilterFactory private constructor(
-    private val noteContains: (Long, String) -> Boolean,
+    private val noteContains: (PhotoRecord, String) -> Boolean,
 ) {
 
     @Inject
@@ -195,7 +195,7 @@ class FilterFactory private constructor(
                 photo.fileName.contains(normalized, ignoreCase = true) ||
                 photo.folderName.contains(normalized, ignoreCase = true) ||
                 photo.folderPath.contains(normalized, ignoreCase = true) ||
-                noteContains(photo.id, normalized)
+                noteContains(photo, normalized)
         }
     }
 

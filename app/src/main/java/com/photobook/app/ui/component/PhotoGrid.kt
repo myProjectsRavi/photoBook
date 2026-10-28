@@ -3,6 +3,8 @@ package com.photobook.app.ui.component
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,34 +13,48 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.paging.compose.LazyPagingItems
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.ui.model.TimelineMark
+import com.photobook.app.util.PerformanceProfiler
+import com.photobook.app.util.ThumbnailDecodePolicy
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 @Composable
@@ -50,18 +66,71 @@ fun PhotoGrid(
     isSelectionMode: Boolean,
     onPhotoClick: (PhotoRecord) -> Unit,
     onPhotoLongClick: (PhotoRecord) -> Unit,
+    gridState: LazyGridState,
     modifier: Modifier = Modifier,
+    bottomContentPadding: Dp = 0.dp,
 ) {
-    val gridState = rememberLazyGridState()
     val haptics = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
     val density = LocalDensity.current
+    val context = LocalContext.current
+    val maxThumbnailRequestSizePx = remember {
+        PerformanceProfiler.from(context).thumbnailRequestSizePx
+    }
 
     var scrubTrackHeightPx by remember { mutableFloatStateOf(1f) }
     var scrubY by remember { mutableFloatStateOf(0f) }
     var isScrubbing by remember { mutableStateOf(false) }
     var activeTimelineLabel by remember { mutableStateOf<String?>(null) }
-    var lastScrubTargetIndex by remember { mutableIntStateOf(-1) }
+    val scrubTargets = remember { ScrubGestureTargetTracker() }
+    var scrubScrollJob by remember { mutableStateOf<Job?>(null) }
+    var continuityAnchorId by remember { mutableStateOf<Long?>(null) }
+    var continuityAnchorOffset by remember { mutableIntStateOf(0) }
+    var lastObservedItemCount by remember { mutableIntStateOf(photos.itemCount) }
+
+    LaunchedEffect(gridState, photos) {
+        snapshotFlow {
+            val index = gridState.firstVisibleItemIndex
+            val offset = gridState.firstVisibleItemScrollOffset
+            val snapshot = photos.itemSnapshotList
+            val visibleId = GridContinuityPolicy.loadedItemAt(
+                index = index,
+                loadedItems = snapshot.items,
+                placeholdersBefore = snapshot.placeholdersBefore,
+            )?.id
+            visibleId to offset
+        }.collectLatest { (visibleId, offset) ->
+            if (visibleId != null) {
+                continuityAnchorId = visibleId
+                continuityAnchorOffset = offset
+            }
+        }
+    }
+
+    LaunchedEffect(photos.itemCount) {
+        val previousCount = lastObservedItemCount
+        lastObservedItemCount = photos.itemCount
+        if (previousCount != photos.itemCount && !gridState.isScrollInProgress) {
+            val anchorId = continuityAnchorId
+            if (anchorId != null) {
+                val snapshot = photos.itemSnapshotList
+                val target = GridContinuityPolicy.loadedAnchorIndex(
+                    anchorId = anchorId,
+                    loadedIds = snapshot.items.map { it.id },
+                    placeholdersBefore = snapshot.placeholdersBefore,
+                )
+                if (target != null && target != gridState.firstVisibleItemIndex) {
+                    gridState.scrollToItem(target, continuityAnchorOffset)
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(photos.itemCount) {
+        scrubScrollJob?.cancel()
+        scrubScrollJob = null
+        scrubTargets.reset()
+    }
 
     val sortedMarks = remember(timelineMarks) { timelineMarks.sortedBy { mark -> mark.index } }
 
@@ -69,14 +138,20 @@ fun PhotoGrid(
         val itemCount = photos.itemCount
         if (itemCount <= 0) return
 
+        // Validate the unmodified pointer value before clamping: infinity must not
+        // silently become a valid top/bottom scrub request.
+        val targetIndex = GridContinuityPolicy.scrubTargetIndex(
+            rawY = rawY,
+            trackHeightPx = scrubTrackHeightPx,
+            itemCount = itemCount,
+            visibleItemCount = gridState.layoutInfo.visibleItemsInfo.size,
+        ) ?: return
         val clampedY = rawY.coerceIn(0f, scrubTrackHeightPx)
-        val fraction = (clampedY / scrubTrackHeightPx).coerceIn(0f, 1f)
-        val targetIndex = ((itemCount - 1) * fraction).roundToInt().coerceIn(0, itemCount - 1)
         scrubY = clampedY
 
-        if (targetIndex != lastScrubTargetIndex) {
-            lastScrubTargetIndex = targetIndex
-            coroutineScope.launch {
+        if (scrubTargets.shouldDispatch(targetIndex)) {
+            scrubScrollJob?.cancel()
+            scrubScrollJob = coroutineScope.launch {
                 gridState.scrollToItem(targetIndex)
             }
         }
@@ -88,17 +163,42 @@ fun PhotoGrid(
         }
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val viewportWidthPx = with(density) {
+            maxWidth.toPx().roundToInt().coerceAtLeast(1)
+        }
+        val thumbnailBudget = remember(viewportWidthPx, columns, maxThumbnailRequestSizePx) {
+            ThumbnailDecodePolicy.forGrid(
+                viewportWidthPx = viewportWidthPx,
+                columns = columns,
+                maxRequestSizePx = maxThumbnailRequestSizePx,
+            )
+        }
+
         LazyVerticalGrid(
             state = gridState,
             columns = GridCells.Fixed(columns),
+            contentPadding = PaddingValues(bottom = bottomContentPadding),
             modifier = Modifier.fillMaxSize(),
         ) {
             items(
                 count = photos.itemCount,
-                key = { index -> photos.peek(index)?.id ?: "photo-placeholder-$index" },
+                key = { index ->
+                    val snapshot = photos.itemSnapshotList
+                    GridContinuityPolicy.loadedItemAt(
+                        index = index,
+                        loadedItems = snapshot.items,
+                        placeholdersBefore = snapshot.placeholdersBefore,
+                    )?.id ?: "photo-placeholder-$index"
+                },
             ) { index ->
-                val photo = photos[index]
+                // A generation swap can invalidate an already-scheduled LazyGrid item.
+                // Still access Paging for valid placeholders to trigger the next load.
+                val photo = if (index in 0 until photos.itemSnapshotList.size) {
+                    photos[index]
+                } else {
+                    null
+                }
                 if (photo == null) {
                     PhotoGridPlaceholder()
                     return@items
@@ -109,23 +209,68 @@ fun PhotoGrid(
                     showSelectionState = isSelectionMode,
                     onClick = { onPhotoClick(photo) },
                     onLongClick = { onPhotoLongClick(photo) },
+                    requestSizePx = thumbnailBudget.requestSizePx,
                 )
             }
         }
+
+        // Derive the passive thumb position from the visible grid. During a drag,
+        // keep the pointer-driven position to avoid fighting asynchronous scrollToItem.
+        val passiveScrubY by remember(gridState, photos.itemCount) {
+            derivedStateOf {
+                GridContinuityPolicy.scrubIndicatorY(
+                    firstVisibleIndex = gridState.firstVisibleItemIndex,
+                    visibleItemCount = gridState.layoutInfo.visibleItemsInfo.size,
+                    itemCount = photos.itemCount,
+                    trackHeightPx = scrubTrackHeightPx,
+                    canScrollBackward = gridState.canScrollBackward,
+                    canScrollForward = gridState.canScrollForward,
+                )
+            }
+        }
+        val displayedScrubY = if (isScrubbing) scrubY else passiveScrubY
 
         if (photos.itemCount > 1 && sortedMarks.isNotEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxHeight()
                     .align(Alignment.CenterEnd)
-                    .width(38.dp)
+                    // 54dp including the trailing 6dp inset gives a 48dp drag target.
+                    .width(54.dp)
                     .padding(end = 6.dp, top = 12.dp, bottom = 12.dp)
                     .onSizeChanged { size ->
                         scrubTrackHeightPx = size.height.toFloat().coerceAtLeast(1f)
                     }
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = context.getString(com.photobook.app.R.string.gallery_timeline_scrubber)
+                        progressBarRangeInfo = ProgressBarRangeInfo(
+                            current = (displayedScrubY / scrubTrackHeightPx).coerceIn(0f, 1f),
+                            range = 0f..1f,
+                        )
+                        setProgress { position ->
+                            val target = GridContinuityPolicy.scrubTargetIndex(
+                                rawY = position,
+                                trackHeightPx = 1f,
+                                itemCount = photos.itemCount,
+                                visibleItemCount = gridState.layoutInfo.visibleItemsInfo.size,
+                            )
+                            if (target == null) {
+                                false
+                            } else {
+                                // Accessibility actions must work even after ordinary scrolling
+                                // to the same target; touch-only dedup is not reused here.
+                                scrubScrollJob?.cancel()
+                                scrubScrollJob = coroutineScope.launch { gridState.scrollToItem(target) }
+                                true
+                            }
+                        }
+                    }
                     .pointerInput(photos.itemCount, sortedMarks) {
                         detectVerticalDragGestures(
                             onDragStart = { offset ->
+                                // Ordinary scrolling between touches may move away from the
+                                // previous target without changing the photo count.
+                                scrubTargets.reset()
                                 isScrubbing = true
                                 updateScrubPosition(offset.y)
                             },
@@ -134,6 +279,7 @@ fun PhotoGrid(
                                 activeTimelineLabel = null
                             },
                             onDragCancel = {
+                                scrubScrollJob?.cancel()
                                 isScrubbing = false
                                 activeTimelineLabel = null
                             },
@@ -158,7 +304,7 @@ fun PhotoGrid(
                         .align(Alignment.TopCenter)
                         .offset(
                             y = with(density) {
-                                (scrubY - if (isScrubbing) 10.dp.toPx() else 7.dp.toPx()).toDp()
+                                (displayedScrubY - if (isScrubbing) 10.dp.toPx() else 7.dp.toPx()).toDp()
                             },
                         )
                         .size(if (isScrubbing) 20.dp else 14.dp)

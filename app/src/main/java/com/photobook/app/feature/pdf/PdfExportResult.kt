@@ -2,6 +2,13 @@ package com.photobook.app.feature.pdf
 
 import android.net.Uri
 
+data class PdfExportProgress(
+    val totalItems: Int,
+    val processedItems: Int,
+    val writtenPages: Int,
+    val skippedItems: Int,
+)
+
 sealed interface PdfExportResult {
     data class Success(
         val uri: Uri,

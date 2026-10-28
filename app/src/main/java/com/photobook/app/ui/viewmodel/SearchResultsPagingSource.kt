@@ -4,6 +4,7 @@ import androidx.paging.PagingSource
 import androidx.paging.PagingState
 import com.photobook.app.data.index.IndexPersistence
 import com.photobook.app.data.model.PhotoRecord
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.min
 
 class SearchResultsPagingSource(
@@ -57,6 +58,9 @@ class SearchResultsPagingSource(
                 itemsAfter = (orderedPhotoIds.size - endExclusive).coerceAtLeast(0),
             )
         }.getOrElse { throwable ->
+            // Cancellation belongs to the retired Paging generation. Never publish
+            // it as a retryable load error or let stale work outlive its caller.
+            if (throwable is CancellationException) throw throwable
             LoadResult.Error(throwable)
         }
     }

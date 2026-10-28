@@ -12,6 +12,7 @@ import com.photobook.app.data.db.toPhotoRecord
 import com.photobook.app.data.model.IntelligenceStatus
 import com.photobook.app.data.model.MLTag
 import com.photobook.app.data.model.PhotoRecord
+import com.photobook.app.data.model.withRetainedStateFrom
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import javax.inject.Inject
@@ -34,6 +35,7 @@ class IndexPersistence @Inject constructor(
             val loadStartMs = SystemClock.elapsedRealtime()
             reopenLegacyOcrFailuresIfNeeded()
             reopenDerivedSemanticIntelligenceIfNeeded()
+            reopenBrokenSemanticRuntimeIfNeeded()
             val existing = photoDao.getAll().map { it.toPhotoRecord() }
             if (existing.isNotEmpty()) {
                 Log.i(
@@ -80,7 +82,7 @@ class IndexPersistence @Inject constructor(
                         .associateBy { entity -> entity.id }
                     val entities = batch.map { record ->
                         val current = currentById[record.id]?.toPhotoRecord()
-                        record.preserveCommittedMutableFields(current).toPhotoEntity()
+                        record.withRetainedStateFrom(current).toPhotoEntity()
                     }
                     photoDao.upsertPhotos(entities)
                     photoDao.upsertFtsRows(entities.map { it.toFtsEntity() })
@@ -210,6 +212,20 @@ class IndexPersistence @Inject constructor(
         // are refreshed atomically as the durable maintenance worker reprocesses each affected row.
     }
 
+    private suspend fun reopenBrokenSemanticRuntimeIfNeeded() {
+        if (dataRepairPreferences.getBoolean(KEY_SEMANTIC_RUNTIME_V3_REPAIR_COMPLETE, false)) return
+        val reopened = photoDao.reopenSemanticsAfterBrokenRuntime()
+        val committed = dataRepairPreferences.edit()
+            .putBoolean(KEY_SEMANTIC_RUNTIME_V3_REPAIR_COMPLETE, true)
+            .commit()
+        Log.i(
+            PHASE4_TAG,
+            "stage=semantic_runtime_v3_repair reopened=$reopened preferenceCommitted=$committed",
+        )
+        // An interrupted preference write simply retries the idempotent SQL update.
+        // ML is reprocessed in bounded worker batches, not synchronously during startup.
+    }
+
     private suspend fun replaceAll(records: List<PhotoRecord>) {
         database.withTransaction {
             if (records.isEmpty()) {
@@ -231,7 +247,7 @@ class IndexPersistence @Inject constructor(
                     .associateBy { entity -> entity.id }
                 val entities = batch.map { record ->
                     val current = currentById[record.id]?.toPhotoRecord()
-                    record.preserveCommittedMutableFields(current).toPhotoEntity()
+                    record.withRetainedStateFrom(current).toPhotoEntity()
                 }
                 photoDao.upsertPhotos(entities)
                 photoDao.upsertFtsRows(entities.map { it.toFtsEntity() })
@@ -241,22 +257,6 @@ class IndexPersistence @Inject constructor(
 
             deleteByIdsInternal(staleIds.toList())
         }
-    }
-
-    private fun PhotoRecord.preserveCommittedMutableFields(current: PhotoRecord?): PhotoRecord {
-        if (current == null) return this
-        return copy(
-            isFavorite = current.isFavorite,
-            perceptualHash = current.perceptualHash,
-            blurScore = current.blurScore,
-            mlTags = current.mlTags,
-            isArchiveFoodCandidate = current.isArchiveFoodCandidate,
-            isMlProcessed = current.isMlProcessed,
-            mlStatus = current.mlStatus,
-            ocrText = current.ocrText,
-            isOcrProcessed = current.isOcrProcessed,
-            ocrStatus = current.ocrStatus,
-        )
     }
 
     private suspend fun deleteByIdsInternal(ids: List<Long>) {
@@ -384,5 +384,7 @@ class IndexPersistence @Inject constructor(
         private const val KEY_OCR_ENGINE_REPAIR_COMPLETE = "ocr_engine_v1_repair_complete"
         private const val KEY_SEMANTIC_INTELLIGENCE_V2_REPAIR_COMPLETE =
             "semantic_intelligence_v2_repair_complete"
+        private const val KEY_SEMANTIC_RUNTIME_V3_REPAIR_COMPLETE =
+            "semantic_runtime_v3_repair_complete"
     }
 }

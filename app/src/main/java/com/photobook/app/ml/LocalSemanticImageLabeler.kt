@@ -64,10 +64,19 @@ class LocalSemanticImageLabeler @Inject constructor(
     private var initializationAttempted = false
     private var interpreter: InterpreterApi? = null
     private var modelSemantics: ModelSemantics? = null
+    private var initializationFailure: Throwable? = null
 
-    suspend fun labels(bitmap: Bitmap): List<LocalSemanticLabel> {
-        val activeInterpreter = ensureInterpreter() ?: return emptyList()
-        val semantics = modelSemantics ?: return emptyList()
+    /**
+     * A legitimately empty set of predictions is success. A broken packaged model/runtime
+     * is failure and MUST NOT be persisted as a completed semantic tagging pass.
+     */
+    suspend fun labels(bitmap: Bitmap): Result<List<LocalSemanticLabel>> {
+        val activeInterpreter = ensureInterpreter()
+            ?: return Result.failure(
+                initializationFailure ?: IllegalStateException("Bundled semantic model unavailable"),
+            )
+        val semantics = modelSemantics
+            ?: return Result.failure(IllegalStateException("Bundled semantic model metadata unavailable"))
 
         return inferenceMutex.withLock {
             try {
@@ -77,10 +86,20 @@ class LocalSemanticImageLabeler @Inject constructor(
                     Bitmap.createScaledBitmap(bitmap, INPUT_SIZE, INPUT_SIZE, true)
                 }
                 try {
-                    val input = bitmapToInput(scaledBitmap ?: bitmap)
-                    val output = ByteArray(OUTPUT_LABEL_COUNT)
+                    // Flat ByteArray input is treated as a rank-1 tensor by InterpreterApi,
+                    // causing implicit resize from [1,224,224,3] to [150528] and a native
+                    // CONV_2D allocation failure. Direct ByteBuffers preserve model shapes.
+                    val input = ByteBuffer.allocateDirect(INPUT_SIZE * INPUT_SIZE * CHANNEL_COUNT)
+                        .order(ByteOrder.nativeOrder())
+                    input.put(bitmapToInput(scaledBitmap ?: bitmap))
+                    input.rewind()
+                    val output = ByteBuffer.allocateDirect(OUTPUT_LABEL_COUNT)
+                        .order(ByteOrder.nativeOrder())
                     activeInterpreter.run(input, output)
-                    semantics.decode(output)
+                    output.rewind()
+                    val scores = ByteArray(OUTPUT_LABEL_COUNT)
+                    output.get(scores)
+                    Result.success(semantics.decode(scores))
                 } finally {
                     scaledBitmap?.recycle()
                 }
@@ -92,7 +111,7 @@ class LocalSemanticImageLabeler @Inject constructor(
                     message = "Local semantic image labeling failed",
                     throwable = error,
                 )
-                emptyList()
+                Result.failure(error)
             } catch (error: LinkageError) {
                 LocalDiagnostics.record(
                     context = context,
@@ -100,7 +119,7 @@ class LocalSemanticImageLabeler @Inject constructor(
                     message = "Local semantic image labeling runtime failed to link",
                     throwable = error,
                 )
-                emptyList()
+                Result.failure(error)
             }
         }
     }
@@ -117,8 +136,13 @@ class LocalSemanticImageLabeler @Inject constructor(
                     modelBuffer,
                     InterpreterApi.Options()
                         .setRuntime(TfLiteRuntime.FROM_APPLICATION_ONLY)
-                        .setNumThreads(1),
+                        .setNumThreads(1)
+                        // Native x86 inference in the 2 GiB offline matrix was killed
+                        // near 1.4 GiB RSS with the default XNNPACK delegate.
+                        // Bound the model to the one-thread reference CPU kernels.
+                        .setUseXNNPACK(false),
                 )
+                initializationFailure = null
             } catch (error: Exception) {
                 if (error is CancellationException) {
                     initializationAttempted = false
@@ -130,6 +154,7 @@ class LocalSemanticImageLabeler @Inject constructor(
                     message = "Local semantic runtime is unavailable; Food archive is disabled for this pass",
                     throwable = error,
                 )
+                initializationFailure = error
                 interpreter = null
                 modelSemantics = null
             } catch (error: LinkageError) {
@@ -139,6 +164,7 @@ class LocalSemanticImageLabeler @Inject constructor(
                     message = "Local semantic runtime failed to link; Food archive is disabled for this pass",
                     throwable = error,
                 )
+                initializationFailure = error
                 interpreter = null
                 modelSemantics = null
             }
@@ -232,7 +258,7 @@ class LocalSemanticImageLabeler @Inject constructor(
                         unit.optionsType() == ProcessUnitOptions.ScoreCalibrationOptions
                     }
                 val calibrationOptions = calibrationUnit
-                    ?.options(null) as? ScoreCalibrationOptions
+                    ?.options(ScoreCalibrationOptions()) as? ScoreCalibrationOptions
                 val associatedFileNames = (0 until outputMetadata.associatedFilesLength())
                     .map { index -> outputMetadata.associatedFiles(index).name() }
                 val labels = associatedFileNames

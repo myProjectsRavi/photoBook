@@ -3,8 +3,11 @@ package com.photobook.app.ui.viewmodel
 import android.content.Context
 import android.content.SharedPreferences
 import android.database.ContentObserver
+import android.database.sqlite.SQLiteException
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
 import android.provider.MediaStore
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -17,18 +20,24 @@ import com.photobook.app.data.index.IndexPersistence
 import com.photobook.app.data.index.PhotoIndex
 import com.photobook.app.data.model.PhotoRecord
 import com.photobook.app.data.model.RawPhotoData
+import com.photobook.app.data.model.withRetainedStateFrom
 import com.photobook.app.data.source.MediaStoreScanner
+import com.photobook.app.data.source.MediaStoreScanException
 import com.photobook.app.feature.archive.ArchiveCandidate
 import com.photobook.app.feature.archive.ArchiveDueDeleteItem
+import com.photobook.app.feature.archive.ArchivePublicationGate
 import com.photobook.app.feature.archive.ArchiveService
+import com.photobook.app.feature.cleanup.CleanupSelectionPolicy
 import com.photobook.app.feature.declutter.DeclutterCandidate
 import com.photobook.app.feature.declutter.DeclutterReason
 import com.photobook.app.feature.declutter.DeclutterSession
+import com.photobook.app.feature.duplicates.CleanupGroupPolicy
 import com.photobook.app.feature.duplicates.DuplicatePhotoFinder
 import com.photobook.app.feature.duplicates.DuplicatePhotoGroup
 import com.photobook.app.feature.duplicates.DuplicateMatchKind
 import com.photobook.app.feature.memories.MemoryCurator
 import com.photobook.app.feature.memories.MemoryStory
+import com.photobook.app.feature.memories.MemoryStoryLaunchPolicy
 import com.photobook.app.feature.notes.PhotoNoteStore
 import com.photobook.app.ml.TaggingWorker
 import com.photobook.app.search.FilterEngine
@@ -47,8 +56,13 @@ import com.photobook.app.search.TokenClassifier
 import com.photobook.app.search.UtilityKind
 import com.photobook.app.search.isUtilityPhoto
 import com.photobook.app.search.utilityKind
+import com.photobook.app.ui.model.AlbumCatalogBuilder
+import com.photobook.app.ui.model.AlbumDescriptor
+import com.photobook.app.ui.model.AlbumPersonalizationPolicy
+import com.photobook.app.ui.model.AlbumScope
 import com.photobook.app.ui.model.HomeFeedMode
 import com.photobook.app.ui.model.TimelineMark
+import com.photobook.app.ui.model.filterAlbumScopeRecords
 import com.photobook.app.util.Constants
 import com.photobook.app.util.PermissionUtils
 import com.photobook.app.widget.OnThisDayWidgetProvider
@@ -57,8 +71,10 @@ import com.photobook.app.worker.ArchiveScanWorker
 import com.photobook.app.worker.TrashPurgeWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.IOException
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -78,6 +94,7 @@ import kotlinx.coroutines.withContext
 import androidx.paging.cachedIn
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
 @HiltViewModel
@@ -105,8 +122,15 @@ class MainViewModel @Inject constructor(
         val photoAccessMode: PermissionUtils.PhotoAccessMode = PermissionUtils.PhotoAccessMode.None,
         val isIndexing: Boolean = false,
         val indexProgress: Float = 0f,
+        val basicBrowseReady: Boolean = false,
+        val enrichmentScheduled: Boolean = false,
         val searchReady: Boolean = false,
+        val indexErrorMessage: String? = null,
         val query: String = "",
+        val albumCatalog: List<AlbumDescriptor> = emptyList(),
+        val pinnedAlbumKeys: List<String> = emptyList(),
+        val memoriesHidden: Boolean = false,
+        val activeAlbum: AlbumDescriptor? = null,
         val photoCount: Int = 0,
         val resultCount: Int = 0,
         val resultQuery: String = "",
@@ -129,6 +153,8 @@ class MainViewModel @Inject constructor(
         val timelineMarks: List<TimelineMark> = emptyList(),
         val duplicateGroups: List<DuplicatePhotoGroup> = emptyList(),
         val isFindingDuplicates: Boolean = false,
+        val duplicateScanProgress: Float? = null,
+        val duplicateScanIncomplete: Boolean = false,
         val showDuplicateFinder: Boolean = false,
         val isDeclutterLoading: Boolean = false,
         val declutterSession: DeclutterSession? = null,
@@ -148,20 +174,28 @@ class MainViewModel @Inject constructor(
 
     private val queryFlow = MutableStateFlow("")
     private val focusFlow = MutableStateFlow(false)
+    private var albumCatalogCacheKey: Pair<Long, Long>? = null
+    private var albumCatalogCache: List<AlbumDescriptor> = emptyList()
 
     @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
     val pagedResults: kotlinx.coroutines.flow.Flow<PagingData<PhotoRecord>> = combine(
         queryFlow.debounce(Constants.SEARCH_DEBOUNCE_MS),
         photoIndex.changes().debounce(RECORDS_UPDATE_DEBOUNCE_MS),
-        uiState.map { it.favoritesOnly }.distinctUntilChanged(),
-        uiState.map { it.feedMode }.distinctUntilChanged(),
+        uiState.map {
+            SearchFilterState(
+                favoritesOnly = it.favoritesOnly,
+                feedMode = it.feedMode,
+                albumScope = it.activeAlbum?.scope,
+            )
+        }.distinctUntilChanged(),
         photoNoteStore.changes(),
-    ) { query, indexVersion, favoritesOnly, feedMode, noteVersion ->
+    ) { query, indexVersion, filters, noteVersion ->
         SearchFlowInput(
             query = query,
             indexVersion = indexVersion,
-            favoritesOnly = favoritesOnly,
-            feedMode = feedMode,
+            favoritesOnly = filters.favoritesOnly,
+            feedMode = filters.feedMode,
+            albumScope = filters.albumScope,
             noteVersion = noteVersion,
         )
     }.flatMapLatest { input ->
@@ -171,29 +205,69 @@ class MainViewModel @Inject constructor(
         // but an older record set can never be stamped with a newer access generation.
         val accessScopedSnapshot = captureAccessScopedPhotoSnapshot(photoIndex, accessGenerationGate)
         val records = accessScopedSnapshot.records
+        val albumCatalog = albumCatalogFor(
+            records = records,
+            indexVersion = input.indexVersion,
+            accessGeneration = accessScopedSnapshot.accessGeneration,
+        )
+        val smartQueryIds = when (val scope = input.albumScope) {
+            is AlbumScope.SmartQuery -> withContext(Dispatchers.Default) {
+                filterEngine.search(scope.query, records).results.mapTo(mutableSetOf()) { it.id }
+            }
+            else -> emptySet()
+        }
+        val scopedRecords = withContext(Dispatchers.Default) {
+            filterAlbumScopeRecords(
+                records = records,
+                scope = input.albumScope,
+                smartQueryIds = smartQueryIds,
+            )
+        }
+        val scopedIds = if (input.albumScope == null) {
+            null
+        } else {
+            scopedRecords.mapTo(HashSet(scopedRecords.size)) { it.id }
+        }
         val searchResult = runSearch(
             query = input.query,
             records = records,
             expectedIndexVersion = input.indexVersion,
             noteRevision = input.noteVersion,
         )
+        val albumScopedIds = scopedIds?.let { allowed ->
+            searchResult.orderedIds.filter { it in allowed }
+        } ?: searchResult.orderedIds
         val filteredIds = if (input.favoritesOnly) {
-            searchResult.orderedIds.filter { id ->
+            albumScopedIds.filter { id ->
                 photoIndex.getByIdFromSnapshot(records, id)?.isFavorite == true
             }
         } else {
-            searchResult.orderedIds
+            albumScopedIds
         }
 
-        latestSearchResultIds = searchResult.orderedIds
+        latestSearchResultIds = albumScopedIds
         latestVisibleResultIds = filteredIds
 
         val timelineMarks = withContext(Dispatchers.Default) {
             buildTimelineMarks(filteredIds, records)
         }
 
+        val sanitizedPinnedKeys = AlbumPersonalizationPolicy.sanitizePinnedKeys(
+            uiState.value.pinnedAlbumKeys,
+            albumCatalog,
+        )
+        if (sanitizedPinnedKeys != uiState.value.pinnedAlbumKeys) {
+            sharedPreferences.edit()
+                .putString(PINNED_ALBUM_KEYS_KEY, AlbumPersonalizationPolicy.encodePinnedKeys(sanitizedPinnedKeys))
+                .apply()
+        }
         uiState.update { state ->
             state.copy(
+                albumCatalog = albumCatalog,
+                pinnedAlbumKeys = sanitizedPinnedKeys,
+                activeAlbum = state.activeAlbum?.let { active ->
+                    albumCatalog.firstOrNull { descriptor -> descriptor.key == active.key }
+                },
                 photoCount = records.size,
                 resultCount = filteredIds.size,
                 resultQuery = input.query,
@@ -229,7 +303,9 @@ class MainViewModel @Inject constructor(
     private var mediaObserver: ContentObserver? = null
     private var mediaRebuildJob: Job? = null
     private var permissionReconcileJob: Job? = null
+    private var cleanupScanJob: Job? = null
     private val accessGenerationGate = AccessGenerationGate()
+    private val archivePublicationGate = ArchivePublicationGate()
     private val memoryPublicationLock = Any()
     private val memoryRefreshRequests = Channel<MemoryRefreshRequest>(capacity = Channel.CONFLATED)
     private val memoryRefreshJob: Job = viewModelScope.launch(Dispatchers.Default) {
@@ -240,22 +316,27 @@ class MainViewModel @Inject constructor(
                 if (!accessGenerationGate.isCurrent(request.accessGeneration)) {
                     return@synchronized
                 }
+                var publishWidgetStory = false
                 uiState.update { state ->
+                    publishWidgetStory = !state.memoriesHidden
                     state.copy(
                         memoryStories = curated,
                         onThisDayStory = onThisDay,
                     )
                 }
                 // Keep the generation check and widget cache write in the same publication
-                // critical section as access invalidation. Otherwise an access change could
-                // clear the widget between the check and this write, allowing stale IDs back in.
-                OnThisDayWidgetProvider.cacheStory(context, onThisDay)
+                // critical section as access invalidation. A hidden Memories preference must also
+                // clear widget story IDs so the launcher cannot bypass the in-app privacy choice.
+                OnThisDayWidgetProvider.cacheStory(
+                    context,
+                    if (publishWidgetStory) onThisDay else null,
+                )
             }
         }
     }
     private var latestSearchResultIds: List<Long> = emptyList()
     private var latestVisibleResultIds: List<Long> = emptyList()
-    private var lastMemoryRecordsIdentity: Int = 0
+    private var lastMemoryStructuralRevision: Long = -1L
     private var lastMemoryAccessGeneration: Long = -1L
     private var pendingStoryLaunch: PendingStoryLaunch? = null
 
@@ -264,11 +345,18 @@ class MainViewModel @Inject constructor(
         val accessGeneration: Long,
     )
 
+    private data class SearchFilterState(
+        val favoritesOnly: Boolean,
+        val feedMode: HomeFeedMode,
+        val albumScope: AlbumScope?,
+    )
+
     private data class SearchFlowInput(
         val query: String,
         val indexVersion: Long,
         val favoritesOnly: Boolean,
         val feedMode: HomeFeedMode,
+        val albumScope: AlbumScope?,
         val noteVersion: Long,
     )
 
@@ -288,8 +376,15 @@ class MainViewModel @Inject constructor(
     )
 
     init {
+        val persistedPins = AlbumPersonalizationPolicy.decodePinnedKeys(
+            sharedPreferences.getString(PINNED_ALBUM_KEYS_KEY, ""),
+        )
         uiState.update {
-            it.copy(reelsEnabled = sharedPreferences.getBoolean(REELS_ENABLED_KEY, false))
+            it.copy(
+                reelsEnabled = sharedPreferences.getBoolean(REELS_ENABLED_KEY, false),
+                pinnedAlbumKeys = persistedPins,
+                memoriesHidden = sharedPreferences.getBoolean(MEMORIES_HIDDEN_KEY, false),
+            )
         }
         observeSuggestions()
     }
@@ -362,15 +457,23 @@ class MainViewModel @Inject constructor(
                     // Archive sheet is closed, so permission reselection must clamp Archive state
                     // on every reconciliation, not only while the sheet is open.
                     loadArchiveSummary(refreshCandidates = false)
-                } finally {
+                    clearIndexFailure()
                     if (accessModeChanged) {
                         uiState.update {
                             it.copy(
-                                isIndexing = false,
                                 indexProgress = 1f,
                                 searchReady = true,
                             )
                         }
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    if (!isRecoverableIndexFailure(failure)) throw failure
+                    publishIndexFailure()
+                } finally {
+                    if (accessModeChanged) {
+                        uiState.update { it.copy(isIndexing = false) }
                     }
                 }
             }
@@ -393,9 +496,24 @@ class MainViewModel @Inject constructor(
     }
 
     fun openStoryFromPhotoIds(photoIds: List<Long>, title: String) {
-        if (!openStoryFromIdsInternal(photoIds, title)) {
-            pendingStoryLaunch = PendingStoryLaunch(photoIds = photoIds, title = title)
+        if (uiState.value.memoriesHidden) {
+            pendingStoryLaunch = null
+            return
         }
+        if (photoIds.isEmpty() ||
+            photoIds.size > MemoryStoryLaunchPolicy.MAX_WIDGET_STORY_IDS ||
+            photoIds.any { id -> id <= 0L } ||
+            photoIds.toSet().size != photoIds.size
+        ) {
+            pendingStoryLaunch = null
+            return
+        }
+        if (photoIndex.size() == 0) {
+            pendingStoryLaunch = PendingStoryLaunch(photoIds = photoIds, title = title)
+            return
+        }
+        pendingStoryLaunch = null
+        openExternalStoryFromIds(photoIds, title)
     }
 
     fun onQueryChanged(query: String) {
@@ -436,18 +554,70 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    fun onSourceSelected(source: PhotoSource) {
-        val query = "source:${source.token}"
-        queryFlow.value = query
+    fun onAlbumSelected(descriptor: AlbumDescriptor) {
         uiState.update {
             it.copy(
-                query = query,
+                activeAlbum = descriptor,
                 selectedPhotoIds = emptySet(),
                 viewerStartIndex = null,
                 viewerUsesVisibleWindow = false,
                 showSuggestions = false,
             )
         }
+    }
+
+    fun clearAlbumScope() {
+        uiState.update {
+            it.copy(
+                activeAlbum = null,
+                selectedPhotoIds = emptySet(),
+                viewerStartIndex = null,
+                viewerUsesVisibleWindow = false,
+            )
+        }
+    }
+
+
+    fun onToggleAlbumPinned(descriptor: AlbumDescriptor) {
+        val state = uiState.value
+        val requested = if (descriptor.key in state.pinnedAlbumKeys) {
+            state.pinnedAlbumKeys.filterNot { it == descriptor.key }
+        } else {
+            state.pinnedAlbumKeys + descriptor.key
+        }
+        val sanitized = AlbumPersonalizationPolicy.sanitizePinnedKeys(requested, state.albumCatalog)
+        sharedPreferences.edit()
+            .putString(PINNED_ALBUM_KEYS_KEY, AlbumPersonalizationPolicy.encodePinnedKeys(sanitized))
+            .apply()
+        uiState.update { it.copy(pinnedAlbumKeys = sanitized) }
+    }
+
+    fun onToggleMemoriesHidden() {
+        val hidden = !uiState.value.memoriesHidden
+        sharedPreferences.edit().putBoolean(MEMORIES_HIDDEN_KEY, hidden).apply()
+        uiState.update { state ->
+            state.copy(
+                memoriesHidden = hidden,
+                storyViewerPhotos = if (hidden) emptyList() else state.storyViewerPhotos,
+                storyViewerTitle = if (hidden) "" else state.storyViewerTitle,
+            )
+        }
+        synchronized(memoryPublicationLock) {
+            OnThisDayWidgetProvider.cacheStory(
+                context,
+                if (hidden) null else uiState.value.onThisDayStory,
+            )
+        }
+        if (hidden) {
+            pendingStoryLaunch = null
+        }
+    }
+
+    fun onSourceSelected(source: PhotoSource) {
+        val descriptor = uiState.value.albumCatalog.firstOrNull { item ->
+            (item.scope as? AlbumScope.Source)?.source == source
+        } ?: return
+        onAlbumSelected(descriptor)
     }
 
     fun onSuggestionSelected(suggestion: SuggestionItem) {
@@ -523,7 +693,7 @@ class MainViewModel @Inject constructor(
                 }
             }
 
-            if (openedViewer) {
+            if (openedViewer && shouldEnqueueFocusedTagging(uiState.value.reelsEnabled)) {
                 runCatching { TaggingWorker.enqueueFocusedPhoto(context, photo.id) }
             }
         }
@@ -614,6 +784,7 @@ class MainViewModel @Inject constructor(
         uiState.update {
             it.copy(
                 query = "",
+                activeAlbum = null,
                 favoritesOnly = false,
                 feedMode = HomeFeedMode.Timeline,
                 selectedPhotoIds = emptySet(),
@@ -632,6 +803,18 @@ class MainViewModel @Inject constructor(
         uiState.update { it.copy(selectedPhotoIds = emptySet()) }
     }
 
+    suspend fun loadPrivateNote(photo: PhotoRecord): String = withContext(Dispatchers.IO) {
+        photoNoteStore.getNote(photo)
+    }
+
+    suspend fun savePrivateNote(photo: PhotoRecord, note: String): Boolean = withContext(Dispatchers.IO) {
+        photoNoteStore.saveNote(photo, note)
+    }
+
+    suspend fun deletePrivateNote(photo: PhotoRecord): Boolean = withContext(Dispatchers.IO) {
+        photoNoteStore.deleteNote(photo)
+    }
+
     fun onPhotosMovedToTrash(photoIds: Set<Long>) {
         if (photoIds.isEmpty()) return
         viewModelScope.launch {
@@ -641,10 +824,14 @@ class MainViewModel @Inject constructor(
 
     fun onArchivePhotosMovedToTrash(photoIds: Set<Long>, retentionDays: Int) {
         if (photoIds.isEmpty()) return
+        val publicationRevision = archivePublicationGate.begin()
         viewModelScope.launch {
             archiveService.markTrashed(photoIds, retentionDays)
             removePhotosAfterTrash(photoIds)
-            loadArchiveSummary(refreshCandidates = false)
+            loadArchiveSummary(
+                refreshCandidates = false,
+                publicationRevision = publicationRevision,
+            )
         }
     }
 
@@ -652,10 +839,22 @@ class MainViewModel @Inject constructor(
         val state = uiState.value
         val currentIndex = state.viewerPhotos.indexOfFirst { photo -> photo.id == photoId }
         if (currentIndex < 0) return
-        runCatching { TaggingWorker.enqueueFocusedPhoto(context, photoId) }
+        // Reels swipes can advance many photos in seconds. Per-page expedited
+        // OCR/ML work competes with the active pager for memory and CPU,
+        // especially on 2 GB devices. Let durable library maintenance handle
+        // those photos instead of scheduling one worker per swipe.
+        if (shouldEnqueueFocusedTagging(state.reelsEnabled)) {
+            runCatching { TaggingWorker.enqueueFocusedPhoto(context, photoId) }
+        }
         if (
             state.viewerUsesVisibleWindow &&
-            shouldRecentreViewerWindow(currentIndex, state.viewerPhotos.size)
+            shouldRecentreViewerWindow(
+                currentIndex = currentIndex,
+                windowSize = state.viewerPhotos.size,
+                atVisibleStart = state.viewerPhotos.firstOrNull()?.id == latestVisibleResultIds.firstOrNull(),
+                atVisibleEnd = state.viewerPhotos.lastOrNull()?.id == latestVisibleResultIds.lastOrNull(),
+                threshold = VIEWER_WINDOW_RECENTER_THRESHOLD,
+            )
         ) {
             val window = resolveVisiblePhotoWindow(photoId)
             if (window != null) {
@@ -725,6 +924,7 @@ class MainViewModel @Inject constructor(
     }
 
     fun openArchives() {
+        val publicationRevision = archivePublicationGate.begin()
         uiState.update {
             it.copy(
                 showArchives = true,
@@ -735,12 +935,13 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             loadArchiveSummary(
                 refreshCandidates = true,
-                preselectCandidates = true,
+                publicationRevision = publicationRevision,
             )
         }
     }
 
     fun refreshArchives() {
+        val publicationRevision = archivePublicationGate.begin()
         viewModelScope.launch {
             uiState.update { it.copy(isArchivesLoading = true) }
             runCatching {
@@ -749,8 +950,8 @@ class MainViewModel @Inject constructor(
                 syncMediaStoreIncremental(forceFullSync = true)
                 loadArchiveSummary(
                     refreshCandidates = true,
-                    preselectCandidates = true,
                     fullLibraryScan = true,
+                    publicationRevision = publicationRevision,
                 )
             }.onFailure {
                 // A revoked/partial MediaStore permission must leave the dialog usable.
@@ -760,6 +961,7 @@ class MainViewModel @Inject constructor(
     }
 
     fun dismissArchives() {
+        archivePublicationGate.invalidate()
         uiState.update {
             it.copy(
                 showArchives = false,
@@ -770,13 +972,17 @@ class MainViewModel @Inject constructor(
     }
 
     fun setArchiveRetentionDays(days: Int) {
+        val publicationRevision = archivePublicationGate.begin()
         viewModelScope.launch {
             val normalized = archiveService.setRetentionDays(days)
-            uiState.update { it.copy(archiveRetentionDays = normalized) }
+            if (archivePublicationGate.isCurrent(publicationRevision)) {
+                uiState.update { it.copy(archiveRetentionDays = normalized) }
+            }
         }
     }
 
     fun setArchivesEnabled(enabled: Boolean) {
+        val publicationRevision = archivePublicationGate.begin()
         viewModelScope.launch {
             uiState.update { state ->
                 state.copy(
@@ -800,12 +1006,13 @@ class MainViewModel @Inject constructor(
             }
             applyArchiveSummary(
                 summary = summary,
-                preselectCandidates = enabled,
+                publicationRevision = publicationRevision,
             )
         }
     }
 
     fun setArchivePaymentsEnabled(enabled: Boolean) {
+        val publicationRevision = archivePublicationGate.begin()
         viewModelScope.launch {
             uiState.update { state ->
                 state.copy(
@@ -820,12 +1027,13 @@ class MainViewModel @Inject constructor(
             )
             applyArchiveSummary(
                 summary = summary,
-                preselectCandidates = summary.enabled,
+                publicationRevision = publicationRevision,
             )
         }
     }
 
     fun setArchiveFoodEnabled(enabled: Boolean) {
+        val publicationRevision = archivePublicationGate.begin()
         viewModelScope.launch {
             uiState.update { state ->
                 state.copy(
@@ -840,7 +1048,7 @@ class MainViewModel @Inject constructor(
             )
             applyArchiveSummary(
                 summary = summary,
-                preselectCandidates = summary.enabled,
+                publicationRevision = publicationRevision,
             )
         }
     }
@@ -867,16 +1075,24 @@ class MainViewModel @Inject constructor(
     fun keepSelectedArchiveCandidates() {
         val selectedIds = uiState.value.archiveSelectedPhotoIds
         if (selectedIds.isEmpty()) return
+        val publicationRevision = archivePublicationGate.begin()
         viewModelScope.launch {
             archiveService.markKept(selectedIds)
-            loadArchiveSummary(refreshCandidates = false)
+            loadArchiveSummary(
+                refreshCandidates = false,
+                publicationRevision = publicationRevision,
+            )
         }
     }
 
     fun keepArchiveCandidate(photoId: Long) {
+        val publicationRevision = archivePublicationGate.begin()
         viewModelScope.launch {
             archiveService.markKept(setOf(photoId))
-            loadArchiveSummary(refreshCandidates = false)
+            loadArchiveSummary(
+                refreshCandidates = false,
+                publicationRevision = publicationRevision,
+            )
         }
     }
 
@@ -898,14 +1114,19 @@ class MainViewModel @Inject constructor(
 
     fun onArchiveDueItemsDeleted(photoIds: Set<Long>) {
         if (photoIds.isEmpty()) return
+        val publicationRevision = archivePublicationGate.begin()
         viewModelScope.launch {
             archiveService.markDueDeleted(photoIds)
-            loadArchiveSummary(refreshCandidates = false)
+            loadArchiveSummary(
+                refreshCandidates = false,
+                publicationRevision = publicationRevision,
+            )
         }
     }
 
     fun openDeclutterSwipe() {
-        viewModelScope.launch {
+        cleanupScanJob?.cancel()
+        cleanupScanJob = viewModelScope.launch {
             uiState.update {
                 it.copy(
                     isDeclutterLoading = true,
@@ -913,30 +1134,37 @@ class MainViewModel @Inject constructor(
                     declutterCurrentPhoto = null,
                 )
             }
+            try {
+                val records = photoIndex.snapshot()
+                val groups = if (uiState.value.duplicateGroups.isNotEmpty()) {
+                    uiState.value.duplicateGroups
+                } else {
+                    duplicatePhotoFinder.findDuplicates(records)
+                }
+                currentCoroutineContext().ensureActive()
 
-            val records = photoIndex.snapshot()
-            val groups = if (uiState.value.duplicateGroups.isNotEmpty()) {
-                uiState.value.duplicateGroups
-            } else {
-                duplicatePhotoFinder.findDuplicates(records)
-            }
-
-            val candidates = withContext(Dispatchers.Default) {
-                buildDeclutterCandidates(records, groups)
-            }
-            val session = DeclutterSession(candidates = candidates)
-            uiState.update { state ->
-                state.copy(
-                    duplicateGroups = if (state.duplicateGroups.isEmpty()) groups else state.duplicateGroups,
-                    isDeclutterLoading = false,
-                    declutterSession = session,
-                    declutterCurrentPhoto = resolveDeclutterCurrentPhoto(session, records),
-                )
+                val candidates = withContext(Dispatchers.Default) {
+                    buildDeclutterCandidates(records, groups)
+                }
+                currentCoroutineContext().ensureActive()
+                val session = DeclutterSession(candidates = candidates)
+                uiState.update { state ->
+                    state.copy(
+                        duplicateGroups = if (state.duplicateGroups.isEmpty()) groups else state.duplicateGroups,
+                        isDeclutterLoading = false,
+                        declutterSession = session,
+                        declutterCurrentPhoto = resolveDeclutterCurrentPhoto(session, records),
+                    )
+                }
+            } finally {
+                uiState.update { it.copy(isDeclutterLoading = false) }
             }
         }
     }
 
     fun dismissDeclutterSwipe() {
+        cleanupScanJob?.cancel()
+        cleanupScanJob = null
         uiState.update {
             it.copy(
                 isDeclutterLoading = false,
@@ -957,14 +1185,7 @@ class MainViewModel @Inject constructor(
     fun onDeclutterUndo() {
         uiState.update { state ->
             val session = state.declutterSession ?: return@update state
-            if (session.currentIndex <= 0 || session.candidates.isEmpty()) return@update state
-            val previousIndex = session.currentIndex - 1
-            val previousCandidate = session.candidates.getOrNull(previousIndex) ?: return@update state
-            val nextSession = session.copy(
-                currentIndex = previousIndex,
-                markedTrashIds = session.markedTrashIds - previousCandidate.photoId,
-                keptIds = session.keptIds - previousCandidate.photoId,
-            )
+            val nextSession = session.undoLast()
             state.copy(
                 declutterSession = nextSession,
                 declutterCurrentPhoto = resolveDeclutterCurrentPhoto(nextSession, photoIndex.snapshot()),
@@ -980,25 +1201,56 @@ class MainViewModel @Inject constructor(
     }
 
     fun refreshDuplicateGroups() {
-        viewModelScope.launch {
+        cleanupScanJob?.cancel()
+        cleanupScanJob = viewModelScope.launch {
             uiState.update {
                 it.copy(
                     isFindingDuplicates = true,
+                    duplicateScanProgress = 0f,
+                    duplicateScanIncomplete = false,
                     showDuplicateFinder = true,
                 )
             }
-            val groups = duplicatePhotoFinder.findDuplicates(photoIndex.snapshot())
-            uiState.update {
-                it.copy(
-                    duplicateGroups = groups,
-                    isFindingDuplicates = false,
-                )
+            try {
+                val groups = duplicatePhotoFinder.findDuplicates(photoIndex.snapshot()) { progress ->
+                    uiState.update { state ->
+                        state.copy(duplicateScanProgress = progress.coerceIn(0f, 1f))
+                    }
+                }
+                currentCoroutineContext().ensureActive()
+                uiState.update {
+                    it.copy(
+                        duplicateGroups = groups,
+                        isFindingDuplicates = false,
+                        duplicateScanProgress = 1f,
+                        duplicateScanIncomplete = false,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                uiState.update {
+                    it.copy(
+                        isFindingDuplicates = false,
+                        duplicateScanIncomplete = true,
+                    )
+                }
+                throw cancelled
+            } finally {
+                uiState.update { it.copy(isFindingDuplicates = false) }
             }
         }
     }
 
     fun dismissDuplicateFinder() {
-        uiState.update { it.copy(showDuplicateFinder = false) }
+        cleanupScanJob?.cancel()
+        cleanupScanJob = null
+        uiState.update {
+            it.copy(
+                showDuplicateFinder = false,
+                isFindingDuplicates = false,
+                duplicateScanIncomplete = it.duplicateScanProgress != null &&
+                    it.duplicateScanProgress < 1f,
+            )
+        }
     }
 
     fun openDuplicatePhoto(groupId: String, index: Int) {
@@ -1046,11 +1298,15 @@ class MainViewModel @Inject constructor(
 
     private fun initializeIndex(accessGeneration: Long) {
         viewModelScope.launch {
-            uiState.update {
+            try {
+                uiState.update {
                 it.copy(
                     isIndexing = true,
                     indexProgress = 0f,
+                    basicBrowseReady = false,
+                    enrichmentScheduled = false,
                     searchReady = false,
+                    indexErrorMessage = null,
                 )
             }
 
@@ -1082,21 +1338,38 @@ class MainViewModel @Inject constructor(
                 accessGenerationGate.markPublished(accessGeneration)
             }
 
+            val accessSafePersistedCount = photoIndex.snapshot().size
+            uiState.update { state ->
+                state.copy(
+                    basicBrowseReady = StartupReadinessPolicy.canBrowse(
+                        hasPhotoPermission = state.hasPhotoPermission,
+                        publishedVisiblePhotoCount = accessSafePersistedCount,
+                        baseSyncComplete = false,
+                    ),
+                )
+            }
+
             syncMediaStoreIncremental(
                 forceFullSync = photoIndex.snapshot().isEmpty(),
                 accessGenerationHint = accessGeneration,
             )
 
-            uiState.update {
-                it.copy(
+            uiState.update { state ->
+                state.copy(
                     isIndexing = false,
                     indexProgress = 1f,
+                    basicBrowseReady = StartupReadinessPolicy.canBrowse(
+                        hasPhotoPermission = state.hasPhotoPermission,
+                        publishedVisiblePhotoCount = photoIndex.snapshot().size,
+                        baseSyncComplete = true,
+                    ),
                     searchReady = true,
                 )
             }
             tryConsumePendingStoryLaunch()
 
             TaggingWorker.enqueueLibraryMaintenance(context)
+            uiState.update { it.copy(enrichmentScheduled = true) }
             TrashPurgeWorker.enqueueDaily(context)
             if (archiveService.isEnabled()) {
                 ArchiveScanWorker.enqueueDaily(context)
@@ -1107,13 +1380,46 @@ class MainViewModel @Inject constructor(
             }
             loadArchiveSummary(refreshCandidates = true)
             registerMediaObserver()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                if (!isRecoverableIndexFailure(failure)) throw failure
+                publishIndexFailure()
+            }
         }
+    }
+
+    fun retryIndexing() {
+        val state = uiState.value
+        if (!state.hasPhotoPermission || state.isIndexing) return
+        initializeIndex(accessGenerationGate.current())
+    }
+
+    private fun publishIndexFailure() {
+        uiState.update {
+            it.copy(
+                isIndexing = false,
+                searchReady = false,
+                indexErrorMessage = "Photos are temporarily unavailable. Retry when storage access is ready.",
+            )
+        }
+    }
+
+    private fun clearIndexFailure() {
+        uiState.update { it.copy(indexErrorMessage = null) }
+    }
+
+    private fun isRecoverableIndexFailure(failure: Throwable): Boolean {
+        return failure is SecurityException ||
+            failure is SQLiteException ||
+            failure is IOException ||
+            failure is MediaStoreScanException
     }
 
     private suspend fun loadArchiveSummary(
         refreshCandidates: Boolean,
-        preselectCandidates: Boolean = false,
         fullLibraryScan: Boolean = false,
+        publicationRevision: Long = archivePublicationGate.begin(),
     ) {
         val accessiblePhotoIds = currentArchiveAccessiblePhotoIds()
         val summary = if (refreshCandidates) {
@@ -1123,14 +1429,14 @@ class MainViewModel @Inject constructor(
                 ) { partialSummary ->
                     applyArchiveSummary(
                         summary = partialSummary,
-                        preselectCandidates = preselectCandidates,
                         isLoading = true,
+                        publicationRevision = publicationRevision,
                     )
                 }
                 applyArchiveSummary(
                     summary = finalSummary,
-                    preselectCandidates = preselectCandidates,
                     isLoading = false,
+                    publicationRevision = publicationRevision,
                 )
                 return
             } else {
@@ -1141,8 +1447,8 @@ class MainViewModel @Inject constructor(
         }
         applyArchiveSummary(
             summary = summary,
-            preselectCandidates = preselectCandidates,
             isLoading = false,
+            publicationRevision = publicationRevision,
         )
     }
 
@@ -1159,20 +1465,20 @@ class MainViewModel @Inject constructor(
 
     private fun applyArchiveSummary(
         summary: com.photobook.app.feature.archive.ArchiveSummary,
-        preselectCandidates: Boolean,
         isLoading: Boolean = false,
+        publicationRevision: Long,
     ) {
+        if (!archivePublicationGate.isCurrent(publicationRevision)) return
         val candidateIds = summary.candidates.map { candidate -> candidate.photo.id }.toSet()
         uiState.update { state ->
-            val clampedSelection = state.archiveSelectedPhotoIds.intersect(candidateIds)
+            val explicitSelection = CleanupSelectionPolicy.retainExplicitSelection(
+                selectedPhotoIds = state.archiveSelectedPhotoIds,
+                candidatePhotoIds = candidateIds,
+            )
             state.copy(
                 isArchivesLoading = isLoading,
                 archiveCandidates = summary.candidates,
-                archiveSelectedPhotoIds = if (preselectCandidates && summary.enabled) {
-                    candidateIds
-                } else {
-                    clampedSelection
-                },
+                archiveSelectedPhotoIds = explicitSelection,
                 archiveRetentionDays = summary.retentionDays,
                 archiveDueDeleteCount = summary.dueDeleteCount,
                 archivesEnabled = summary.enabled,
@@ -1191,20 +1497,7 @@ class MainViewModel @Inject constructor(
         latestVisibleResultIds = latestVisibleResultIds.filterNot { id -> id in photoIds }
 
         uiState.update { state ->
-            val nextDeclutterSession = state.declutterSession?.let { session ->
-                val filteredCandidates = session.candidates.filterNot { candidate -> candidate.photoId in photoIds }
-                if (filteredCandidates.isEmpty()) {
-                    null
-                } else {
-                    val clampedIndex = session.currentIndex.coerceAtMost(filteredCandidates.lastIndex.coerceAtLeast(0))
-                    session.copy(
-                        candidates = filteredCandidates,
-                        currentIndex = clampedIndex,
-                        markedTrashIds = session.markedTrashIds - photoIds,
-                        keptIds = session.keptIds - photoIds,
-                    )
-                }
-            }
+            val nextDeclutterSession = state.declutterSession?.afterConfirmedTrash(photoIds)
             state.copy(
                 selectedPhotoIds = state.selectedPhotoIds - photoIds,
                 archiveCandidates = state.archiveCandidates.filterNot { candidate -> candidate.photo.id in photoIds },
@@ -1212,11 +1505,10 @@ class MainViewModel @Inject constructor(
                 viewerStartIndex = null,
                 viewerPhotos = emptyList(),
                 viewerUsesVisibleWindow = false,
-                duplicateGroups = state.duplicateGroups
-                    .map { group ->
-                        group.copy(photos = group.photos.filterNot { photo -> photo.id in photoIds })
-                    }
-                    .filter { group -> group.photos.size > 1 },
+                duplicateGroups = CleanupGroupPolicy.afterConfirmedTrash(
+                    groups = state.duplicateGroups,
+                    removedPhotoIds = photoIds,
+                ),
                 declutterSession = nextDeclutterSession,
                 declutterCurrentPhoto = nextDeclutterSession?.let { session ->
                     resolveDeclutterCurrentPhoto(session, photoIndex.snapshot())
@@ -1245,7 +1537,15 @@ class MainViewModel @Inject constructor(
                 mediaRebuildJob?.cancel()
                 mediaRebuildJob = viewModelScope.launch {
                     delay(Constants.MEDIA_OBSERVER_DEBOUNCE_MS)
-                    syncMediaStoreIncremental(forceFullSync = false)
+                    try {
+                        syncMediaStoreIncremental(forceFullSync = false)
+                        clearIndexFailure()
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        if (!isRecoverableIndexFailure(failure)) throw failure
+                        publishIndexFailure()
+                    }
                 }
             }
         }
@@ -1405,31 +1705,122 @@ class MainViewModel @Inject constructor(
         existing: List<PhotoRecord>,
         accessGeneration: Long,
     ) {
-        val rebuilt = indexBuilder.buildIndex { processed, total ->
-            if (total <= 0) return@buildIndex
-            uiState.update {
-                it.copy(indexProgress = processed.toFloat() / total.toFloat())
-            }
-        }.preservingIntelligence(existing)
+        // Keep only compact identity state across the scan. Raw MediaStore rows and enriched
+        // PhotoRecords are processed one bounded batch at a time, so a 100k-photo first launch does
+        // not retain simultaneous full raw + enriched collections.
+        val staleIds = existing.asSequence().map { record -> record.id }.toMutableSet()
+        // Build the retained intelligence lookup once. Reconstructing a 100k-entry
+        // map twice for every 200-row scan batch causes quadratic allocation churn.
+        val retainedById = existing.associateBy { record -> record.id }
+        var scannedCount = 0
+        var scanMeasuredCount = -1
+        var scanElapsedMs = 0L
+        var recordCount = 0
+        var recordElapsedMs = 0L
+        var exifElapsedMs = 0L
+        var geocodeElapsedMs = 0L
+        var geocodeCount = 0
+        var persistElapsedMs = 0L
+        var firstPagePublished = existing.isNotEmpty()
 
+        mediaStoreScanner.scanAllBatches(
+            onScanTiming = { elapsedMs, count ->
+                scanElapsedMs = elapsedMs
+                scanMeasuredCount = count
+            },
+        ) { rawBatch ->
+            currentCoroutineContext().ensureActive()
+            if (!accessGenerationGate.isCurrent(accessGeneration)) {
+                throw CancellationException("Photo access changed during MediaStore scan")
+            }
+
+            val basicBatch = indexBuilder.buildBasicRecords(rawBatch)
+                .preservingIntelligence(retainedById)
+
+            indexCommitCoordinator.withCommit {
+                if (!accessGenerationGate.isCurrent(accessGeneration)) {
+                    throw CancellationException("Photo access changed before basic index commit")
+                }
+                val persistStartMs = SystemClock.elapsedRealtime()
+                indexPersistence.upsertAll(basicBatch)
+                persistElapsedMs += SystemClock.elapsedRealtime() - persistStartMs
+                if (!firstPagePublished && basicBatch.isNotEmpty()) {
+                    // Publish browse-safe metadata before EXIF/geocoding/intelligence enrichment.
+                    photoIndex.setRecords(basicBatch)
+                    accessGenerationGate.markPublished(accessGeneration)
+                    firstPagePublished = true
+                    uiState.update { state ->
+                        state.copy(
+                            basicBrowseReady = StartupReadinessPolicy.canBrowse(
+                                hasPhotoPermission = state.hasPhotoPermission,
+                                publishedVisiblePhotoCount = basicBatch.size,
+                                baseSyncComplete = false,
+                            ),
+                        )
+                    }
+                }
+            }
+
+            rawBatch.forEach { raw -> staleIds.remove(raw.id) }
+            scannedCount += rawBatch.size
+            uiState.update { state ->
+                // Progress remains intentionally open-ended until the successful terminal sweep.
+                state.copy(indexProgress = (scannedCount / (scannedCount + 1_000f)).coerceAtMost(0.9f))
+            }
+
+            val enrichedBatch = indexBuilder.buildIndexFromRaw(
+                rawPhotos = rawBatch,
+                onTiming = { timing ->
+                    recordCount += timing.count
+                    recordElapsedMs += timing.elapsedMs
+                    exifElapsedMs += timing.exifElapsedMs
+                    geocodeElapsedMs += timing.geocodeElapsedMs
+                    geocodeCount += timing.geocodeCount
+                },
+            ).preservingIntelligence(retainedById)
+            indexCommitCoordinator.withCommit {
+                if (!accessGenerationGate.isCurrent(accessGeneration)) {
+                    throw CancellationException("Photo access changed before enrichment commit")
+                }
+                val persistStartMs = SystemClock.elapsedRealtime()
+                indexPersistence.upsertAll(enrichedBatch)
+                persistElapsedMs += SystemClock.elapsedRealtime() - persistStartMs
+                if (photoIndex.size() > 0 && existing.isEmpty() && scannedCount == rawBatch.size) {
+                    // Refresh the already-visible first page with EXIF metadata without waiting for
+                    // the remainder of the library.
+                    photoIndex.setRecords(enrichedBatch)
+                    accessGenerationGate.markPublished(accessGeneration)
+                }
+            }
+        }
+
+        // A missing-row sweep is destructive to retained metadata, so it happens only after the
+        // cursor reached a successful terminal state. Null/error/cancellation never reaches here.
         indexCommitCoordinator.withCommit {
             if (!accessGenerationGate.isCurrent(accessGeneration)) {
-                return@withCommit
+                throw CancellationException("Photo access changed before final index commit")
             }
-            val limitedAccess = uiState.value.photoAccessMode == PermissionUtils.PhotoAccessMode.Limited
-            val committed = if (limitedAccess) {
-                // A limited grant is a visibility boundary, not deletion. Keep previously granted
-                // rows durable so favorites/intelligence survive a later regrant, but publish only
-                // the IDs MediaStore currently exposes to this app.
-                indexPersistence.upsertAll(rebuilt)
-                indexPersistence.getByIdsOrdered(rebuilt.map { record -> record.id })
-            } else {
-                // Under full access, a missing MediaStore row is a genuine structural removal.
-                indexPersistence.save(rebuilt)
-                indexPersistence.load()
+            if (staleIds.isNotEmpty()) {
+                indexPersistence.removeByIds(staleIds)
             }
+            val committed = indexPersistence.load()
             photoIndex.setRecords(committed)
             accessGenerationGate.markPublished(accessGeneration)
+        }
+
+        // Emit complete aggregates only after successful scan and final index commit.
+        currentCoroutineContext().ensureActive()
+        if (scanMeasuredCount == scannedCount && recordCount == scannedCount) {
+            Log.i("PhotoBookPhase4", "stage=media_store_scan elapsedMs=$scanElapsedMs count=$scannedCount completed=1")
+            Log.i(
+                "PhotoBookPhase4",
+                "stage=record_build elapsedMs=$recordElapsedMs count=$recordCount " +
+                    "exifElapsedMs=$exifElapsedMs geocodeElapsedMs=$geocodeElapsedMs " +
+                    "geocodeCount=$geocodeCount parallelism=2 completed=1",
+            )
+            Log.i("PhotoBookPhase4", "stage=room_fts_persist elapsedMs=$persistElapsedMs count=$recordCount completed=1")
+        } else {
+            Log.e("PhotoBookPhase4", "stage=measurement_incomplete scanned=$scannedCount scanCount=$scanMeasuredCount recordCount=$recordCount")
         }
     }
 
@@ -1516,6 +1907,7 @@ class MainViewModel @Inject constructor(
     override fun onCleared() {
         mediaRebuildJob?.cancel()
         permissionReconcileJob?.cancel()
+        cleanupScanJob?.cancel()
         memoryRefreshRequests.close()
         memoryRefreshJob.cancel()
         mediaObserver?.let { observer ->
@@ -1525,23 +1917,15 @@ class MainViewModel @Inject constructor(
         super.onCleared()
     }
 
-    private fun List<PhotoRecord>.preservingIntelligence(current: List<PhotoRecord>): List<PhotoRecord> {
-        if (isEmpty() || current.isEmpty()) return this
-        val byId = current.associateBy { it.id }
+    private fun List<PhotoRecord>.preservingIntelligence(current: List<PhotoRecord>): List<PhotoRecord> =
+        preservingIntelligence(current.associateBy { it.id })
+
+    private fun List<PhotoRecord>.preservingIntelligence(
+        retainedById: Map<Long, PhotoRecord>,
+    ): List<PhotoRecord> {
+        if (isEmpty() || retainedById.isEmpty()) return this
         return map { rebuilt ->
-            val existing = byId[rebuilt.id] ?: return@map rebuilt
-            rebuilt.copy(
-                isFavorite = existing.isFavorite,
-                perceptualHash = existing.perceptualHash,
-                blurScore = existing.blurScore,
-                mlTags = existing.mlTags,
-                isArchiveFoodCandidate = existing.isArchiveFoodCandidate,
-                isMlProcessed = existing.isMlProcessed,
-                mlStatus = existing.mlStatus,
-                ocrText = existing.ocrText,
-                isOcrProcessed = existing.isOcrProcessed,
-                ocrStatus = existing.ocrStatus,
-            )
+            rebuilt.withRetainedStateFrom(retainedById[rebuilt.id])
         }
     }
 
@@ -1590,21 +1974,15 @@ class MainViewModel @Inject constructor(
         )
     }
 
-    private fun shouldRecentreViewerWindow(currentIndex: Int, windowSize: Int): Boolean {
-        if (windowSize <= VIEWER_WINDOW_RECENTER_THRESHOLD * 2 + 1) return false
-        return currentIndex <= VIEWER_WINDOW_RECENTER_THRESHOLD ||
-            currentIndex >= windowSize - VIEWER_WINDOW_RECENTER_THRESHOLD - 1
-    }
-
     private fun maybeRefreshMemoryStories(snapshot: AccessScopedPhotoSnapshot) {
-        val identity = System.identityHashCode(snapshot.records)
+        val structuralRevision = photoIndex.structuralRevision()
         if (
-            identity == lastMemoryRecordsIdentity &&
+            structuralRevision == lastMemoryStructuralRevision &&
             snapshot.accessGeneration == lastMemoryAccessGeneration
         ) {
             return
         }
-        lastMemoryRecordsIdentity = identity
+        lastMemoryStructuralRevision = structuralRevision
         lastMemoryAccessGeneration = snapshot.accessGeneration
         memoryRefreshRequests.trySend(
             MemoryRefreshRequest(
@@ -1617,7 +1995,7 @@ class MainViewModel @Inject constructor(
     private fun invalidateAccessDerivedMemories(): Long {
         return synchronized(memoryPublicationLock) {
             val nextGeneration = accessGenerationGate.advance()
-            lastMemoryRecordsIdentity = 0
+            lastMemoryStructuralRevision = -1L
             lastMemoryAccessGeneration = -1L
             uiState.update { state ->
                 state.copy(
@@ -1631,6 +2009,27 @@ class MainViewModel @Inject constructor(
             OnThisDayWidgetProvider.cacheStory(context, null)
             nextGeneration
         }
+    }
+
+    private suspend fun albumCatalogFor(
+        records: List<PhotoRecord>,
+        indexVersion: Long,
+        accessGeneration: Long,
+    ): List<AlbumDescriptor> {
+        val key = indexVersion to accessGeneration
+        if (albumCatalogCacheKey == key) return albumCatalogCache
+
+        val smartCounts = withContext(Dispatchers.Default) {
+            AlbumCatalogBuilder.smartDefinitions.associate { definition ->
+                definition.key to filterEngine.search(definition.query, records).results.size
+            }
+        }
+        val catalog = withContext(Dispatchers.Default) {
+            AlbumCatalogBuilder.build(records, smartCounts)
+        }
+        albumCatalogCacheKey = key
+        albumCatalogCache = catalog
+        return catalog
     }
 
     private suspend fun runSearch(
@@ -1748,10 +2147,33 @@ class MainViewModel @Inject constructor(
     }
 
     private fun openStoryFromIdsInternal(photoIds: List<Long>, title: String): Boolean {
-        if (photoIds.isEmpty() || photoIndex.size() == 0) return false
-        val photos = photoIndex.getByIdsOrdered(photoIds)
-        if (photos.isEmpty()) return false
+        if (uiState.value.memoriesHidden || photoIds.isEmpty() || photoIndex.size() == 0) return false
+        val requestedIds = photoIds.distinct()
+        if (requestedIds.size != photoIds.size) return false
+        val photos = photoIndex.getByIdsOrdered(requestedIds)
+        if (photos.map { photo -> photo.id } != requestedIds) return false
 
+        publishStory(title = title, photos = photos)
+        return true
+    }
+
+    private fun openExternalStoryFromIds(photoIds: List<Long>, title: String): Boolean {
+        val photos = photoIndex.getByIdsOrdered(photoIds)
+        val resolvedIds = photos.map { photo -> photo.id }
+        if (
+            MemoryStoryLaunchPolicy.validateExternal(
+                requestedIds = photoIds,
+                resolvedIds = resolvedIds,
+                memoriesHidden = uiState.value.memoriesHidden,
+            ) == null
+        ) {
+            return false
+        }
+        publishStory(title = title, photos = photos)
+        return true
+    }
+
+    private fun publishStory(title: String, photos: List<PhotoRecord>) {
         uiState.update { state ->
             state.copy(
                 storyViewerTitle = title.ifBlank { state.storyViewerTitle.ifBlank { "Memory" } },
@@ -1762,33 +2184,23 @@ class MainViewModel @Inject constructor(
                 selectedPhotoIds = emptySet(),
             )
         }
-        return true
     }
 
     private fun tryConsumePendingStoryLaunch() {
         val pending = pendingStoryLaunch ?: return
-        if (openStoryFromIdsInternal(pending.photoIds, pending.title)) {
-            pendingStoryLaunch = null
-        }
+        if (photoIndex.size() == 0) return
+        pendingStoryLaunch = null
+        openExternalStoryFromIds(pending.photoIds, pending.title)
     }
 
     private fun mutateDeclutterSession(markTrash: Boolean) {
         uiState.update { state ->
             val session = state.declutterSession ?: return@update state
-            val candidate = session.currentCandidate ?: return@update state
-            val nextSession = session.copy(
-                currentIndex = (session.currentIndex + 1).coerceAtMost(session.candidates.size),
-                markedTrashIds = if (markTrash) {
-                    session.markedTrashIds + candidate.photoId
-                } else {
-                    session.markedTrashIds - candidate.photoId
-                },
-                keptIds = if (markTrash) {
-                    session.keptIds - candidate.photoId
-                } else {
-                    session.keptIds + candidate.photoId
-                },
-            )
+            val nextSession = if (markTrash) {
+                session.markCurrentForTrash()
+            } else {
+                session.keepCurrent()
+            }
             state.copy(
                 declutterSession = nextSession,
                 declutterCurrentPhoto = resolveDeclutterCurrentPhoto(nextSession, photoIndex.snapshot()),
@@ -1872,6 +2284,8 @@ class MainViewModel @Inject constructor(
         private const val RECORDS_UPDATE_DEBOUNCE_MS = 250L
         private const val MAX_DECLUTTER_CANDIDATES = 300
         private const val REELS_ENABLED_KEY = "reels_enabled_v1"
+        private const val PINNED_ALBUM_KEYS_KEY = "pinned_album_keys_v1"
+        private const val MEMORIES_HIDDEN_KEY = "memories_hidden_v1"
         private val SEARCH_RUNTIME_STRATEGY = SearchRuntimeStrategy.V2
     }
 }
@@ -1955,6 +2369,20 @@ internal suspend fun commitLimitedAccessReconciliation(
     }
 }
 
+internal fun shouldEnqueueFocusedTagging(reelsEnabled: Boolean): Boolean = !reelsEnabled
+
+internal fun shouldRecentreViewerWindow(
+    currentIndex: Int,
+    windowSize: Int,
+    atVisibleStart: Boolean,
+    atVisibleEnd: Boolean,
+    threshold: Int,
+): Boolean {
+    if (currentIndex !in 0 until windowSize || windowSize <= threshold * 2 + 1) return false
+    return (currentIndex <= threshold && !atVisibleStart) ||
+        (currentIndex >= windowSize - threshold - 1 && !atVisibleEnd)
+}
+
 internal fun visiblePersistedRecordsForAccess(
     persisted: List<PhotoRecord>,
     accessMode: PermissionUtils.PhotoAccessMode,
@@ -1989,7 +2417,12 @@ internal fun rawDiffersFromRecordForReconcile(
     raw: RawPhotoData,
     existing: PhotoRecord,
 ): Boolean {
-    return raw.uriString != existing.uriString ||
+    val freshRevision = raw.generationModified ?: raw.dateModified
+    val trustworthyRevisionChanged =
+        (freshRevision > 0L || existing.sourceRevision > 0L) &&
+            freshRevision != existing.sourceRevision
+    return trustworthyRevisionChanged ||
+        raw.uriString != existing.uriString ||
         raw.filePath != existing.filePath ||
         raw.fileName != existing.fileName ||
         raw.dateAdded != existing.dateAdded ||

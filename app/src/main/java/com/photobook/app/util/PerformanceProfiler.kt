@@ -35,6 +35,9 @@ class PerformanceProfiler private constructor(
         private const val LITE_INTELLIGENCE_BITMAP_MAX_DIMENSION_PX = 768
         private const val STANDARD_INTELLIGENCE_BITMAP_MAX_DIMENSION_PX = 1024
 
+        internal fun forTier(tier: PerformanceTier): PerformanceProfiler =
+            PerformanceProfiler(tier)
+
         fun from(context: Context): PerformanceProfiler {
             val activityManager = context.applicationContext
                 .getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager

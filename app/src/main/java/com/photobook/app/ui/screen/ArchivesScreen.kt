@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,6 +48,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -453,12 +457,16 @@ private fun ArchivesActionRow(
 }
 
 @Composable
-private fun ArchiveCandidateTile(
+internal fun ArchiveCandidateTile(
     candidate: ArchiveCandidate,
     selected: Boolean,
     onPreview: () -> Unit,
     onToggleSelection: () -> Unit,
 ) {
+    val selectionLabel = stringResource(
+        if (selected) R.string.archives_deselect_photo else R.string.archives_select_photo,
+        candidate.photo.fileName,
+    )
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -482,25 +490,38 @@ private fun ArchiveCandidateTile(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(6.dp)
-                .size(32.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
-                .clickable(onClick = onToggleSelection),
+                .size(48.dp)
+                .toggleable(
+                    value = selected,
+                    role = Role.Checkbox,
+                    onValueChange = { onToggleSelection() },
+                )
+                .semantics(mergeDescendants = true) {
+                    contentDescription = selectionLabel
+                },
             contentAlignment = Alignment.Center,
         ) {
-            if (selected) {
-                Icon(
-                    imageVector = Icons.Default.CheckCircle,
-                    contentDescription = stringResource(R.string.archives_tile_selected),
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(24.dp),
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .size(18.dp)
-                        .border(2.dp, MaterialTheme.colorScheme.onSurfaceVariant, CircleShape),
-                )
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (selected) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp),
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(18.dp)
+                            .border(2.dp, MaterialTheme.colorScheme.onSurfaceVariant, CircleShape),
+                    )
+                }
             }
         }
         Column(

@@ -46,6 +46,7 @@ data class PhotoRecord(
     } else {
         IntelligenceStatus.PENDING
     },
+    val sourceRevision: Long = -1L,
 ) {
     val aspectRatio: Float
         get() = if (height == 0) 1f else width.toFloat() / height.toFloat()
@@ -60,4 +61,41 @@ data class PhotoRecord(
         if (keyword.isBlank()) return false
         return ocrText.contains(keyword, ignoreCase = true)
     }
+}
+
+
+fun PhotoRecord.withRetainedStateFrom(current: PhotoRecord?): PhotoRecord {
+    if (current == null) return this
+    val sameIdentity =
+        id == current.id &&
+            uriString == current.uriString &&
+            dateAdded == current.dateAdded
+    if (!sameIdentity) return this
+
+    val userState = copy(isFavorite = current.isFavorite)
+    val sameContent = when {
+        sourceRevision > 0L && current.sourceRevision > 0L ->
+            sourceRevision == current.sourceRevision
+        sourceRevision <= 0L && current.sourceRevision <= 0L ->
+            // Legacy rows do not have a trustworthy provider revision. A rename/path change does
+            // not alter image bytes, so preserve derived state when stable media identity and
+            // geometry/size still agree. ID reuse is already rejected by dateAdded/URI identity.
+            fileSize == current.fileSize &&
+                width == current.width &&
+                height == current.height
+        else -> false
+    }
+    if (!sameContent) return userState
+
+    return userState.copy(
+        perceptualHash = current.perceptualHash,
+        blurScore = current.blurScore,
+        mlTags = current.mlTags,
+        isArchiveFoodCandidate = current.isArchiveFoodCandidate,
+        isMlProcessed = current.isMlProcessed,
+        mlStatus = current.mlStatus,
+        ocrText = current.ocrText,
+        isOcrProcessed = current.isOcrProcessed,
+        ocrStatus = current.ocrStatus,
+    )
 }

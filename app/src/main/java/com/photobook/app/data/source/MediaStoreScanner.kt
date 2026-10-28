@@ -2,18 +2,48 @@ package com.photobook.app.data.source
 
 import android.content.ContentUris
 import android.content.Context
+import android.database.Cursor
+import android.net.Uri
 import android.os.Build
+import android.os.SystemClock
 import android.provider.MediaStore
 import com.photobook.app.data.model.RawPhotoData
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 class MediaStoreScanner @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
+    internal var queryOverride: ((
+        uri: Uri,
+        projection: Array<String>,
+        selection: String?,
+        selectionArgs: Array<String>?,
+        sortOrder: String?,
+    ) -> Cursor?)? = null
+
+    private fun query(
+        uri: Uri,
+        projection: Array<String>,
+        selection: String?,
+        selectionArgs: Array<String>?,
+        sortOrder: String?,
+    ): Cursor? {
+        return try {
+            queryOverride?.let { override ->
+                return override(uri, projection, selection, selectionArgs, sortOrder)
+            }
+            context.contentResolver.query(uri, projection, selection, selectionArgs, sortOrder)
+        } catch (failure: IllegalStateException) {
+            throw MediaStoreScanException("MediaStore query failed before completion", failure)
+        }
+    }
+
 
     @Suppress("DEPRECATION")
-    fun scanAll(): List<RawPhotoData> {
+    suspend fun scanAll(): List<RawPhotoData> {
         return queryPhotos(
             selection = null,
             selectionArgs = null,
@@ -21,7 +51,23 @@ class MediaStoreScanner @Inject constructor(
     }
 
     @Suppress("DEPRECATION")
-    fun scanChangedSince(lastGeneration: Long): List<RawPhotoData> {
+    suspend fun scanAllBatches(
+        batchSize: Int = MediaScanBatchPolicy.DEFAULT_BATCH_SIZE,
+        onScanTiming: ((Long, Int) -> Unit)? = null,
+        onBatch: suspend (List<RawPhotoData>) -> Unit,
+    ) {
+        require(batchSize > 0)
+        queryPhotos(
+            selection = null,
+            selectionArgs = null,
+            batchSize = batchSize,
+            onBatch = onBatch,
+            onScanTiming = onScanTiming,
+        )
+    }
+
+    @Suppress("DEPRECATION")
+    suspend fun scanChangedSince(lastGeneration: Long): List<RawPhotoData> {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             return emptyList()
         }
@@ -33,19 +79,41 @@ class MediaStoreScanner @Inject constructor(
 
     fun scanAllIds(): Set<Long> {
         val ids = linkedSetOf<Long>()
-        context.contentResolver.query(
+        val cursor = query(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             arrayOf(MediaStore.Images.Media._ID),
             null,
             null,
             null,
-        )?.use { cursor ->
-            val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-            while (cursor.moveToNext()) {
-                ids += cursor.getLong(idIndex)
+        ) ?: throw MediaStoreScanException("MediaStore ID query returned null")
+        cursor.use {
+            val idIndex = it.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+            while (verifiedMoveToNext(it)) {
+                ids += it.getLong(idIndex)
             }
         }
         return ids
+    }
+
+    /**
+     * A false moveToNext is not necessarily EOF. A remote BulkCursor window failure
+     * can reset position to -1, whereas successful EOF moves to count. Never use a
+     * prematurely terminated scan to delete retained records or advance a checkpoint.
+     */
+    private fun verifiedMoveToNext(cursor: Cursor): Boolean {
+        try {
+            if (cursor.moveToNext()) return true
+            if (cursor.position != cursor.count) {
+                throw MediaStoreScanException(
+                    "MediaStore cursor terminated before EOF: position=${cursor.position}, count=${cursor.count}",
+                )
+            }
+            return false
+        } catch (failure: MediaStoreScanException) {
+            throw failure
+        } catch (failure: IllegalStateException) {
+            throw MediaStoreScanException("MediaStore cursor failed before EOF", failure)
+        }
     }
 
     fun currentMediaStoreVersion(): String {
@@ -63,23 +131,32 @@ class MediaStoreScanner @Inject constructor(
     }
 
     @Suppress("DEPRECATION")
-    private fun queryPhotos(
+    private suspend fun queryPhotos(
         selection: String?,
         selectionArgs: Array<String>?,
+        batchSize: Int = MediaScanBatchPolicy.DEFAULT_BATCH_SIZE,
+        onBatch: (suspend (List<RawPhotoData>) -> Unit)? = null,
+        onScanTiming: ((Long, Int) -> Unit)? = null,
     ): List<RawPhotoData> {
         val projection = mediaStoreImageProjectionForSdk(Build.VERSION.SDK_INT)
 
-        val photos = mutableListOf<RawPhotoData>()
-        context.contentResolver.query(
+        val scanStartMs = SystemClock.elapsedRealtime()
+        var callbackElapsedMs = 0L
+        var scanned = 0
+        val photos = if (onBatch == null) mutableListOf<RawPhotoData>() else null
+        val pendingBatch = if (onBatch != null) ArrayList<RawPhotoData>(batchSize) else null
+        val cursor = query(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             projection,
             selection,
             selectionArgs,
             "${MediaStore.Images.Media.DATE_ADDED} DESC",
-        )?.use { cursor ->
+        ) ?: throw MediaStoreScanException("MediaStore image query returned null")
+        cursor.use { cursor ->
             val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
             val displayNameIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
             val dateAddedIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED)
+            val dateModifiedIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_MODIFIED)
             val sizeIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
             val widthIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.WIDTH)
             val heightIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.HEIGHT)
@@ -97,7 +174,10 @@ class MediaStoreScanner @Inject constructor(
                 -1
             }
 
-            while (cursor.moveToNext()) {
+            while (verifiedMoveToNext(cursor)) {
+                if (scanned % MediaScanBatchPolicy.DEFAULT_BATCH_SIZE == 0) {
+                    currentCoroutineContext().ensureActive()
+                }
                 val id = cursor.getLong(idIndex)
                 val displayName = cursor.getString(displayNameIndex).orEmpty()
                 val uriString = ContentUris.withAppendedId(
@@ -127,8 +207,14 @@ class MediaStoreScanner @Inject constructor(
                 } else {
                     dateSeconds
                 }
+                val modifiedSeconds = cursor.getLong(dateModifiedIndex)
+                val modifiedMillis = if (modifiedSeconds < 10_000_000_000L) {
+                    modifiedSeconds * 1000L
+                } else {
+                    modifiedSeconds
+                }
 
-                photos += RawPhotoData(
+                val rawPhoto = RawPhotoData(
                     id = id,
                     uriString = uriString,
                     filePath = filePath,
@@ -140,13 +226,48 @@ class MediaStoreScanner @Inject constructor(
                     mimeType = cursor.getString(mimeIndex).orEmpty().lowercase(),
                     folderName = folderName,
                     folderPath = folderPath,
+                    dateModified = modifiedMillis,
                     generationModified = if (generationIndex >= 0) cursor.getLong(generationIndex) else null,
                 )
+                if (onBatch == null) {
+                    photos!!.add(rawPhoto)
+                } else {
+                    pendingBatch!!.add(rawPhoto)
+                    if (pendingBatch.size >= batchSize) {
+                        val callbackStartMs = SystemClock.elapsedRealtime()
+                        try {
+                            onBatch(pendingBatch.toList())
+                        } finally {
+                            callbackElapsedMs += SystemClock.elapsedRealtime() - callbackStartMs
+                        }
+                        pendingBatch.clear()
+                    }
+                }
+                scanned += 1
+            }
+            if (onBatch != null && pendingBatch!!.isNotEmpty()) {
+                val callbackStartMs = SystemClock.elapsedRealtime()
+                try {
+                    onBatch(pendingBatch.toList())
+                } finally {
+                    callbackElapsedMs += SystemClock.elapsedRealtime() - callbackStartMs
+                }
+                pendingBatch.clear()
             }
         }
-        return photos
+        // Query and cursor work, excluding suspended indexing and persistence callbacks.
+        // Failed or cancelled scans never report a completed measurement.
+        currentCoroutineContext().ensureActive()
+        onScanTiming?.invoke(
+            (SystemClock.elapsedRealtime() - scanStartMs - callbackElapsedMs).coerceAtLeast(0L),
+            scanned,
+        )
+        return photos ?: emptyList()
     }
+
 }
+
+class MediaStoreScanException(message: String, cause: Throwable? = null) : IllegalStateException(message, cause)
 
 @Suppress("DEPRECATION")
 internal fun mediaStoreImageProjectionForSdk(sdkInt: Int): Array<String> {
@@ -154,6 +275,7 @@ internal fun mediaStoreImageProjectionForSdk(sdkInt: Int): Array<String> {
         add(MediaStore.Images.Media._ID)
         add(MediaStore.Images.Media.DISPLAY_NAME)
         add(MediaStore.Images.Media.DATE_ADDED)
+        add(MediaStore.Images.Media.DATE_MODIFIED)
         add(MediaStore.Images.Media.SIZE)
         add(MediaStore.Images.Media.WIDTH)
         add(MediaStore.Images.Media.HEIGHT)

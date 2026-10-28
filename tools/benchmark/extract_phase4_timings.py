@@ -81,17 +81,14 @@ def main() -> None:
             marker
             for marker in stage_markers.get(stage, [])
             if as_int(marker, "count") == args.library_size
+            and marker.get("completed") == "1"
         ]
         if not matches:
             raise SystemExit(
                 f"Missing {stage} marker with count={args.library_size}; "
                 f"available={stage_markers.get(stage, [])}"
             )
-        if stage == "media_store_scan":
-            replayed = [marker for marker in matches if marker.get("replay") == "1"]
-            selected[stage] = replayed[-1] if replayed else matches[0]
-        else:
-            selected[stage] = matches[0]
+        selected[stage] = matches[-1]  # Last completed aggregate, never a partial batch.
 
     record_build = selected["record_build"]
     record_build_elapsed = as_int(record_build, "elapsedMs")

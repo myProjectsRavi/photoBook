@@ -1,15 +1,16 @@
 name: Phase 4 Index Measurement
+# Exact-head review candidate: SDK provisioning retry hardened.
 
 on:
   push:
     branches:
       - "perf/phase4-index-startup"
+      - "autopilot/epics-features-user-stories"
     paths:
       - ".github/workflows/phase4-index-measurement.yml"
-      - "app/src/main/java/com/photobook/app/data/index/IndexBuilder.kt"
-      - "app/src/main/java/com/photobook/app/data/index/IndexPersistence.kt"
-      - "tools/benchmark/extract_phase4_timings.py"
-      - "tools/benchmark/phase0_device_stress.sh"
+      - "app/**"
+      - "baselineprofile/**"
+      - "tools/benchmark/**"
   workflow_dispatch:
 
 permissions:
@@ -17,20 +18,35 @@ permissions:
 
 jobs:
   measure-index:
-    name: index-${{ matrix.library_size }}
+    name: index-${{ matrix.library_size }}-ram${{ matrix.ram_mb }}-api${{ matrix.api_level }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
 
     strategy:
       fail-fast: false
       matrix:
-        library_size:
-          - 10000
-          - 50000
-          - 100000
+        include:
+          - library_size: 10000
+            ram_mb: 2048
+            api_level: 30
+          - library_size: 10000
+            ram_mb: 4096
+            api_level: 35
+          - library_size: 50000
+            ram_mb: 2048
+            api_level: 30
+          - library_size: 50000
+            ram_mb: 4096
+            api_level: 35
+          - library_size: 100000
+            ram_mb: 2048
+            api_level: 30
+          - library_size: 100000
+            ram_mb: 4096
+            api_level: 35
 
     concurrency:
-      group: phase4-index-${{ github.ref }}-${{ matrix.library_size }}
+      group: phase4-index-${{ github.ref }}-${{ matrix.library_size }}-${{ matrix.ram_mb }}-api${{ matrix.api_level }}
       cancel-in-progress: true
 
     steps:
@@ -44,7 +60,7 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - name: Provision 2 GB Android 15 emulator
+      - name: Provision hosted Android emulator
         shell: bash
         run: |
           set -euo pipefail
@@ -56,8 +72,8 @@ jobs:
           AVDMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name avdmanager 2>/dev/null | sort | tail -n 1)"
           ADB="$SDK_ROOT/platform-tools/adb"
           EMULATOR="$SDK_ROOT/emulator/emulator"
-          SYSTEM_IMAGE="system-images;android-35;google_apis;x86_64"
-          AVD_NAME="photobook-phase4-api35"
+          SYSTEM_IMAGE="system-images;android-${{ matrix.api_level }};google_apis;x86_64"
+          AVD_NAME="photobook-phase4-api${{ matrix.api_level }}-ram${{ matrix.ram_mb }}"
 
           export ANDROID_USER_HOME="$RUNNER_TEMP/android-user"
           export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
@@ -69,9 +85,18 @@ jobs:
           test -x "$ADB"
 
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" --channel=0 \
-            "emulator" \
-            "$SYSTEM_IMAGE"
+          install_emulator_packages() {
+            "$SDKMANAGER" --channel=0 \
+              "emulator" \
+              "$SYSTEM_IMAGE"
+          }
+          if ! install_emulator_packages; then
+            echo "Initial Android SDK package install failed; clearing partial archives and retrying once." >&2
+            rm -rf "$SDK_ROOT/.temp" "$HOME/.android/cache" "$ANDROID_USER_HOME/cache"
+            rm -rf "$SDK_ROOT/emulator" "$SDK_ROOT/system-images/android-${{ matrix.api_level }}/google_apis/x86_64"
+            sleep 5
+            install_emulator_packages
+          fi
           test -x "$EMULATOR"
 
           echo "no" | "$AVDMANAGER" create avd \
@@ -101,7 +126,7 @@ jobs:
             -no-snapshot \
             -no-metrics \
             -gpu swiftshader_indirect \
-            -memory 2048 \
+            -memory ${{ matrix.ram_mb }} \
             -cores 2 \
             > "$RUNNER_TEMP/phase4-emulator.log" 2>&1 &
           EMULATOR_PID=$!
@@ -148,26 +173,46 @@ jobs:
           echo "$SDK_ROOT/emulator" >> "$GITHUB_PATH"
 
           "$ADB" shell input keyevent 82 || true
+          "$ADB" shell svc wifi disable || true
+          "$ADB" shell svc data disable || true
+          "$ADB" shell settings put global airplane_mode_on 1
+          "$ADB" shell am broadcast -a android.intent.action.AIRPLANE_MODE --ez state true >/dev/null 2>&1 || true
+          echo "benchmark_ram_mb=${{ matrix.ram_mb }}"
+          echo "benchmark_api_level=${{ matrix.api_level }}"
           echo "Android release: $("$ADB" shell getprop ro.build.version.release | tr -d '\r')"
-          echo "Android SDK: $("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"
+          ACTUAL_SDK="$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"
+          echo "Android SDK: $ACTUAL_SDK"
           echo "Android ABI: $("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r')"
-          RAM="$("$ADB" shell cat /proc/meminfo | tr -d '\r' | awk '/MemTotal/ {print $2 " kB"; exit}')"
-          echo "RAM: $RAM"
+          RAM_KB="$("$ADB" shell cat /proc/meminfo | tr -d '\r' | awk '/MemTotal/ {print $2; exit}')"
+          echo "RAM: ${RAM_KB} kB"
 
-      - name: Run certified scale harness with Phase 4 timing retention
+          if [[ "$ACTUAL_SDK" != "${{ matrix.api_level }}" ]]; then
+            echo "Expected API ${{ matrix.api_level }} but emulator reports API $ACTUAL_SDK" >&2
+            exit 1
+          fi
+          EXPECTED_RAM_KB=$(( ${{ matrix.ram_mb }} * 1024 ))
+          MIN_RAM_KB=$(( EXPECTED_RAM_KB * 80 / 100 ))
+          MAX_RAM_KB=$(( EXPECTED_RAM_KB * 110 / 100 ))
+          if (( RAM_KB < MIN_RAM_KB || RAM_KB > MAX_RAM_KB )); then
+            echo "Requested ${{ matrix.ram_mb }} MB but guest MemTotal=${RAM_KB} kB; refusing mislabeled performance evidence." >&2
+            cat "$RUNNER_TEMP/phase4-emulator.log" || true
+            exit 1
+          fi
+
+      - name: Run hosted scale stress harness with Phase 4 timing retention
         env:
           LIBRARY_SIZE: ${{ matrix.library_size }}
           STRESS_ITERATIONS: "12"
           REQUIRE_PHYSICAL: "0"
           PRESERVE_LOGCAT: "1"
-          OUT_DIR: build/reports/phase4/device-${{ matrix.library_size }}
+          OUT_DIR: build/reports/phase4/device-${{ matrix.library_size }}-ram${{ matrix.ram_mb }}
         run: bash tools/benchmark/run_phase3_device.sh
 
       - name: Extract and validate Phase 4 timings
         shell: bash
         run: |
           set -euo pipefail
-          OUT="build/reports/phase4/device-${{ matrix.library_size }}"
+          OUT="build/reports/phase4/device-${{ matrix.library_size }}-ram${{ matrix.ram_mb }}"
           python3 tools/benchmark/extract_phase4_timings.py \
             --logcat "$OUT/logcat.txt" \
             --macro-log "$OUT/macrobenchmark-gradle.log" \
@@ -181,7 +226,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          OUT="build/reports/phase4/runner-${{ matrix.library_size }}"
+          OUT="build/reports/phase4/runner-${{ matrix.library_size }}-ram${{ matrix.ram_mb }}"
           mkdir -p "$OUT"
           cp "$RUNNER_TEMP/phase4-emulator.log" "$OUT/emulator.log" 2>/dev/null || true
           cp "$RUNNER_TEMP/phase4-avd-list.txt" "$OUT/avd-list.txt" 2>/dev/null || true
@@ -194,7 +239,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: phase4-index-${{ matrix.library_size }}-${{ github.run_id }}
+          name: phase4-index-${{ matrix.library_size }}-ram${{ matrix.ram_mb }}-${{ github.run_id }}
           if-no-files-found: warn
           retention-days: 14
           path: |

@@ -26,13 +26,15 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
 import coil.size.Precision
 import com.photobook.app.data.model.PhotoRecord
-import com.photobook.app.util.PerformanceProfiler
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -42,6 +44,7 @@ fun PhotoThumbnail(
     showSelectionState: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    requestSizePx: Int,
     modifier: Modifier = Modifier,
 ) {
     val cardShape = remember { RoundedCornerShape(10.dp) }
@@ -51,16 +54,16 @@ fun PhotoThumbnail(
         label = "selected_overlay_alpha",
     )
     val context = LocalContext.current
-    val thumbSize = remember {
-        PerformanceProfiler.from(context).thumbnailRequestSizePx
-    }
-    val imageRequest = remember(photo.uriString, thumbSize) {
+    val imageRequest = remember(photo.uriString, photo.sourceRevision, requestSizePx) {
+        val revisionKey = "${photo.uriString}#rev=${photo.sourceRevision}#size=$requestSizePx"
         ImageRequest.Builder(context)
             .data(photo.uriString)
+            .memoryCacheKey(revisionKey)
+            .diskCacheKey(revisionKey)
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
             .allowHardware(true)
-            .size(thumbSize)
+            .size(requestSizePx)
             .precision(Precision.EXACT)
             .build()
     }
@@ -78,7 +81,13 @@ fun PhotoThumbnail(
         modifier = modifier
             .padding(2.dp)
             .aspectRatio(1f)
+            .semantics {
+                if (showSelectionState) {
+                    selected = isSelected
+                }
+            }
             .combinedClickable(
+                role = if (showSelectionState) Role.Checkbox else Role.Button,
                 onClick = onClick,
                 onLongClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)

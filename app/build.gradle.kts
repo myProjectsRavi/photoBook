@@ -30,6 +30,11 @@ val releaseKeystorePath = releaseKeystoreProperties.getProperty("storeFile")
     ?.trim()
     ?.takeIf { it.isNotEmpty() }
 
+// CI-only compatibility APK for x86_64 hosted emulators. Production release ABIs stay ARM-only.
+val compatibilityX86 = providers.gradleProperty("photobook.compatibilityX86")
+    .map(String::toBooleanStrict)
+    .getOrElse(false)
+
 val bundledLabelModelDependency = "com.google.mlkit:image-labeling:17.0.9"
 
 // Resolve the pinned model artifact only to extract its bundled model asset. The
@@ -159,7 +164,9 @@ android {
             // Ensure native libs are stored uncompressed and 16KB page-aligned
             // Required by Google Play for devices with 16KB memory pages
             useLegacyPackaging = false
-            excludes += setOf("**/x86/**", "**/x86_64/**")
+            if (!compatibilityX86) {
+                excludes += setOf("**/x86/**", "**/x86_64/**")
+            }
         }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -176,6 +183,11 @@ android {
             isEnable = true
             reset()
             include("arm64-v8a", "armeabi-v7a")
+            // Only the hosted x86_64 correctness matrix opts into this extra debug ABI.
+            // Normal AAB/release variants retain the two production ARM splits.
+            if (compatibilityX86) {
+                include("x86_64")
+            }
             // No universal APK. Preserve the production 30 MiB hard ceiling here. The user-facing
             // Google Play delivered download/install size is a separate release metric and must be
             // measured and minimized before this candidate can be approved.
@@ -257,6 +269,8 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation(platform("androidx.compose:compose-bom:2024.02.02"))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
     androidTestImplementation("androidx.room:room-testing:2.6.1")
 
@@ -271,10 +285,10 @@ dependencies {
 
 tasks.register("verifyApkSize") {
     group = "verification"
-    description = "Fails when any generated per-ABI release APK exceeds 30 MiB."
+    description = "Fails when any generated per-ABI release APK exceeds 30,000,000 bytes."
 
     doLast {
-        val maxBytes = 30L * 1024L * 1024L
+        val maxBytes = 30_000_000L
         val apkRoot = layout.buildDirectory.dir("outputs/apk/release").get().asFile
         check(apkRoot.exists()) {
             "Release APK size gate could not find ${apkRoot.path}; run assembleRelease first."
@@ -292,7 +306,7 @@ tasks.register("verifyApkSize") {
             val sizeMiB = sizeBytes.toDouble() / (1024.0 * 1024.0)
             println("releaseApk=${apk.name} bytes=$sizeBytes mib=${"%.2f".format(sizeMiB)}")
             check(sizeBytes <= maxBytes) {
-                "Per-device APK size gate failed for ${apk.path}: ${"%.2f".format(sizeMiB)} MiB > 30 MiB"
+                "Per-device APK size gate failed for ${apk.path}: $sizeBytes bytes > 30,000,000 bytes"
             }
         }
     }

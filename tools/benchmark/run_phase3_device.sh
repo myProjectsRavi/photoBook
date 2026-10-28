@@ -376,13 +376,34 @@ fi
 # boundaries without adding a second emulator job or contaminating MediaStore.
 if [[ "$LIBRARY_SIZE" == "10000" ]]; then
   echo "[phase3] running focused Room persistence regression"
+  run_room_regression() {
+    local log_file="$1"
+    ./gradlew :app:connectedDebugAndroidTest \
+      -Pandroid.testInstrumentationRunnerArguments.class="$ROOM_TEST_CLASS" \
+      --stacktrace \
+      2>&1 | tee "$log_file"
+  }
+
+  ROOM_LOG="$OUT_DIR/room-regression-gradle.log"
   set +e
-  ./gradlew :app:connectedDebugAndroidTest \
-    -Pandroid.testInstrumentationRunnerArguments.class="$ROOM_TEST_CLASS" \
-    --stacktrace \
-    | tee "$OUT_DIR/room-regression-gradle.log"
-  ROOM_TEST_STATUS=${PIPESTATUS[0]}
+  run_room_regression "$ROOM_LOG"
+  ROOM_TEST_STATUS=$?
   set -e
+
+  # Hosted runners can occasionally be throttled by Maven Central while AGP
+  # resolves UTP/runtime artifacts. Retry only proven transport/resolution
+  # failures; a real test assertion or process crash must never be retried away.
+  if (( ROOM_TEST_STATUS != 0 )) && grep -Eiq \
+      'Received status code (429|5[0-9][0-9])|Too Many Requests|Read timed out|Connection reset|Temporary failure in name resolution' \
+      "$ROOM_LOG"; then
+    echo "[phase3] transient dependency resolution failure; retrying focused Room regression once" >&2
+    sleep 8
+    RETRY_LOG="$OUT_DIR/room-regression-gradle-retry.log"
+    set +e
+    run_room_regression "$RETRY_LOG"
+    ROOM_TEST_STATUS=$?
+    set -e
+  fi
 
   mkdir -p "$OUT_DIR/room-regression"
   cp -R app/build/outputs/androidTest-results "$OUT_DIR/room-regression/" 2>/dev/null || true
@@ -401,6 +422,58 @@ fi
 
 echo "[phase3] running :baselineprofile:$CONNECTED_TASK at librarySize=$LIBRARY_SIZE"
 
+# UTP may delete device-side benchmark additional outputs during its post-test
+# cleanup. Capture as files appear, rather than waiting until Gradle returns.
+# Copies never modify original traces, run in the runner, and are verified for
+# nonzero size. The polling interval and capture log are preserved for review.
+DEVICE_BENCH_OUT="$OUT_DIR/device-benchmark-output"
+DEVICE_BENCH_STOP="$OUT_DIR/device-benchmark-collector.stop"
+DEVICE_BENCH_CAPTURE_LOG="$OUT_DIR/device-benchmark-capture.log"
+rm -f "$DEVICE_BENCH_STOP"
+mkdir -p "$DEVICE_BENCH_OUT"
+collect_benchmark_outputs() {
+  while [[ ! -f "$DEVICE_BENCH_STOP" ]]; do
+    mapfile -t candidates < <(
+      timeout 15s "${ADB[@]}" shell \
+        'find /sdcard/Android/media/com.photobook.app.baselineprofile/additional_test_output -type f \( -name "*.perfetto-trace" -o -name "*benchmarkData.json" \) -print' \
+        2>/dev/null | tr -d '\r' | sort -u
+    )
+    for remote in "${candidates[@]}"; do
+      [[ -n "$remote" ]] || continue
+      local_hash="$(printf '%s' "$remote" | sha256sum | cut -c1-12)"
+      target="$DEVICE_BENCH_OUT/${local_hash}-$(basename "$remote")"
+      temp="${target}.partial"
+
+      if [[ "$remote" == *benchmarkData.json ]]; then
+        # benchmarkData.json is rewritten as Macrobenchmark tests finish. Refresh
+        # the same local target on every poll, but only publish a syntactically
+        # complete JSON snapshot so readers never observe a partial write.
+        if timeout 45s "${ADB[@]}" pull "$remote" "$temp" >>"$DEVICE_BENCH_CAPTURE_LOG" 2>&1 \
+            && [[ -s "$temp" ]] \
+            && python3 -c 'import json,sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$temp"; then
+          mv "$temp" "$target"
+          printf 'refreshed=%s bytes=%s\n' "$remote" "$(wc -c < "$target")" >>"$DEVICE_BENCH_CAPTURE_LOG"
+        else
+          rm -f "$temp"
+        fi
+        continue
+      fi
+
+      [[ -s "$target" ]] && continue
+      if timeout 45s "${ADB[@]}" pull "$remote" "$temp" >>"$DEVICE_BENCH_CAPTURE_LOG" 2>&1 \
+          && [[ -s "$temp" ]]; then
+        mv "$temp" "$target"
+        printf 'captured=%s bytes=%s\n' "$remote" "$(wc -c < "$target")" >>"$DEVICE_BENCH_CAPTURE_LOG"
+      else
+        rm -f "$temp"
+      fi
+    done
+    sleep 3
+  done
+}
+collect_benchmark_outputs &
+BENCH_CAPTURE_PID=$!
+
 set +e
 ./gradlew ":baselineprofile:$CONNECTED_TASK" \
   -Pandroid.injected.signing.store.file="$DEBUG_KEYSTORE" \
@@ -413,6 +486,75 @@ set +e
   2>&1 | tee "$OUT_DIR/macrobenchmark-gradle.log"
 MACROBENCHMARK_STATUS=${PIPESTATUS[0]}
 set -e
+touch "$DEVICE_BENCH_STOP"
+wait "$BENCH_CAPTURE_PID" || true
+
+# Connected-test UTP stores benchmark traces/JSON on the emulator under Android/media.
+# Earlier CI archives retained only host XML; collect actual device files before
+# teardown so reviewers can inspect render-thread work, GC and frame overruns.
+# A final sweep recovers files that survived UTP cleanup and records the
+# authoritative discovered paths. Do not reset results captured during tests.
+"${ADB[@]}" shell 'find /sdcard/Android/media/com.photobook.app.baselineprofile/additional_test_output -type f \( -name "*.perfetto-trace" -o -name "*benchmarkData.json" \) -print' \
+  2>/dev/null | tr -d '\r' | sort -u > "$OUT_DIR/device-benchmark-result-files.txt" || true
+CAPTURED_TRACES=0
+CAPTURED_JSON=0
+while IFS= read -r remote; do
+  [[ -n "$remote" ]] || continue
+  remote_hash="$(printf '%s' "$remote" | sha256sum | cut -c1-12)"
+  target="$DEVICE_BENCH_OUT/${remote_hash}-$(basename "$remote")"
+  temp="${target}.partial"
+  if [[ "$remote" == *benchmarkData.json ]]; then
+    if timeout 90s "${ADB[@]}" pull "$remote" "$temp" >>"$DEVICE_BENCH_CAPTURE_LOG" 2>&1 \
+        && [[ -s "$temp" ]] \
+        && python3 -c 'import json,sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$temp"; then
+      mv "$temp" "$target"
+      CAPTURED_JSON=$((CAPTURED_JSON + 1))
+    elif [[ -s "$target" ]]; then
+      # Keep the last known-valid live snapshot if UTP removed the final file.
+      CAPTURED_JSON=$((CAPTURED_JSON + 1))
+      rm -f "$temp"
+    else
+      rm -f "$temp"
+      echo "[phase3] unable to retrieve valid benchmark JSON: $remote" >&2
+    fi
+  elif [[ -s "$target" ]] || (timeout 90s "${ADB[@]}" pull "$remote" "$target" >>"$DEVICE_BENCH_CAPTURE_LOG" 2>&1 && [[ -s "$target" ]]); then
+    case "$target" in
+      *.perfetto-trace|*.trace) CAPTURED_TRACES=$((CAPTURED_TRACES + 1)) ;;
+    esac
+  else
+    rm -f "$target"
+    echo "[phase3] unable to retrieve benchmark device result: $remote" >&2
+  fi
+done < "$OUT_DIR/device-benchmark-result-files.txt"
+# Count files retained by both the live collector and the final sweep.
+CAPTURED_TRACES="$(find "$DEVICE_BENCH_OUT" -type f \( -name '*.perfetto-trace' -o -name '*.trace' \) | wc -l)"
+CAPTURED_JSON="$(find "$DEVICE_BENCH_OUT" -type f -name '*benchmarkData.json' | wc -l)"
+printf 'traces=%s\nbenchmarkJson=%s\n' "$CAPTURED_TRACES" "$CAPTURED_JSON" \
+  | tee "$OUT_DIR/device-benchmark-capture-summary.txt"
+if (( CAPTURED_TRACES == 0 )); then
+  echo "[phase3] no raw Perfetto traces captured; smoothness certification is incomplete" >&2
+fi
+if (( CAPTURED_JSON == 0 )); then
+  echo "[phase3] no valid benchmark JSON captured; numerical smoothness certification is incomplete" >&2
+fi
+
+FRAME_METRIC_SUMMARY="$OUT_DIR/frame-metric-summary.json"
+if (( CAPTURED_JSON > 0 )); then
+  FRAME_METRIC_MODE=()
+  if [[ "$REQUIRE_PHYSICAL" != "1" ]]; then
+    # Hosted emulators provide repeatable stress/correctness evidence and raw
+    # frame metrics, but virtualized rendering is not a release-grade 60 Hz
+    # smoothness certification surface. Preserve budget violations in the JSON
+    # as observational evidence; enforce the absolute budgets only when this
+    # harness is explicitly running against a required physical device.
+    FRAME_METRIC_MODE+=(--observe-only)
+  fi
+  python3 tools/benchmark/validate_frame_metrics.py \
+    --benchmark-dir "$DEVICE_BENCH_OUT" \
+    --api-level "$SDK" \
+    --output "$FRAME_METRIC_SUMMARY" \
+    "${FRAME_METRIC_MODE[@]}"
+fi
 
 # Preserve benchmark JSON / Perfetto result locations for later forensic review.
 find baselineprofile/build \
@@ -550,6 +692,23 @@ OUT_DIR="$OUT_DIR/lifecycle-stress" \
 "${ADB[@]}" shell dumpsys cpuinfo > "$OUT_DIR/cpuinfo-after-stress.txt" || true
 "${ADB[@]}" logcat -d -b crash > "$OUT_DIR/crash-buffer.txt" || true
 "${ADB[@]}" logcat -d > "$OUT_DIR/logcat.txt" || true
+
+# Android's ring-buffer logcat can rotate away the 100k initial-index markers
+# before the final 12-iteration lifecycle stress finishes. UTP retains a
+# per-test device log for a_initialIndexReadyLatency; reuse only real captured
+# PhotoBookPhase4 lines from that exact test, never synthesize timing values.
+INDEX_LOGCAT="$(find baselineprofile/build/outputs/androidTest-results -type f \
+  -name 'logcat-*a_initialIndexReadyLatency.txt' -print 2>/dev/null | sort | tail -n 1)"
+if [[ -n "$INDEX_LOGCAT" && -s "$INDEX_LOGCAT" ]]; then
+  grep -F 'PhotoBookPhase4:' "$INDEX_LOGCAT" \
+    > "$OUT_DIR/initial-index-phase4-markers.txt" || true
+  if [[ -s "$OUT_DIR/initial-index-phase4-markers.txt" ]]; then
+    cat "$OUT_DIR/initial-index-phase4-markers.txt" >> "$OUT_DIR/logcat.txt"
+    echo "[phase3] restored exact-test PhotoBookPhase4 markers from $INDEX_LOGCAT"
+  fi
+fi
+# The timing extractor still requires completed=1 for all three exact-count
+# initial-index stages and will fail if the authentic entries are missing.
 if (( SDK >= 30 )); then
   "${ADB[@]}" shell dumpsys activity exit-info "$PACKAGE" > "$OUT_DIR/exit-info.txt" || true
 fi
@@ -560,11 +719,24 @@ if grep -Eiq 'FATAL EXCEPTION|ANR in com\.photobook\.app|OutOfMemoryError' \
   exit 1
 fi
 
+if grep -Eiq 'Local semantic runtime is unavailable|Local semantic runtime failed to link|Local semantic image labeling failed' "$OUT_DIR/logcat.txt"; then
+  echo "FAIL: bundled semantic runtime/inference error found in scale-run logcat" >&2
+  exit 1
+fi
+if (( CAPTURED_TRACES == 0 || CAPTURED_JSON == 0 )); then
+  echo "FAIL: missing connected benchmark trace/JSON; frame smoothness cannot be reviewed" >&2
+  exit 1
+fi
+
 if ! cleanup_benchmark_media; then
   echo "FAIL: unable to remove isolated benchmark MediaStore corpus" >&2
   exit 1
 fi
 
-echo "[phase3] PASS device certification harness"
+if [[ "$REQUIRE_PHYSICAL" == "1" ]]; then
+  echo "[phase3] PASS physical-device certification harness"
+else
+  echo "[phase3] PASS hosted-emulator stress/correctness harness; frame budgets are observational only and do NOT certify physical-device smoothness"
+fi
 echo "[phase3] library_size=$LIBRARY_SIZE model=$MODEL sdk=$SDK ram_kb=$RAM_KB emulator=$IS_EMULATOR"
 echo "[phase3] reports=$OUT_DIR"

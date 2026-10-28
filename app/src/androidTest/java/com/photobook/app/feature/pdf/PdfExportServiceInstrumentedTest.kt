@@ -1,0 +1,349 @@
+package com.photobook.app.feature.pdf
+
+import android.graphics.Bitmap
+import android.net.Uri
+import android.os.Build
+import androidx.core.content.FileProvider
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import com.photobook.app.data.model.PhotoRecord
+import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+
+@RunWith(AndroidJUnit4::class)
+class PdfExportServiceInstrumentedTest {
+
+    @Test
+    fun shareExport_publishesVerifiedPdfAndReportsProgress() = runBlocking {
+        val fixture = createFixture("pdf_success")
+        val service = PdfExportService(fixture.context)
+        val progress = mutableListOf<PdfExportProgress>()
+        var result: PdfExportResult? = null
+        try {
+            result = service.exportPhotosForSharing(listOf(fixture.photo)) { progress += it }
+            assertTrue("Expected Success but got $result", result is PdfExportResult.Success)
+            result as PdfExportResult.Success
+            assertEquals(1, result.pageCount)
+            assertPdfHeader(result.uri)
+            assertTrue(progress.isNotEmpty())
+            assertEquals(PdfExportProgress(1, 0, 0, 0), progress.first())
+            assertEquals(PdfExportProgress(1, 1, 1, 0), progress.last())
+        } finally {
+            deletePublished(result)
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun shareExport_unreadableInputReturnsTruthfulPartialSuccess() = runBlocking {
+        val fixture = createFixture("pdf_partial")
+        val missing = fixture.photo.copy(
+            id = fixture.photo.id + 1,
+            uriString = Uri.fromFile(File(fixture.context.cacheDir, "missing_" + System.nanoTime() + ".jpg")).toString(),
+            fileName = "missing.jpg",
+        )
+        val service = PdfExportService(fixture.context)
+        val progress = mutableListOf<PdfExportProgress>()
+        var result: PdfExportResult? = null
+        try {
+            result = service.exportPhotosForSharing(listOf(fixture.photo, missing)) { progress += it }
+            assertTrue("Expected PartialSuccess but got $result", result is PdfExportResult.PartialSuccess)
+            result as PdfExportResult.PartialSuccess
+            assertEquals(1, result.pageCount)
+            assertEquals(1, result.skippedCount)
+            assertPdfHeader(result.uri)
+            assertEquals(PdfExportProgress(2, 2, 1, 1), progress.last())
+        } finally {
+            deletePublished(result)
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun concurrentDownloadsExports_haveIndependentPublishedOutputsAndNoStaleJournal() = runBlocking {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return@runBlocking
+
+        val firstFixture = createFixture("pdf_concurrent_a")
+        val secondFixture = createFixture("pdf_concurrent_b")
+        val firstService = PdfExportService(firstFixture.context)
+        val secondService = PdfExportService(secondFixture.context)
+        var firstResult: PdfExportResult? = null
+        var secondResult: PdfExportResult? = null
+        try {
+            val first = async { firstService.exportPhotos(listOf(firstFixture.photo)) }
+            val second = async { secondService.exportPhotos(listOf(secondFixture.photo)) }
+            firstResult = first.await()
+            secondResult = second.await()
+
+            assertTrue(firstResult is PdfExportResult.Success)
+            assertTrue(secondResult is PdfExportResult.Success)
+            val firstSuccess = firstResult as PdfExportResult.Success
+            val secondSuccess = secondResult as PdfExportResult.Success
+            assertTrue(firstSuccess.uri != secondSuccess.uri)
+            assertTrue(firstSuccess.fileName != secondSuccess.fileName)
+            assertPdfHeader(firstSuccess.uri)
+            assertPdfHeader(secondSuccess.uri)
+
+            val journal = firstFixture.context.getSharedPreferences(
+                "pdf_publication_journal_v1",
+                android.content.Context.MODE_PRIVATE,
+            )
+            assertFalse(journal.contains("pending_pdf_uri"))
+            assertTrue(partialFiles(firstFixture.context.cacheDir).isEmpty())
+        } finally {
+            deletePublished(firstResult)
+            deletePublished(secondResult)
+            firstFixture.close()
+            secondFixture.close()
+        }
+    }
+
+    @Test
+    fun freshlyCreatedDocument_writeFailureDeletesOnlyOwnedPartialFile() = runBlocking {
+        val fixture = createFixture("pdf_new_document_failure")
+        val destination = File(fixture.source.parentFile, "created_" + System.nanoTime() + ".pdf")
+        destination.writeBytes(byteArrayOf())
+        val uri = FileProvider.getUriForFile(
+            fixture.context,
+            fixture.context.packageName + ".fileprovider",
+            destination,
+        )
+        val service = PdfExportService(fixture.context)
+        service.documentUriWriterOverride = { target, _ ->
+            fixture.context.contentResolver.openOutputStream(target, "wt")!!.use { stream ->
+                stream.write("%PDF-partial".encodeToByteArray())
+            }
+            throw IOException("Simulated provider write failure after partial bytes")
+        }
+        try {
+            val result = service.exportPhotosToDocumentUri(
+                photos = listOf(fixture.photo),
+                destinationUri = uri,
+                freshlyCreated = true,
+            )
+            assertTrue("Partial selected document must not be published", result is PdfExportResult.Error)
+            assertFalse("Created partial PDF survived an I/O failure", destination.exists())
+            val journal = fixture.context.getSharedPreferences(
+                "pdf_publication_journal_v1", android.content.Context.MODE_PRIVATE,
+            )
+            assertFalse("Owned document cleanup journal was not cleared", journal.contains("pending_created_document_uri"))
+        } finally {
+            destination.delete()
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun preexistingSelectedDocument_isNotTruncatedOrDeleted() = runBlocking {
+        val fixture = createFixture("pdf_existing_document")
+        val destination = File(fixture.source.parentFile, "existing_" + System.nanoTime() + ".pdf")
+        val originalBytes = "User's existing document".encodeToByteArray()
+        destination.writeBytes(originalBytes)
+        val uri = FileProvider.getUriForFile(
+            fixture.context,
+            fixture.context.packageName + ".fileprovider",
+            destination,
+        )
+        try {
+            val result = PdfExportService(fixture.context).exportPhotosToDocumentUri(
+                photos = listOf(fixture.photo),
+                destinationUri = uri,
+            )
+            assertTrue("Unowned destination must fail closed", result is PdfExportResult.Error)
+            assertTrue("Existing user's bytes were overwritten", destination.readBytes().contentEquals(originalBytes))
+        } finally {
+            destination.delete()
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun missingOwnedDocumentJournal_isClearedAndDoesNotBlockNextExport() = runBlocking {
+        val fixture = createFixture("pdf_missing_owned_journal")
+        val missing = File(fixture.source.parentFile, "already_gone_" + System.nanoTime() + ".pdf")
+        val missingUri = FileProvider.getUriForFile(
+            fixture.context,
+            fixture.context.packageName + ".fileprovider",
+            missing,
+        )
+        val destination = File(fixture.source.parentFile, "created_" + System.nanoTime() + ".pdf")
+        destination.writeBytes(byteArrayOf())
+        val destinationUri = FileProvider.getUriForFile(
+            fixture.context,
+            fixture.context.packageName + ".fileprovider",
+            destination,
+        )
+        val journal = fixture.context.getSharedPreferences(
+            "pdf_publication_journal_v1", android.content.Context.MODE_PRIVATE,
+        )
+        assertTrue(
+            journal.edit()
+                .putString("pending_created_document_uri", missingUri.toString())
+                .commit(),
+        )
+
+        var result: PdfExportResult? = null
+        try {
+            result = PdfExportService(fixture.context).exportPhotosToDocumentUri(
+                photos = listOf(fixture.photo),
+                destinationUri = destinationUri,
+                freshlyCreated = true,
+            )
+            assertTrue("Missing stale owned document blocked export: $result", result is PdfExportResult.Success)
+            assertFalse(
+                "Missing owned-document recovery journal was not cleared",
+                journal.contains("pending_created_document_uri"),
+            )
+            assertPdfHeader(destinationUri)
+        } finally {
+            destination.delete()
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun unavailableDownloadProvider_keepsPendingCleanupJournalAndBlocksNewExport() = runBlocking {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return@runBlocking
+        val fixture = createFixture("pdf_unknown_download")
+        val journal = fixture.context.getSharedPreferences(
+            "pdf_publication_journal_v1", android.content.Context.MODE_PRIVATE,
+        )
+        val previous = journal.getString("pending_pdf_uri", null)
+        val unavailableUri = Uri.parse("content://com.photobook.nonexistent.pdf.provider/12345")
+        try {
+            assertTrue(journal.edit().putString("pending_pdf_uri", unavailableUri.toString()).commit())
+            val result = PdfExportService(fixture.context).exportPhotos(listOf(fixture.photo))
+            assertTrue("Unknown provider must prevent publication: $result", result is PdfExportResult.Error)
+            assertEquals(
+                "Pending partial document must remain recoverable",
+                unavailableUri.toString(),
+                journal.getString("pending_pdf_uri", null),
+            )
+        } finally {
+            val editor = journal.edit()
+            if (previous == null) editor.remove("pending_pdf_uri")
+            else editor.putString("pending_pdf_uri", previous)
+            assertTrue(editor.commit())
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun shareExport_cancellationDoesNotPublishOrLeavePartialOutput() = runBlocking {
+        val fixture = createFixture("pdf_cancel")
+        val service = PdfExportService(fixture.context)
+        val before = partialFiles(fixture.context.cacheDir)
+        var cancelled = false
+        try {
+            service.exportPhotosForSharing(listOf(fixture.photo)) { progress ->
+                if (progress.processedItems == 1) {
+                    throw CancellationException("test cancellation after page preparation")
+                }
+            }
+        } catch (_: CancellationException) {
+            cancelled = true
+        } finally {
+            fixture.close()
+        }
+
+        assertTrue("Cancellation must propagate", cancelled)
+        assertEquals(before, partialFiles(fixture.context.cacheDir))
+    }
+
+    private fun assertPdfHeader(uri: Uri) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val header = ByteArray(5)
+        val read = context.contentResolver.openInputStream(uri)?.use { it.read(header) } ?: -1
+        assertEquals(5, read)
+        assertEquals("%PDF-", header.decodeToString())
+    }
+
+    private fun deletePublished(result: PdfExportResult?) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val uri = when (result) {
+            is PdfExportResult.Success -> result.uri
+            is PdfExportResult.PartialSuccess -> result.uri
+            else -> null
+        }
+        if (uri != null) {
+            runCatching { context.contentResolver.delete(uri, null, null) }
+        }
+    }
+
+    private fun partialFiles(root: File): Set<String> =
+        root.walkTopDown()
+            .filter { it.isFile && it.name.endsWith(".partial") }
+            .map { it.absolutePath }
+            .toSet()
+
+    private fun createFixture(prefix: String): Fixture {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val sourceDir = File(context.cacheDir, "safe_share").apply { mkdirs() }
+        val source = File(sourceDir, prefix + "_" + System.nanoTime() + ".jpg")
+        val bitmap = Bitmap.createBitmap(32, 20, Bitmap.Config.ARGB_8888)
+        try {
+            bitmap.eraseColor(0xFF336699.toInt())
+            FileOutputStream(source).use { output ->
+                assertTrue(bitmap.compress(Bitmap.CompressFormat.JPEG, 95, output))
+                output.flush()
+            }
+        } finally {
+            bitmap.recycle()
+        }
+        val uri = FileProvider.getUriForFile(
+            context,
+            context.packageName + ".fileprovider",
+            source,
+        )
+        return Fixture(
+            context = context,
+            source = source,
+            photo = PhotoRecord(
+                id = System.nanoTime(),
+                uriString = uri.toString(),
+                filePath = source.absolutePath,
+                fileName = source.name,
+                dateAdded = 123456789L,
+                year = 2026,
+                month = 10,
+                dayOfMonth = 4,
+                dayOfWeek = 1,
+                hourOfDay = 12,
+                latitude = null,
+                longitude = null,
+                city = null,
+                state = null,
+                country = null,
+                fileSize = source.length(),
+                width = 32,
+                height = 20,
+                mimeType = "image/jpeg",
+                folderName = "Test",
+                folderPath = source.parent.orEmpty(),
+                cameraModel = null,
+                isFrontCamera = false,
+                isHdr = false,
+            ),
+        )
+    }
+
+    private data class Fixture(
+        val context: android.content.Context,
+        val source: File,
+        val photo: PhotoRecord,
+    ) {
+        fun close() {
+            assertFalse("Fixture source should remain a regular file until cleanup", !source.exists())
+            source.delete()
+        }
+    }
+}

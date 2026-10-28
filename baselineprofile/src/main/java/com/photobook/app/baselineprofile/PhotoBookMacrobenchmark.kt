@@ -2,6 +2,7 @@ package com.photobook.app.baselineprofile
 
 import android.os.Build
 import android.os.SystemClock
+import android.util.Log
 import android.view.KeyEvent
 import androidx.benchmark.macro.ExperimentalMetricApi
 import androidx.benchmark.macro.FrameTimingMetric
@@ -20,6 +21,7 @@ import androidx.test.uiautomator.Until
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.ceil
+import org.junit.Assume
 import org.junit.Before
 import org.junit.FixMethodOrder
 import org.junit.Rule
@@ -41,6 +43,10 @@ class PhotoBookMacrobenchmark {
 
     @Before
     fun prepareScaleFixture() {
+        // Once readiness has demonstrably failed in this instrumentation process, do not
+        // spend another 4-45 minutes repeating the same failed prerequisite in six metrics.
+        // JUnit reports skipped follow-ups and the existing strict XML gate still fails.
+        Assume.assumeFalse("Index readiness failed earlier in this run", readinessFailed)
         BenchmarkMediaSeeder.ensureSeeded()
     }
 
@@ -68,15 +74,18 @@ class PhotoBookMacrobenchmark {
 
         check(elapsedMs > 0L) { "Initial index-ready latency was not captured" }
         val photosPerSecond = librarySize * 1_000.0 / elapsedMs.toDouble()
-        println(
-            String.format(
-                Locale.US,
-                "[phase3] indexReady librarySize=%d elapsedMs=%d photosPerSecond=%.2f",
-                librarySize,
-                elapsedMs,
-                photosPerSecond,
-            ),
+        val indexReadyMeasurement = String.format(
+            Locale.US,
+            "[phase3] indexReady librarySize=%d elapsedMs=%d photosPerSecond=%.2f",
+            librarySize,
+            elapsedMs,
+            photosPerSecond,
         )
+        println(indexReadyMeasurement)
+        // API 30 UTP can omit instrumentation stdout from the host Gradle log.
+        // Persist the same measured value to device logcat so Phase 4 timing
+        // extraction remains exact and reviewable across API levels.
+        Log.i("PhotoBookPhase4", indexReadyMeasurement)
     }
 
     @Test
@@ -228,7 +237,6 @@ class PhotoBookMacrobenchmark {
     fun g_reelsVerticalSwipeFrameTiming() {
         ensureSteadyStateIndex()
         var reelsModeEnabled = false
-        var reelsThumbnailCenter: TapPoint? = null
 
         benchmarkRule.measureRepeated(
             packageName = TARGET_PACKAGE,
@@ -244,33 +252,109 @@ class PhotoBookMacrobenchmark {
                 // The home action enables vertical paging; it does not itself open
                 // a viewer. Enable it once, then open an actual visible photo card.
                 if (!reelsModeEnabled) {
-                    requireReadyLibrary(device).click()
+                    enableReelsMode(device)
                     reelsModeEnabled = true
                     device.waitForIdle()
                 }
 
-                val thumbnailCenter = reelsThumbnailCenter
-                    ?: waitForVisiblePhotoThumbnail(device)
+                // Closing the previous Reels iteration can change the grid anchor.
+                // Reacquire a live visible card instead of reusing stale screen coordinates.
+                val thumbnailCenter = waitForVisiblePhotoThumbnail(device)
                     ?: error("Reels benchmark requires a visible photo thumbnail")
-                reelsThumbnailCenter = thumbnailCenter
                 device.click(thumbnailCenter.x, thumbnailCenter.y)
                 val viewerOpened = device.wait(Until.hasObject(By.desc("Close")), THUMBNAIL_TIMEOUT_MS)
-                check(viewerOpened) {
-                    "Reels benchmark could not open the seeded photo viewer"
+                check(viewerOpened && device.hasObject(By.pkg(TARGET_PACKAGE))) {
+                    "Reels benchmark could not open the seeded PhotoBook viewer"
+                }
+                // The page counter exists in both viewer orientations. Do not certify
+                // vertical Reels gestures against a horizontal viewer by accident.
+                val pager = device.wait(
+                    Until.findObject(By.res(REELS_PAGER_TEST_TAG)),
+                    UI_TIMEOUT_MS,
+                ) ?: error("Vertical Reels pager is absent after enabling Reel Browsing")
+                val bounds = pager.visibleBounds
+                check(bounds.width() > 0 && bounds.height() > device.displayHeight / 3) {
+                    "Vertical Reels pager has invalid visible bounds: $bounds"
+                }
+                val (page, count) = requireViewerPageCounter(device)
+                check(count - page >= REELS_MEASURED_SWIPES) {
+                    "Reels benchmark needs $REELS_MEASURED_SWIPES forward pages, found $page / $count"
                 }
             },
         ) {
-            repeat(12) {
+            var currentPage = requireViewerPageCounter(device).first
+            repeat(REELS_MEASURED_SWIPES) { swipeIndex ->
+                // Re-resolve the actual pager after each navigation/recomposition.
+                // Reusing stale raw screen coordinates made a 50k/4GB iteration
+                // land on non-pager content after its first successful page change.
+                // A scoped UIAutomator gesture exercises the real accessibility
+                // viewport; all twelve forward transitions remain mandatory.
+                val pager = device.findObject(By.res(REELS_PAGER_TEST_TAG))
+                    ?: error("Vertical Reels pager absent at swipe ${swipeIndex + 1}")
+                val liveBounds = pager.visibleBounds
+                check(liveBounds.width() > 0 && liveBounds.height() > device.displayHeight / 3) {
+                    "Vertical Reels pager invalid during swipe ${swipeIndex + 1}: $liveBounds"
+                }
+                // UIAutomator's element-scoped swipe left the real pager on page one
+                // across all six scale profiles. Inject an actual physical pointer
+                // gesture using freshly resolved pager coordinates on EVERY swipe.
+                // Do not replace page advancement with an accessibility scroll action.
                 device.swipe(
-                    device.displayWidth / 2,
-                    (device.displayHeight * 0.78f).toInt(),
-                    device.displayWidth / 2,
-                    (device.displayHeight * 0.24f).toInt(),
-                    12,
+                    liveBounds.centerX(),
+                    liveBounds.top + (liveBounds.height() * 0.72f).toInt(),
+                    liveBounds.centerX(),
+                    liveBounds.top + (liveBounds.height() * 0.12f).toInt(),
+                    28,
                 )
+                val nextPage = awaitViewerPageAdvance(device, currentPage)
+                check(nextPage > currentPage) {
+                    "Reels viewer did not advance after swipe ${swipeIndex + 1}: " +
+                        "page=$currentPage; foreground=${device.currentPackageName}; " +
+                        "scrollableNodes=${device.findObjects(By.scrollable(true)).size}"
+                }
+                currentPage = nextPage
+                // The page counter can advance before the Compose pager finishes
+                // settling. Keep the next gesture out of that animation.
+                SystemClock.sleep(500)
             }
-            device.waitForIdle()
         }
+    }
+
+    private fun awaitViewerPageAdvance(device: UiDevice, previousPage: Int): Int {
+        val deadline = SystemClock.elapsedRealtime() + 4_000L
+        var lastPage = previousPage
+        var stableForwardSamples = 0
+        do {
+            val observedPage = requireViewerPageCounter(device).first
+            if (observedPage > previousPage && observedPage == lastPage) {
+                stableForwardSamples++
+            } else {
+                stableForwardSamples = if (observedPage > previousPage) 1 else 0
+            }
+            lastPage = observedPage
+            if (stableForwardSamples >= 3) return lastPage
+            SystemClock.sleep(100)
+        } while (SystemClock.elapsedRealtime() < deadline)
+        check(stableForwardSamples >= 3) {
+            "Reels page did not settle within 4s: previousPage=$previousPage; " +
+                "observedPage=$lastPage; stableSamples=$stableForwardSamples; " +
+                "foreground=${device.currentPackageName}; " +
+                "scrollableNodes=${device.findObjects(By.scrollable(true)).size}"
+        }
+        return lastPage
+    }
+
+    private fun requireViewerPageCounter(device: UiDevice): Pair<Int, Int> {
+        val counter = device.findObjects(
+            By.text(java.util.regex.Pattern.compile("^\\d+ / \\d+$")),
+        ).firstOrNull()?.text ?: error(
+            "Reels viewer has no visible page counter; cannot certify vertical paging",
+        )
+        val parts = counter.split(" / ")
+        val page = parts[0].toInt()
+        val count = parts[1].toInt()
+        check(page in 1..count) { "Invalid Reels viewer page counter: $counter" }
+        return page to count
     }
 
     /**
@@ -332,29 +416,60 @@ class PhotoBookMacrobenchmark {
     private fun requireReadyLibrary(
         device: UiDevice,
         timeoutMs: Long = BenchmarkMediaSeeder.readyTimeoutMs(),
-    ): UiObject2 {
+    ) {
         val deadlineMs = SystemClock.elapsedRealtime() + timeoutMs
+        var lastObservedActions = ""
         while (SystemClock.elapsedRealtime() < deadlineMs) {
-            // Search auto-focus is intentionally enabled once the library becomes ready. On
-            // smaller emulator viewports the IME can then cover the action row (and the grid),
-            // making UiAutomator falsely report that "Reel Browsing" never became visible.
-            // Dismiss only a currently visible configured IME; never issue an unconditional
-            // Back press that could navigate out of PhotoBook while indexing is still running.
             if (dismissVisibleIme(device)) {
                 device.waitForIdle()
             }
-
+            // The redesigned Photos-first shell places Reel Browsing in Tools. The old
+            // benchmark waited for it on Photos, so all seven benchmarks timed out even
+            // after the app compiled and displayed its gallery.
             val action = clickableAncestor(device.findObject(By.text(REELS_ACTION_TEXT)))
             if (action?.isEnabled == true) {
-                return action
+                val photosTab = clickableAncestor(device.findObject(By.text(PHOTOS_TAB_TEXT)))
+                check(photosTab != null) { "Photos tab disappeared after gallery readiness" }
+                photosTab.click()
+                device.waitForIdle()
+                return
             }
+            if (action == null) {
+                clickableAncestor(device.findObject(By.text(TOOLS_TAB_TEXT)))?.let { toolsTab ->
+                    toolsTab.click()
+                    device.waitForIdle()
+                }
+            }
+            lastObservedActions = "toolsVisible=${device.hasObject(By.text(TOOLS_TAB_TEXT))} " +
+                "reelsVisible=${device.hasObject(By.text(REELS_ACTION_TEXT))} " +
+                "reelsEnabled=${action?.isEnabled}"
             device.waitForIdle()
             SystemClock.sleep(100)
         }
+        readinessFailed = true
         error(
             "PhotoBook did not reach its ready state before benchmark measurement; " +
-                "librarySize=${BenchmarkMediaSeeder.requestedLibrarySize()} timeoutMs=$timeoutMs",
+                "librarySize=${BenchmarkMediaSeeder.requestedLibrarySize()} " +
+                "timeoutMs=$timeoutMs $lastObservedActions",
         )
+    }
+
+    private fun enableReelsMode(device: UiDevice) {
+        val toolsTab = clickableAncestor(device.findObject(By.text(TOOLS_TAB_TEXT)))
+            ?: error("Tools tab unavailable for Reel benchmark")
+        toolsTab.click()
+        device.waitForIdle()
+        val action = clickableAncestor(device.wait(
+            Until.findObject(By.text(REELS_ACTION_TEXT)),
+            UI_TIMEOUT_MS,
+        )) ?: error("Reel action unavailable on Tools tab")
+        check(action.isEnabled) { "Reel action disabled after indexing" }
+        action.click()
+        device.waitForIdle()
+        val photosTab = clickableAncestor(device.findObject(By.text(PHOTOS_TAB_TEXT)))
+            ?: error("Photos tab unavailable after enabling Reels")
+        photosTab.click()
+        device.waitForIdle()
     }
 
     /**
@@ -592,9 +707,16 @@ class PhotoBookMacrobenchmark {
     )
 
     companion object {
+        @Volatile
+        private var readinessFailed = false
+
         private const val TARGET_PACKAGE = "com.photobook.app"
         private const val TARGET_ACTIVITY = ".MainActivity"
         private const val REELS_ACTION_TEXT = "Reel Browsing"
+        private const val REELS_PAGER_TEST_TAG = "photobook_reels_vertical_pager"
+        private const val PHOTOS_TAB_TEXT = "Photos"
+        private const val TOOLS_TAB_TEXT = "Tools"
+        private const val REELS_MEASURED_SWIPES = 12
         private const val STARTUP_ITERATIONS = 10
         private const val INTERACTION_ITERATIONS = 5
         private const val UI_TIMEOUT_MS = 8_000L

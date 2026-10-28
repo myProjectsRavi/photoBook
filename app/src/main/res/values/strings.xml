@@ -2,6 +2,8 @@
     <string name="app_name">PhotoBook</string>
     <string name="search_placeholder">Search... try &quot;today&quot; or &quot;selfie&quot;</string>
     <string name="allow_photo_access">Allow Photo Access</string>
+    <string name="retry">Retry</string>
+    <string name="cancel">Cancel</string>
     <string name="permission_message">Allow photo access so PhotoBook can show only your on-device results. Nothing is uploaded.</string>
     <string name="limited_access_title">Limited library mode</string>
     <string name="limited_access_subtitle">PhotoBook can search only the photos you selected.</string>
@@ -18,6 +20,7 @@
     <string name="share_selected">Share selected</string>
     <string name="trash_selected">Move to Trash</string>
     <string name="create_pdf_selected">Create PDF</string>
+    <string name="create_pdf_progress">Creating PDF %1$d of %2$d</string>
     <string name="create_pdf_preparing">Preparing PDF...</string>
     <string name="create_pdf_success">PDF created (%1$d pages)</string>
     <string name="create_pdf_partial_success">PDF created with %1$d pages; %2$d unreadable images skipped</string>
@@ -35,7 +38,9 @@
     <string name="share_prep_option_blur_faces">Blur detected faces</string>
     <string name="share_prep_option_blur_faces_subtitle">Applies an offline privacy blur over faces in shared copies.</string>
     <string name="share_prep_continue">Continue to Share</string>
+    <string name="clear_search">Clear search</string>
     <string name="clear_selection">Clear selection</string>
+    <string name="more_selection_actions">More selection actions</string>
     <string name="declutter_action">Declutter</string>
     <string name="declutter_title">Declutter swipe</string>
     <string name="declutter_progress">%1$d of %2$d</string>
@@ -95,6 +100,8 @@
     <string name="archives_delete_due">Delete due items</string>
     <string name="archives_candidate_meta">Confidence %1$d%% - %2$s</string>
     <string name="archives_tile_selected">Selected for archive action</string>
+    <string name="archives_select_photo">Select %1$s</string>
+    <string name="archives_deselect_photo">Deselect %1$s</string>
     <string name="archives_review_title">Review archive photo</string>
     <string name="archives_review_keep">Keep in Photos</string>
     <string name="archives_review_archive">Archive for %1$d days</string>
@@ -181,6 +188,12 @@
     <string name="viewer_editor_share_copy">Share copy</string>
     <string name="viewer_editor_save_success">Edited copy saved to device</string>
     <string name="viewer_editor_save_error">Couldn\'t save edited copy</string>
+    <string name="viewer_editor_save_storage_error">Not enough storage to save this edited copy.</string>
+    <string name="viewer_editor_save_access_error">This Android version cannot safely publish edited copies without broader storage access.</string>
+    <string name="viewer_editor_save_cancelled">Save cancelled. Your original photo is unchanged.</string>
+    <string name="viewer_editor_retry_save">Retry save</string>
+    <string name="viewer_editor_open_saved">Open saved copy</string>
+    <string name="viewer_editor_open_error">No photo viewer could open the saved copy.</string>
     <string name="viewer_editor_render_error">Couldn\'t apply edits</string>
     <string name="viewer_private_note">Private note</string>
     <string name="viewer_note_title">Private photo note</string>
@@ -190,7 +203,7 @@
     <string name="viewer_note_save">Save note</string>
     <string name="viewer_note_clear">Clear note</string>
     <string name="viewer_note_saved">Note saved</string>
-    <string name="viewer_note_cleared">Note cleared</string>
+    <string name="viewer_note_cleared">Note cleared</string>\n    <string name="viewer_note_storage_error">Private note unavailable. Nothing was changed.</string>
     <string name="scan_qr_action">Scan QR transfer</string>
     <string name="scan_qr_title">Receive photo via QR</string>
     <string name="scan_qr_hint">Point your camera at the sender\'s QR.</string>
@@ -216,6 +229,7 @@
     <string name="welcome_subtitle">Private on-device photo search. Your photos never leave this device.</string>
     <string name="welcome_search_prompt">Type a word, place, date, or moment.</string>
     <string name="feed_mode_timeline">Timeline</string>
+    <string name="gallery_timeline_scrubber">Gallery timeline scrubber</string>
     <string name="feed_mode_utilities">Utilities</string>
     <string name="feed_mode_result_count">%1$s • %2$d photos</string>
     <string name="feed_mode_empty">No photos in this feed yet.</string>
@@ -256,4 +270,7 @@
     <string name="widget_open_memory">Open memory</string>
     <string name="widget_on_this_day_description">Shows your On This Day memory from PhotoBook.</string>
     <string name="story_progress">%1$d / %2$d</string>
+    <string name="story_previous">Previous memory photo</string>
+    <string name="story_next">Next memory photo</string>
+    <string name="story_user_paced_hint">Swipe or use the controls</string>
 </resources>

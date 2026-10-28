@@ -18,6 +18,7 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -27,30 +28,20 @@ class PhotoEditService @Inject constructor(
 ) {
     suspend fun renderEditedCopy(photo: PhotoRecord, state: PhotoEditState): PhotoEditResult {
         return withContext(Dispatchers.Default) {
-            var source: Bitmap? = null
-            var rotated: Bitmap? = null
-            var cropped: Bitmap? = null
             var filtered: Bitmap? = null
             var tempFile: File? = null
             var finalFile: File? = null
             var committed = false
 
             try {
-                coroutineContext.ensureActive()
-                source = decodeSampledBitmap(photo.uriString) ?: return@withContext PhotoEditResult.Error
+                currentCoroutineContext().ensureActive()
+                filtered = renderTransformedBitmap(
+                    uriString = photo.uriString,
+                    state = state,
+                    maxDimension = MAX_DIMENSION,
+                ) ?: return@withContext PhotoEditResult.Error
 
-                rotated = applyRotation(source!!, state.rotationQuarterTurns)
-                if (rotated !== source) source?.recycleSafely()
-
-                coroutineContext.ensureActive()
-                cropped = applyCrop(rotated!!, state)
-                if (cropped !== rotated) rotated?.recycleSafely()
-
-                coroutineContext.ensureActive()
-                filtered = applyToneAndFilter(cropped!!, state)
-                if (filtered !== cropped) cropped?.recycleSafely()
-
-                coroutineContext.ensureActive()
+                currentCoroutineContext().ensureActive()
                 val outputDir = File(context.cacheDir, "safe_share").apply {
                     check(exists() || mkdirs()) { "Unable to create editor output directory" }
                 }
@@ -80,7 +71,7 @@ class PhotoEditService @Inject constructor(
                     check(tempFile!!.renameTo(finalFile!!)) { "Unable to publish edited JPEG" }
                 }
 
-                coroutineContext.ensureActive()
+                currentCoroutineContext().ensureActive()
                 val uri = FileProvider.getUriForFile(
                     context,
                     "${context.packageName}.fileprovider",
@@ -102,14 +93,86 @@ class PhotoEditService @Inject constructor(
                     runCatching { finalFile?.delete() }
                 }
                 filtered?.recycleSafely()
-                if (filtered !== cropped) cropped?.recycleSafely()
-                if (cropped !== rotated) rotated?.recycleSafely()
-                if (rotated !== source) source?.recycleSafely()
             }
         }
     }
 
-    private fun decodeSampledBitmap(uriString: String): Bitmap? {
+    suspend fun normalizedSourceDimensions(photo: PhotoRecord): Pair<Int, Int> =
+        withContext(Dispatchers.IO) {
+            val rawWidth = photo.width.coerceAtLeast(1)
+            val rawHeight = photo.height.coerceAtLeast(1)
+            val orientation = runCatching {
+                context.contentResolver.openInputStream(Uri.parse(photo.uriString))?.use { input ->
+                    ExifInterface(input).getAttributeInt(
+                        ExifInterface.TAG_ORIENTATION,
+                        ExifInterface.ORIENTATION_NORMAL,
+                    )
+                } ?: ExifInterface.ORIENTATION_NORMAL
+            }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+            when (orientation) {
+                ExifInterface.ORIENTATION_ROTATE_90,
+                ExifInterface.ORIENTATION_ROTATE_270,
+                ExifInterface.ORIENTATION_TRANSPOSE,
+                ExifInterface.ORIENTATION_TRANSVERSE,
+                -> rawHeight to rawWidth
+                else -> rawWidth to rawHeight
+            }
+        }
+
+    /**
+     * Returns an app-owned, bounded bitmap rendered by the exact same transform pipeline as export.
+     * The caller owns the returned bitmap and must recycle it when the preview is replaced/disposed.
+     */
+    suspend fun renderPreviewBitmap(
+        photo: PhotoRecord,
+        state: PhotoEditState,
+        maxDimension: Int = PREVIEW_MAX_DIMENSION,
+    ): Bitmap? = withContext(Dispatchers.Default) {
+        currentCoroutineContext().ensureActive()
+        renderTransformedBitmap(
+            uriString = photo.uriString,
+            state = state,
+            maxDimension = maxDimension.coerceIn(1, PREVIEW_MAX_DIMENSION),
+        )
+    }
+
+    private suspend fun renderTransformedBitmap(
+        uriString: String,
+        state: PhotoEditState,
+        maxDimension: Int,
+    ): Bitmap? {
+        var source: Bitmap? = null
+        var rotated: Bitmap? = null
+        var cropped: Bitmap? = null
+        var filtered: Bitmap? = null
+        var result: Bitmap? = null
+        try {
+            currentCoroutineContext().ensureActive()
+            source = decodeSampledBitmap(uriString, maxDimension) ?: return null
+            val transform = EditTransform.from(state)
+
+            rotated = applyRotation(source, transform.quarterTurns)
+            currentCoroutineContext().ensureActive()
+            cropped = applyCrop(rotated, transform)
+            currentCoroutineContext().ensureActive()
+            filtered = applyToneAndFilter(cropped, state)
+            currentCoroutineContext().ensureActive()
+
+            result = filtered
+            return result
+        } catch (error: CancellationException) {
+            throw error
+        } finally {
+            if (filtered !== result) filtered?.recycleSafely()
+            if (cropped !== filtered && cropped !== result) cropped?.recycleSafely()
+            if (rotated !== cropped && rotated !== filtered && rotated !== result) rotated?.recycleSafely()
+            if (source !== rotated && source !== cropped && source !== filtered && source !== result) {
+                source?.recycleSafely()
+            }
+        }
+    }
+
+    private fun decodeSampledBitmap(uriString: String, maxDimension: Int): Bitmap? {
         val uri = Uri.parse(uriString)
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         context.contentResolver.openInputStream(uri)?.use { stream ->
@@ -118,7 +181,7 @@ class PhotoEditService @Inject constructor(
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
 
         var sample = 1
-        while (bounds.outWidth / sample > MAX_DIMENSION || bounds.outHeight / sample > MAX_DIMENSION) {
+        while (bounds.outWidth / sample > maxDimension || bounds.outHeight / sample > maxDimension) {
             sample *= 2
         }
         val options = BitmapFactory.Options().apply {
@@ -153,12 +216,12 @@ class PhotoEditService @Inject constructor(
         )
     }
 
-    private fun applyCrop(source: Bitmap, state: PhotoEditState): Bitmap {
-        state.customCrop?.normalized()?.takeIf { it.isUsable() }?.let { region ->
+    private fun applyCrop(source: Bitmap, transform: EditTransform): Bitmap {
+        transform.cropRegion?.let { region ->
             return applyCustomCrop(source, region)
         }
 
-        return applyPresetCrop(source, state.cropPreset)
+        return applyPresetCrop(source, transform.cropPreset)
     }
 
     private fun applyPresetCrop(source: Bitmap, preset: CropPreset): Bitmap {
@@ -246,10 +309,11 @@ class PhotoEditService @Inject constructor(
 
     private fun applyToneAndFilter(source: Bitmap, state: PhotoEditState): Bitmap {
         if (state.isIdentity()) return source
-        val matrix = ColorMatrix()
-        matrix.postConcat(contrastMatrix(state.contrast))
-        matrix.postConcat(exposureMatrix(state.exposure))
-        matrix.postConcat(filterMatrix(state.filter))
+        val matrix = ColorMatrix(EditTransform.toneMatrix(
+            exposure = state.exposure,
+            contrast = state.contrast,
+            filter = state.filter,
+        ))
 
         val output = Bitmap.createBitmap(
             source.width.coerceAtLeast(1),
@@ -269,69 +333,6 @@ class PhotoEditService @Inject constructor(
         return output
     }
 
-    private fun contrastMatrix(contrast: Float): ColorMatrix {
-        val c = contrast.coerceIn(CONTRAST_MIN, CONTRAST_MAX)
-        val translate = 128f * (1f - c)
-        return ColorMatrix(
-            floatArrayOf(
-                c, 0f, 0f, 0f, translate,
-                0f, c, 0f, 0f, translate,
-                0f, 0f, c, 0f, translate,
-                0f, 0f, 0f, 1f, 0f,
-            ),
-        )
-    }
-
-    private fun exposureMatrix(exposure: Float): ColorMatrix {
-        val offset = exposure.coerceIn(EXPOSURE_MIN, EXPOSURE_MAX) * 62f
-        return ColorMatrix(
-            floatArrayOf(
-                1f, 0f, 0f, 0f, offset,
-                0f, 1f, 0f, 0f, offset,
-                0f, 0f, 1f, 0f, offset,
-                0f, 0f, 0f, 1f, 0f,
-            ),
-        )
-    }
-
-    private fun filterMatrix(filter: QuickFilter): ColorMatrix {
-        return when (filter) {
-            QuickFilter.Original -> ColorMatrix()
-            QuickFilter.Mono -> ColorMatrix().apply { setSaturation(0f) }
-            QuickFilter.Vivid -> ColorMatrix().apply {
-                setSaturation(1.28f)
-                postConcat(
-                    ColorMatrix(
-                        floatArrayOf(
-                            1.05f, 0f, 0f, 0f, 6f,
-                            0f, 1.05f, 0f, 0f, 6f,
-                            0f, 0f, 1.05f, 0f, 6f,
-                            0f, 0f, 0f, 1f, 0f,
-                        ),
-                    ),
-                )
-            }
-
-            QuickFilter.Warm -> ColorMatrix(
-                floatArrayOf(
-                    1.08f, 0f, 0f, 0f, 8f,
-                    0f, 1.0f, 0f, 0f, 2f,
-                    0f, 0f, 0.92f, 0f, -6f,
-                    0f, 0f, 0f, 1f, 0f,
-                ),
-            )
-
-            QuickFilter.Cool -> ColorMatrix(
-                floatArrayOf(
-                    0.94f, 0f, 0f, 0f, -4f,
-                    0f, 1.0f, 0f, 0f, 0f,
-                    0f, 0f, 1.08f, 0f, 8f,
-                    0f, 0f, 0f, 1f, 0f,
-                ),
-            )
-        }
-    }
-
     private fun Bitmap.recycleSafely() {
         if (!isRecycled) {
             recycle()
@@ -340,6 +341,7 @@ class PhotoEditService @Inject constructor(
 
     companion object {
         private const val MAX_DIMENSION = 2400
+        private const val PREVIEW_MAX_DIMENSION = 900
         private const val JPEG_QUALITY = 93
         const val EXPOSURE_MIN = -1f
         const val EXPOSURE_MAX = 1f
@@ -383,6 +385,31 @@ data class NormalizedCropRegion(
             right = maxOf(safeLeft, safeRight),
             bottom = maxOf(safeTop, safeBottom),
         )
+    }
+
+    fun rotatedClockwise(quarterTurns: Int): NormalizedCropRegion {
+        val region = normalized()
+        return when (((quarterTurns % 4) + 4) % 4) {
+            0 -> region
+            1 -> NormalizedCropRegion(
+                left = 1f - region.bottom,
+                top = region.left,
+                right = 1f - region.top,
+                bottom = region.right,
+            )
+            2 -> NormalizedCropRegion(
+                left = 1f - region.right,
+                top = 1f - region.bottom,
+                right = 1f - region.left,
+                bottom = 1f - region.top,
+            )
+            else -> NormalizedCropRegion(
+                left = region.top,
+                top = 1f - region.right,
+                right = region.bottom,
+                bottom = 1f - region.left,
+            )
+        }.normalized()
     }
 
     fun isUsable(): Boolean {
